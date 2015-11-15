@@ -5,7 +5,7 @@ CFLAGS=$(shell pkg-config --cflags cairo) -W -Wall -Werror
 LDFLAGS=$(shell pkg-config --libs cairo)
 
 openfmc : $(OBJS)
-	$(LINK.c) -o $@ $<
+	$(LINK.c) -o $@ $(OBJS)
 
 %.o : %.c
 	$(COMPILE.c) -o $@ $<

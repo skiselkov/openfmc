@@ -11,6 +11,9 @@
 #define	MIN_ALT		-1000.0
 #define	MAX_ALT		100000.0
 
+/* Maximum valid speed of anything */
+#define	MAX_SPD		1000.0
+
 static inline int
 is_valid_lat(double lat)
 {
@@ -36,6 +39,12 @@ is_valid_alt(double alt)
 }
 
 static inline int
+is_valid_spd(double spd)
+{
+	return (spd >= 0.0 && spd <= MAX_SPD);
+}
+
+static inline int
 is_valid_hdg(double hdg)
 {
 	return (hdg > 0.0 && hdg <= 360.0);
@@ -43,6 +52,7 @@ is_valid_hdg(double hdg)
 
 int is_valid_vor_freq(double freq_mhz);
 int is_valid_loc_freq(double freq_mhz);
+int is_valid_rwy_ID(const char *rwy_ID);
 
 char **explode_line(char *line, char *delim, size_t *num_comps);
 void strip_newline(char *line, size_t line_len);

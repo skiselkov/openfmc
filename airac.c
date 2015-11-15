@@ -50,9 +50,13 @@ parse_rwy_line(char *line, runway_t *rwy)
 	size_t num_comps;
 	char **comps = explode_line(line, ",", &num_comps);
 
+	/* Line must start with "R" keyword */
 	if (strcmp(comps[0], "R") != 1)
 		goto errout;
-	(void) strlcpy(rwy->rwy_ID, comps[1], sizeof (rwy->rwy_ID));
+
+	if (!is_valid_rwy_ID(comps[1]))
+		goto errout;
+	(void) strcpy(rwy->rwy_ID, comps[1]);
 	if (/* hdg must be uint && valid magnetic heading */
 	    sscanf(comps[2], "%u", &rwy->hdg) != 1 ||
 	    !is_valid_hdg(rwy->hdg) ||
@@ -85,32 +89,607 @@ errout:
 	return (0);
 }
 
+static int
+parse_sid_proc_line(char **comps, size_t num_comps, navproc_t *proc)
+{
+	if (num_comps != 4)
+		return (0);
+	(void) strlcpy(proc->name, comps[1], sizeof (proc->name));
+	if (is_valid_rwy_ID(comps[2])) {
+		proc->type = NAVPROC_TYPE_SID;
+		(void) strlcpy(proc->rwy_ID, comps[2], sizeof (proc->rwy_ID));
+	} else if (strcmp(comps[2], "ALL") == 0) {
+		proc->type = NAVPROC_TYPE_SID_COMMON;
+	} else {
+		proc->type = NAVPROC_TYPE_SID_TRANS;
+		(void) strlcpy(proc->fix_name, comps[2],
+		    sizeof (proc->fix_name));
+	}
+	return (1);
+}
+
+static int
+parse_star_proc_line(char **comps, size_t num_comps, navproc_t *proc)
+{
+	if (num_comps != 4)
+		return (0);
+	(void) strlcpy(proc->name, comps[1], sizeof (proc->name));
+	if (is_valid_rwy_ID(comps[2])) {
+		proc->type = NAVPROC_TYPE_STAR;
+		(void) strlcpy(proc->rwy_ID, comps[2], sizeof (proc->rwy_ID));
+	} else if (strcmp(comps[2], "ALL") == 0) {
+		proc->type = NAVPROC_TYPE_STAR_COMMON;
+	} else {
+		proc->type = NAVPROC_TYPE_STAR_TRANS;
+		(void) strlcpy(proc->fix_name, comps[2],
+		    sizeof (proc->fix_name));
+	}
+	return (1);
+}
+
+static int
+parse_apptr_proc_line(char **comps, size_t num_comps, navproc_t *proc)
+{
+	if (num_comps != 4)
+		return (0);
+	proc->type = NAVPROC_TYPE_FINAL_TRANS;
+	if (!is_valid_rwy_ID(comps[2]))
+		return (0);
+	(void) strlcpy(proc->name, comps[1], sizeof (proc->name));
+	(void) strlcpy(proc->rwy_ID, comps[2], sizeof (proc->rwy_ID));
+	(void) strlcpy(proc->fix_name, comps[3], sizeof (proc->fix_name));
+	return (1);
+}
+
+static int
+parse_final_proc_line(char **comps, size_t num_comps, navproc_t *proc)
+{
+	if (num_comps != 5)
+		return (0);
+	proc->type = NAVPROC_TYPE_FINAL;
+	if (!is_valid_rwy_ID(comps[2]))
+		return (0);
+	(void) strlcpy(proc->name, comps[1], sizeof (proc->name));
+	(void) strlcpy(proc->rwy_ID, comps[2], sizeof (proc->rwy_ID));
+	if (strlen(comps[3]) != 1)
+		return (0);
+	switch (comps[3][0]) {
+	case 'I':
+		proc->final_type = NAVPROC_FINAL_ILS;
+		break;
+	case 'D':
+		proc->final_type = NAVPROC_FINAL_VOR;
+		break;
+	case 'N':
+		proc->final_type = NAVPROC_FINAL_NDB;
+		break;
+	case 'G':
+		proc->final_type = NAVPROC_FINAL_RNAV;
+		break;
+	case 'C':
+		proc->final_type = NAVPROC_FINAL_LDA;
+		break;
+	}
+	if (sscanf(comps[4], "%u", &proc->num_main_segs) != 1)
+		return (0);
+	return (1);
+}
+
+static int
+parse_alt_constr(char *comps[3], alt_constr_t *alt)
+{
+	if (sscanf(comps[0], "%d", &alt->type) != 1)
+		return (0);
+	switch (alt->type) {
+	case ALT_CONSTR_NONE:
+		break;
+	case ALT_CONSTR_AT:
+	case ALT_CONSTR_AT_OR_ABV:
+	case ALT_CONSTR_AT_OR_BLW:
+		if (sscanf(comps[1], "%u", &alt->alt1) != 1 ||
+		    !is_valid_alt(alt->alt1))
+			return (0);
+		break;
+	case ALT_CONSTR_BETWEEN:
+		if (sscanf(comps[1], "%u", &alt->alt1) != 1 ||
+		    !is_valid_alt(alt->alt1) ||
+		    sscanf(comps[2], "%u", &alt->alt2) != 1 ||
+		    !is_valid_alt(alt->alt2))
+			return (0);
+		break;
+	default:
+		return (0);
+	}
+
+	return (1);
+}
+
+static int
+parse_spd_constr(char *comps[2], spd_constr_t *spd)
+{
+	if (sscanf(comps[0], "%d", &spd->type) != 1)
+		return (0);
+	switch (spd->type) {
+	case SPD_CONSTR_NONE:
+		break;
+	case SPD_CONSTR_AT_OR_BLW:
+		if (sscanf(comps[1], "%u", &spd->spd1) != 1 ||
+		    !is_valid_spd(spd->spd1))
+			return (0);
+		break;
+	default:
+		return (0);
+	}
+	return (1);
+}
+
+static int
+parse_proc_seg_fix(char *comps[3], fix_t *fix)
+{
+	if (strlen(comps[0]) > sizeof (fix->name) - 1)
+		return (0);
+	(void) strlcpy(fix->name, comps[0], sizeof (fix->name));
+	if (!geo_pos_2d_from_str(comps[1], comps[2], &fix->pos))
+		return (0);
+	return (1);
+}
+
+static int
+parse_AF_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
+{
+	int dir;
+
+	if (num_comps != 17)
+		return (0);
+	seg->type = NAVPROC_SEG_TYPE_ARC_TO_FIX;
+	if (sscanf(comps[4], "%d", &dir) != 1 || (dir != 1 && dir != 2))
+		return (0);
+	(void) strlcpy(seg->leg_cmd.dme_arc.navaid, comps[5],
+	    sizeof (seg->leg_cmd.dme_arc.navaid));
+	if (sscanf(comps[6], "%lf", &seg->leg_cmd.dme_arc.radial1) != 1 ||
+	    sscanf(comps[7], "%lf", &seg->leg_cmd.dme_arc.radius) != 1 ||
+	    sscanf(comps[8], "%lf", &seg->leg_cmd.dme_arc.radial2) != 1) {
+		return (0);
+	}
+	if (dir == 2) {
+		/*
+		 * Swap radial1 and radial2, we always store the
+		 * ARC direction as going from radial1 to radial2.
+		 */
+		double tmp = seg->leg_cmd.dme_arc.radial1;
+		seg->leg_cmd.dme_arc.radial1 = seg->leg_cmd.dme_arc.radial2;
+		seg->leg_cmd.dme_arc.radial2 = tmp;
+	}
+	if (!parse_proc_seg_fix(&comps[1], &seg->term_cond.fix) ||
+	    !parse_alt_constr(&comps[9], &seg->alt_constr) ||
+	    !parse_spd_constr(&comps[12], &seg->spd_constr))
+		return (0);
+
+	return (1);
+}
+
+static int
+parse_CA_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
+{
+	if (num_comps != 11)
+		return (0);
+	seg->type = NAVPROC_SEG_TYPE_CRS_TO_ALT;
+	if (sscanf(comps[2], "%lf", &seg->leg_cmd.crs) != 1 ||
+	    !is_valid_hdg(seg->leg_cmd.crs))
+		return (0);
+	if (!parse_alt_constr(&comps[3], &seg->term_cond.alt) ||
+	    /* altitude constraint is required for CA segs */
+	    seg->term_cond.alt.type == ALT_CONSTR_NONE ||
+	    !parse_spd_constr(&comps[6], &seg->spd_constr))
+		return (0);
+	seg->alt_constr = seg->term_cond.alt;
+	return (1);
+}
+
+static int
+parse_CD_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
+{
+	if (num_comps != 18)
+		return (0);
+	seg->type = NAVPROC_SEG_TYPE_CRS_TO_DME;
+	if (sscanf(comps[8], "%lf", &seg->leg_cmd.crs) != 1 ||
+	    !is_valid_hdg(seg->leg_cmd.crs) ||
+	    sscanf(comps[9], "%lf", &seg->term_cond.dme.dist) != 1 ||
+	    !parse_alt_constr(&comps[10], &seg->alt_constr) ||
+	    !parse_spd_constr(&comps[13], &seg->spd_constr))
+		return (0);
+	(void) strlcpy(seg->term_cond.dme.navaid, comps[5],
+	    sizeof (seg->term_cond.dme.navaid));
+	return (1);
+}
+
+static int
+parse_CF_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
+{
+	if (num_comps != 18)
+		return (0);
+	seg->type = NAVPROC_SEG_TYPE_CRS_TO_FIX;
+	if (sscanf(comps[8], "%lf", &seg->leg_cmd.crs) != 1 ||
+	    !is_valid_hdg(seg->leg_cmd.crs) ||
+	    !parse_proc_seg_fix(&comps[1], &seg->term_cond.fix) ||
+	    !parse_alt_constr(&comps[10], &seg->alt_constr) ||
+	    !parse_spd_constr(&comps[13], &seg->spd_constr))
+		return (0);
+	return (1);
+}
+
+static int
+parse_CI_CR_seg(char **comps, size_t num_comps, navproc_seg_t *seg,
+    int is_CI)
+{
+	if (num_comps != 13)
+		return (0);
+	seg->type = NAVPROC_SEG_TYPE_CRS_TO_INTCP;
+	if (sscanf(comps[4], "%lf", &seg->leg_cmd.crs) != 1 ||
+	    !is_valid_hdg(seg->leg_cmd.crs) ||
+	    !parse_alt_constr(&comps[5], &seg->alt_constr) ||
+	    !parse_spd_constr(&comps[8], &seg->spd_constr) ||
+	    sscanf(comps[3], "%lf", &seg->term_cond.radial.radial) != 1 ||
+	    (!is_CI && !is_valid_hdg(seg->term_cond.radial.radial)))
+		return (0);
+	(void) strlcpy(seg->term_cond.radial.navaid, comps[2],
+	    sizeof (seg->term_cond.radial.navaid));
+	return (1);
+}
+
+static int
+parse_DF_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
+{
+	if (num_comps != 16)
+		return (0);
+	seg->type = NAVPROC_SEG_TYPE_DIR_TO_FIX;
+	if (!geo_pos_2d_from_str(comps[2], comps[3], &seg->term_cond.fix.pos) ||
+	    !parse_alt_constr(&comps[8], &seg->alt_constr) ||
+	    !parse_spd_constr(&comps[11], &seg->spd_constr))
+		return (0);
+	(void) strlcpy(seg->term_cond.fix.name, comps[1],
+	    sizeof (seg->term_cond.fix.name));
+	return (1);
+}
+
+static int
+parse_FA_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
+{
+	if (num_comps != 17)
+		return (0);
+	seg->type = NAVPROC_SEG_TYPE_FIX_TO_ALT;
+	if (!geo_pos_2d_from_str(comps[2], comps[3], &seg->leg_cmd.fix.pos) ||
+	    !parse_alt_constr(&comps[9], &seg->term_cond.alt) ||
+	    /* altitude constraint is required for CA segs */
+	    seg->term_cond.alt.type == ALT_CONSTR_NONE ||
+	    !parse_spd_constr(&comps[12], &seg->spd_constr))
+		return (0);
+	seg->alt_constr = seg->term_cond.alt;
+	(void) strlcpy(seg->leg_cmd.fix.name, comps[1],
+	    sizeof (seg->leg_cmd.fix.name));
+	return (1);
+}
+
+static int
+parse_FC_FD_seg(char **comps, size_t num_comps, navproc_seg_t *seg,
+    int is_FC)
+{
+	if (num_comps != 18)
+		return (0);
+	if (is_FC)
+		seg->type = NAVPROC_SEG_TYPE_FIX_TO_DIST;
+	else
+		seg->type = NAVPROC_SEG_TYPE_FIX_TO_DME;
+	if (!geo_pos_2d_from_str(comps[2], comps[3], &seg->leg_cmd.fix.pos) ||
+	    sscanf(comps[9], "%lf", &seg->term_cond.dme.dist) == 1 ||
+	    !parse_alt_constr(&comps[10], &seg->alt_constr) ||
+	    !parse_spd_constr(&comps[13], &seg->spd_constr))
+		return (0);
+	seg->alt_constr = seg->term_cond.alt;
+	(void) strlcpy(seg->leg_cmd.fix.name, comps[1],
+	    sizeof (seg->leg_cmd.fix.name));
+	(void) strlcpy(seg->term_cond.dme.navaid, comps[5],
+	    sizeof (seg->term_cond.dme.navaid));
+	return (1);
+}
+
+static int
+parse_HA_HF_HM_seg(char **comps, size_t num_comps, navproc_seg_t *seg,
+    navproc_seg_type_t type)
+{
+	if (num_comps != 19)
+		return (0);
+	seg->type = type;
+
+	if (!geo_pos_2d_from_str(comps[2], comps[3],
+	    &seg->leg_cmd.hold.fix.pos) ||
+	    !parse_alt_constr(&comps[10], &seg->alt_constr) ||
+	    /* alt constr is mandatory on HA segs */
+	    (type == NAVPROC_SEG_TYPE_HOLD_TO_ALT &&
+	    seg->alt_constr.type == ALT_CONSTR_NONE) ||
+	    !parse_spd_constr(&comps[13], &seg->spd_constr))
+		return (0);
+	(void) strlcpy(seg->leg_cmd.hold.fix.name, comps[1],
+	    sizeof (seg->leg_cmd.fix.name));
+	(void) strlcpy(seg->term_cond.dme.navaid, comps[5],
+	    sizeof (seg->term_cond.dme.navaid));
+	if (type == NAVPROC_SEG_TYPE_HOLD_TO_ALT)
+		seg->term_cond.alt = seg->alt_constr;
+	else if (type == NAVPROC_SEG_TYPE_HOLD_TO_FIX)
+		seg->term_cond.fix = seg->leg_cmd.hold.fix;
+	return (1);
+}
+
+static int
+parse_IF_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
+{
+	if (num_comps != 15)
+		return (0);
+	seg->type = NAVPROC_SEG_TYPE_INIT_FIX;
+	if (!geo_pos_2d_from_str(comps[2], comps[3], &seg->leg_cmd.fix.pos) ||
+	    !parse_alt_constr(&comps[8], &seg->alt_constr) ||
+	    !parse_spd_constr(&comps[11], &seg->spd_constr))
+		return (0);
+	(void) strlcpy(seg->leg_cmd.fix.name, comps[1],
+	    sizeof (seg->leg_cmd.fix.name));
+	return (1);
+}
+
+static int
+parse_PI_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
+{
+	int turn_dir;
+
+	if (num_comps != 18)
+		return (0);
+	seg->type = NAVPROC_SEG_TYPE_PROC_TURN;
+	if (!geo_pos_2d_from_str(comps[2], comps[3],
+	    &seg->leg_cmd.proc_turn.startpt.pos) ||
+	    sscanf(comps[4], "%d", &turn_dir) ||
+	    (turn_dir != 1 && turn_dir != 2) ||
+	    sscanf(comps[6], "%lf", &seg->leg_cmd.proc_turn.outbd_turn_hdg)
+	    != 1 || !is_valid_hdg(seg->leg_cmd.proc_turn.outbd_turn_hdg) ||
+	    sscanf(comps[7], "%lf", &seg->leg_cmd.proc_turn.max_excrs_dist)
+	    != 1 ||
+	    sscanf(comps[8], "%lf", &seg->leg_cmd.proc_turn.outbd_radial)
+	    != 1 || !is_valid_hdg(seg->leg_cmd.proc_turn.outbd_radial) ||
+	    sscanf(comps[9], "%lf", &seg->leg_cmd.proc_turn.max_excrs_time)
+	    != 1 ||
+	    !parse_alt_constr(&comps[10], &seg->alt_constr) ||
+	    !parse_spd_constr(&comps[12], &seg->spd_constr))
+		return (0);
+	(void) strlcpy(seg->leg_cmd.proc_turn.startpt.name, comps[1],
+	    sizeof (seg->leg_cmd.proc_turn.startpt.name));
+	(void) strlcpy(seg->leg_cmd.proc_turn.navaid, comps[5],
+	    sizeof (seg->leg_cmd.proc_turn.navaid));
+	return (1);
+}
+
+/* TODO
+static int
+parse_RF_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
+{
+	int turn_dir;
+
+	if (num_comps != 16)
+		return (0);
+	seg->type = NAVPROC_SEG_TYPE_RADIUS_ARC_TO_FIX;
+	if (!geo_pos_2d_from_str(comps[2], comps[3],
+	    &seg->leg_cmd.dme_arc.navaid.pos) ||
+	    sscanf(comps[4], "%d", &turn_dir) ||
+	    (turn_dir != 1 && turn_dir != 2) ||
+	    sscanf(comps[6], "%lf", &seg->leg_cmd.proc_turn.outbd_turn_hdg)
+	    != 1 || !is_valid_hdg(seg->leg_cmd.proc_turn.outbd_turn_hdg) ||
+	    sscanf(comps[7], "%lf", &seg->leg_cmd.proc_turn.max_excrs_dist)
+	    != 1 ||
+	    sscanf(comps[8], "%lf", &seg->leg_cmd.proc_turn.outbd_radial)
+	    != 1 || !is_valid_hdg(seg->leg_cmd.proc_turn.outbd_radial) ||
+	    sscanf(comps[9], "%lf", &seg->leg_cmd.proc_turn.max_excrs_time)
+	    != 1 ||
+	    !parse_alt_constr(&comps[10], &seg->alt_constr) ||
+	    !parse_spd_constr(&comps[12], &seg->spd_constr))
+		return (0);
+	(void) strlcpy(seg->leg_cmd.dme_arc.navaid, comps[5],
+	    sizeof (seg->leg_cmd.dme_arc.navaid));
+	return (1);
+}
+*/
+
+static int
+parse_proc_seg_line(char *line, navproc_t *proc)
+{
+	char		**comps = NULL;
+	size_t		num_comps = 0;
+	navproc_seg_t	seg;
+
+	comps = explode_line(line, ",", &num_comps);
+
+	if (num_comps == 0)
+		goto errout;
+
+	if (strcmp(comps[0], "AF") == 0) {
+		if (!parse_AF_seg(comps, num_comps, &seg))
+			goto errout;
+	} else if (strcmp(comps[0], "CA") == 0) {
+		if (!parse_CA_seg(comps, num_comps, &seg))
+			goto errout;
+	} else if (strcmp(comps[0], "CD") == 0) {
+		if (!parse_CD_seg(comps, num_comps, &seg))
+			goto errout;
+	} else if (strcmp(comps[0], "CF") == 0) {
+		if (!parse_CF_seg(comps, num_comps, &seg))
+			goto errout;
+	} else if (strcmp(comps[0], "CI") == 0) {
+		if (!parse_CI_CR_seg(comps, num_comps, &seg, 1))
+			goto errout;
+	} else if (strcmp(comps[0], "CR") == 0) {
+		if (!parse_CI_CR_seg(comps, num_comps, &seg, 0))
+			goto errout;
+	} else if (strcmp(comps[0], "DF") == 0) {
+		if (!parse_DF_seg(comps, num_comps, &seg))
+			goto errout;
+	} else if (strcmp(comps[0], "FA") == 0) {
+		if (!parse_FA_seg(comps, num_comps, &seg))
+			goto errout;
+	} else if (strcmp(comps[0], "FC") == 0) {
+		if (!parse_FC_FD_seg(comps, num_comps, &seg, 1))
+			goto errout;
+	} else if (strcmp(comps[0], "FD") == 0) {
+		if (!parse_FC_FD_seg(comps, num_comps, &seg, 0))
+			goto errout;
+	} else if (strcmp(comps[0], "HA") == 0) {
+		if (!parse_HA_HF_HM_seg(comps, num_comps, &seg,
+		    NAVPROC_SEG_TYPE_HOLD_TO_ALT))
+			goto errout;
+	} else if (strcmp(comps[0], "HF") == 0) {
+		if (!parse_HA_HF_HM_seg(comps, num_comps, &seg,
+		    NAVPROC_SEG_TYPE_HOLD_TO_FIX))
+			goto errout;
+	} else if (strcmp(comps[0], "HM") == 0) {
+		if (!parse_HA_HF_HM_seg(comps, num_comps, &seg,
+		    NAVPROC_SEG_TYPE_HOLD_TO_MANUAL))
+			goto errout;
+	} else if (strcmp(comps[0], "IF") == 0) {
+		if (!parse_IF_seg(comps, num_comps, &seg))
+			goto errout;
+	} else if (strcmp(comps[0], "PI") == 0) {
+		if (!parse_PI_seg(comps, num_comps, &seg))
+			goto errout;
+/* TODO
+	} else if (strcmp(comps[0], "RF") == 0) {
+		if (!parse_RF_seg(comps, num_comps, &seg))
+			goto errout;
+*/
+	} else {
+		/* Unknown segment type */
+		goto errout;
+	}
+
+	/* segment complete and validated, store it in the procedure */
+	proc->num_segs++;
+	proc->segs = realloc(proc->segs, sizeof (seg) * proc->num_segs);
+	memcpy(&proc->segs[proc->num_segs - 1], &seg, sizeof (seg));
+
+	free(comps);
+	return (1);
+errout:
+	free(comps);
+	return (0);
+}
+
+static int
+parse_proc(FILE *fp, navproc_t *proc)
+{
+	size_t		line_cap = 0;
+	ssize_t		line_len = 0;
+	char		*line = NULL;
+	char		**comps = NULL;
+	size_t		num_comps = 0;
+
+	line_len = getline(&line, &line_cap, fp);
+	if (line_len == -1) {
+		/* EOF */
+		return (0);
+	}
+	strip_newline(line, line_len);
+	comps = explode_line(line, ",", &num_comps);
+
+	if (num_comps == 0)
+		goto errout;
+	if (strcmp(comps[0], "SID") == 0) {
+		if (!parse_sid_proc_line(comps, num_comps, proc))
+			goto errout;
+	} else if (strcmp(comps[0], "STAR") == 0) {
+		if (!parse_star_proc_line(comps, num_comps, proc))
+			goto errout;
+	} else if (strcmp(comps[0], "APPTR") == 0) {
+		if (!parse_apptr_proc_line(comps, num_comps, proc))
+			goto errout;
+	} else if (strcmp(comps[0], "FINAL") == 0) {
+		if (!parse_final_proc_line(comps, num_comps, proc))
+			goto errout;
+	} else {
+		goto errout;
+	}
+
+	free(comps);
+	comps = NULL;
+	num_comps = 0;
+
+	while ((line_len = getline(&line, &line_cap, fp)) != -1) {
+		strip_newline(line, line_len);
+		if (strlen(line) == 0) {
+			/* end of procedure */
+			if (proc->num_segs == 0) {
+				/* faulty procedure with no segments */
+				goto errout;
+			}
+			break;
+		}
+		if (!parse_proc_seg_line(line, proc))
+			goto errout;
+	}
+
+	free(line);
+
+	return (1);
+errout:
+	free(comps);
+	free(line);
+	return (-1);
+}
+
+static int
+parse_proc_file(FILE *fp, airport_t *arpt)
+{
+	navproc_t	proc;
+	int		n;
+
+	while ((n = parse_proc(fp, &proc)) != -1) {
+		if (n == 0) {
+			/* EOF */
+			break;
+		}
+		arpt->num_procs++;
+		arpt->procs = realloc(arpt->procs, sizeof (navproc_t) *
+		    arpt->num_procs);
+		(void) memcpy(&arpt->procs[arpt->num_procs - 1], &proc,
+		    sizeof (proc));
+	}
+	if (n == -1)
+		return (0);
+
+	return (1);
+}
+
 airport_t *
-airport_parse(const char *arpt_icao, const char *navdata_dir)
+airport_open(const char *arpt_icao, const char *navdata_dir)
 {
 	airport_t	*arpt;
-	FILE		*arpt_fp;
-	char		*arpt_fname;
-	ssize_t		line_len = 0, line_cap = 0;
+	FILE		*arpt_fp = NULL, *proc_fp = NULL;
+	char		*arpt_fname = NULL;
+	char		*proc_fname = NULL;
+	ssize_t		line_len = 0;
+	size_t		line_cap = 0;
 	char		*line = NULL;
 	int		done = 0;
 
 	arpt = calloc(sizeof (*arpt), 1);
+	if (!arpt)
+		return (NULL);
+
 	assert(strlen(arpt_icao) == 4);
 	strcpy(arpt->icao, arpt_icao);
 
-	/* Open Airports.txt and locate the starting line */
+	/* Open Airports.txt */
 	arpt_fname = malloc(strlen(navdata_dir) + strlen("/Airports.txt") + 1);
-	arpt_fname[0] = 0;
-	(void) strcat(arpt_fname, navdata_dir);
-	(void) strcat(arpt_fname, "/Airports.txt");
+	sprintf(arpt_fname, "%s/Airports.txt", navdata_dir);
 	arpt_fp = fopen(arpt_fname, "r");
 	if (arpt_fp == NULL)
 		goto errout;
 
-	/* Locate airport start line & parse it */
-	while ((line_len = getline(&line, (size_t *)&line_cap, arpt_fp))
-	    != -1 && !done) {
+	/* Locate airport starting line & parse it */
+	while ((line_len = getline(&line, &line_cap, arpt_fp)) != -1 && !done) {
 		strip_newline(line, line_len);
 		if (parse_arpt_line(line, arpt)) {
 			done = 1;
@@ -123,7 +702,7 @@ airport_parse(const char *arpt_icao, const char *navdata_dir)
 	}
 
 	/* airport found, read non-empty runway lines */
-	while ((line_len = getline(&line, (size_t *)&line_cap, arpt_fp)) > 0) {
+	while ((line_len = getline(&line, &line_cap, arpt_fp)) > 0) {
 		strip_newline(line, line_len);
 		if (strlen(line) == 0)
 			break;
@@ -139,8 +718,20 @@ airport_parse(const char *arpt_icao, const char *navdata_dir)
 	if (arpt->num_rwys == 0)
 		goto errout;
 
+	/* Try to read any procedures we may have available for this airport */
+	proc_fname = malloc(strlen(navdata_dir) + strlen("/Proc/XXXX.txt") + 1);
+	sprintf(proc_fname, "%s/Proc/%s.txt", navdata_dir, arpt->icao);
+	proc_fp = fopen(proc_fname, "r");
+	if (proc_fp != NULL) {
+		if (!parse_proc_file(proc_fp, arpt))
+			goto errout;
+	}
+
+	free(line);
 	free(arpt_fname);
+	free(proc_fname);
 	(void) fclose(arpt_fp);
+	(void) fclose(proc_fp);
 
 	return (arpt);
 
@@ -150,8 +741,23 @@ errout:
 	free(arpt_fname);
 	if (arpt_fp)
 		(void) fclose(arpt_fp);
+	if (proc_fp)
+		(void) fclose(proc_fp);
 	free(line);
 	return (NULL);
+}
+
+void
+airport_free(airport_t *arpt)
+{
+	free(arpt->rwys);
+	for (unsigned i = 0; i < arpt->num_procs; i++) {
+		navproc_t *proc = &arpt->procs[i];
+		free(proc->segs);
+	}
+	free(arpt->procs);
+	free(arpt->gates);
+	free(arpt);
 }
 
 /*
