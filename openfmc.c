@@ -7,12 +7,14 @@ main(int argc, char **argv)
 {
 	airport_t *arpt;
 
-	if (argc != 2) {
-		fprintf(stderr, "Missing navdata dir argument\n");
+	if (argc != 3) {
+		fprintf(stderr, "Missing navdata dir & airport argument\n");
 		return (1);
 	}
 
-	arpt = airport_open("LZIB", argv[1]);
+	arpt = airport_open(argv[2], argv[1]);
+	if (arpt)
+		airport_close(arpt);
 
 	return (0);
 }

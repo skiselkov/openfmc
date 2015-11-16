@@ -66,7 +66,7 @@ int is_valid_loc_freq(double freq_mhz);
 int is_valid_rwy_ID(const char *rwy_ID);
 
 char **explode_line(char *line, char *delim, size_t *num_comps);
-void strip_newline(char *line, size_t line_len);
+void strip_newline(char *line);
 
 int geo_pos_2d_from_str(const char *lat, const char *lon, geo_pos_2d_t *pos);
 int geo_pos_3d_from_str(const char *lat, const char *lon, const char *elev,

@@ -89,12 +89,13 @@ explode_line(char *line, char *delim, size_t *num_comps)
 
 	comps = malloc(sizeof (char *) * n);
 
-	for (i = 0, p = line; p < end; p += delim_n, i++) {
+	for (i = 0, p = line; p < end; i++) {
+		assert(i < n);
 		char *d = strstr(p, delim);
 		comps[i] = p;
 		if (d == NULL)
 			break;
-		*d = 0;
+		d[0] = 0;
 		p = d + delim_n;
 	}
 
@@ -103,12 +104,14 @@ explode_line(char *line, char *delim, size_t *num_comps)
 }
 
 void
-strip_newline(char *line, size_t line_len)
+strip_newline(char *line)
 {
-	if (line_len > 0 && line[line_len - 1] == '\r')
+	size_t n = strlen(line);
+
+	if (n >= 2 && line[n - 2] == '\r')
 		/* cut off trailing CRLF */
-		line[line_len - 1] = 0;
-	else if (line[line_len] == '\n')
+		line[n - 2] = 0;
+	else if (n >= 1 && line[n - 1] == '\n')
 		/* cut off trailing LF */
-		line[line_len] = 0;
+		line[n - 1] = 0;
 }

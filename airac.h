@@ -69,6 +69,7 @@ typedef enum {
 	NAVPROC_SEG_TYPE_FIX_TO_ALT,		/* FA */
 	NAVPROC_SEG_TYPE_FIX_TO_DIST,		/* FC */
 	NAVPROC_SEG_TYPE_FIX_TO_DME,		/* FD */
+	NAVPROC_SEG_TYPE_FIX_TO_MANUAL,		/* FM */
 	NAVPROC_SEG_TYPE_HOLD_TO_ALT,		/* HA */
 	NAVPROC_SEG_TYPE_HOLD_TO_FIX,		/* HF */
 	NAVPROC_SEG_TYPE_HOLD_TO_MANUAL,	/* HM */
@@ -114,6 +115,10 @@ typedef struct navproc_seg_s {
 	union {
 		double		hdg;		/* VA, VD, VI, VM, VR */
 		double		crs;		/* CA, CD, CF, CI, CR */
+		struct {			/* FM */
+			fix_t	fix;
+			double	crs;
+		} fix_trk;
 		struct {			/* AF */
 			char	navaid[NAV_NAME_LEN];
 			double	start_radial;
@@ -218,7 +223,7 @@ typedef struct airport_s {
 } airport_t;
 
 airport_t *airport_open(const char *arpt_icao, const char *navdata_dir);
-void airport_free(airport_t *arpt);
+void airport_close(airport_t *arpt);
 
 const runway_t *airport_find_rwy_by_ID(const airport_t *arpt,
     const char *rwy_ID);
