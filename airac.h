@@ -114,12 +114,18 @@ typedef struct navproc_seg_s {
 	union {
 		double		hdg;		/* VA, VD, VI, VM, VR */
 		double		crs;		/* CA, CD, CF, CI, CR */
-		struct {			/* AF, RF */
+		struct {			/* AF */
 			char	navaid[NAV_NAME_LEN];
-			double	radial1;
-			double	radial2;
+			double	start_radial;
+			double	end_radial;
 			double	radius;
 		} dme_arc;
+		struct {			/* RF */
+			char	navaid[NAV_NAME_LEN];
+			double	end_radial;
+			double	radius;
+			int	cw;		/* clockwise or counter-CW */
+		} radius_arc;
 		fix_t		fix;		/* FA, IF */
 		struct {			/* FC, FD */
 			fix_t	fix;
@@ -154,6 +160,7 @@ typedef struct navproc_seg_s {
 			char	navaid[NAV_NAME_LEN];
 			double	dist;
 		} dme;
+		char		navaid[NAV_NAME_LEN];	/* VI (optional) */
 	} term_cond;
 
 	/* Generic segment constraints */

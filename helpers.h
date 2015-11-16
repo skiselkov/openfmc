@@ -14,6 +14,10 @@
 /* Maximum valid speed of anything */
 #define	MAX_SPD		1000.0
 
+/* Minimum/Maximum allowable arc radius on any procedure */
+#define	MIN_ARC_RADIUS	0.1
+#define	MAX_ARC_RADIUS	100.0
+
 static inline int
 is_valid_lat(double lat)
 {
@@ -47,7 +51,14 @@ is_valid_spd(double spd)
 static inline int
 is_valid_hdg(double hdg)
 {
+	/* "0" is not a valid heading, "360" is */
 	return (hdg > 0.0 && hdg <= 360.0);
+}
+
+static inline int
+is_valid_arc_radius(double radius)
+{
+	return (radius >= MIN_ARC_RADIUS && radius <= MAX_ARC_RADIUS);
 }
 
 int is_valid_vor_freq(double freq_mhz);

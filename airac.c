@@ -246,24 +246,26 @@ parse_AF_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
 		return (0);
 	(void) strlcpy(seg->leg_cmd.dme_arc.navaid, comps[5],
 	    sizeof (seg->leg_cmd.dme_arc.navaid));
-	if (sscanf(comps[6], "%lf", &seg->leg_cmd.dme_arc.radial1) != 1 ||
-	    sscanf(comps[7], "%lf", &seg->leg_cmd.dme_arc.radius) != 1 ||
-	    sscanf(comps[8], "%lf", &seg->leg_cmd.dme_arc.radial2) != 1) {
-		return (0);
-	}
-	if (dir == 2) {
-		/*
-		 * Swap radial1 and radial2, we always store the
-		 * ARC direction as going from radial1 to radial2.
-		 */
-		double tmp = seg->leg_cmd.dme_arc.radial1;
-		seg->leg_cmd.dme_arc.radial1 = seg->leg_cmd.dme_arc.radial2;
-		seg->leg_cmd.dme_arc.radial2 = tmp;
-	}
 	if (!parse_proc_seg_fix(&comps[1], &seg->term_cond.fix) ||
+	    sscanf(comps[6], "%lf", &seg->leg_cmd.dme_arc.start_radial) != 1 ||
+	    !is_valid_hdg(seg->leg_cmd.dme_arc.start_radial) ||
+	    sscanf(comps[7], "%lf", &seg->leg_cmd.dme_arc.radius) != 1 ||
+	    !is_valid_arc_radius(seg->leg_cmd.dme_arc.radius) ||
+	    sscanf(comps[8], "%lf", &seg->leg_cmd.dme_arc.end_radial) != 1 ||
+	    !is_valid_hdg(seg->leg_cmd.dme_arc.end_radial) ||
 	    !parse_alt_constr(&comps[9], &seg->alt_constr) ||
 	    !parse_spd_constr(&comps[12], &seg->spd_constr))
 		return (0);
+	if (dir == 2) {
+		/*
+		 * Swap start_radial and end_radial, we always store the
+		 * ARC direction as going from start_radial to end_radial.
+		 */
+		double tmp = seg->leg_cmd.dme_arc.start_radial;
+		seg->leg_cmd.dme_arc.start_radial =
+		    seg->leg_cmd.dme_arc.end_radial;
+		seg->leg_cmd.dme_arc.end_radial = tmp;
+	}
 
 	return (1);
 }
@@ -338,14 +340,16 @@ parse_CI_CR_seg(char **comps, size_t num_comps, navproc_seg_t *seg,
 }
 
 static int
-parse_DF_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
+parse_DF_TF_seg(char **comps, size_t num_comps, navproc_seg_t *seg,
+    int is_DF)
 {
-	if (num_comps != 16)
+	if ((is_DF && num_comps != 16) || (!is_DF && num_comps != 18))
 		return (0);
-	seg->type = NAVPROC_SEG_TYPE_DIR_TO_FIX;
+	seg->type = is_DF ? NAVPROC_SEG_TYPE_DIR_TO_FIX :
+	    NAVPROC_SEG_TYPE_TRK_TO_FIX;
 	if (!geo_pos_2d_from_str(comps[2], comps[3], &seg->term_cond.fix.pos) ||
-	    !parse_alt_constr(&comps[8], &seg->alt_constr) ||
-	    !parse_spd_constr(&comps[11], &seg->spd_constr))
+	    !parse_alt_constr(&comps[is_DF ? 8 : 10], &seg->alt_constr) ||
+	    !parse_spd_constr(&comps[is_DF ? 11 : 13], &seg->spd_constr))
 		return (0);
 	(void) strlcpy(seg->term_cond.fix.name, comps[1],
 	    sizeof (seg->term_cond.fix.name));
@@ -465,35 +469,95 @@ parse_PI_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
 	return (1);
 }
 
-/* TODO
 static int
 parse_RF_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
 {
-	int turn_dir;
-
 	if (num_comps != 16)
 		return (0);
 	seg->type = NAVPROC_SEG_TYPE_RADIUS_ARC_TO_FIX;
-	if (!geo_pos_2d_from_str(comps[2], comps[3],
-	    &seg->leg_cmd.dme_arc.navaid.pos) ||
-	    sscanf(comps[4], "%d", &turn_dir) ||
-	    (turn_dir != 1 && turn_dir != 2) ||
-	    sscanf(comps[6], "%lf", &seg->leg_cmd.proc_turn.outbd_turn_hdg)
-	    != 1 || !is_valid_hdg(seg->leg_cmd.proc_turn.outbd_turn_hdg) ||
-	    sscanf(comps[7], "%lf", &seg->leg_cmd.proc_turn.max_excrs_dist)
-	    != 1 ||
-	    sscanf(comps[8], "%lf", &seg->leg_cmd.proc_turn.outbd_radial)
-	    != 1 || !is_valid_hdg(seg->leg_cmd.proc_turn.outbd_radial) ||
-	    sscanf(comps[9], "%lf", &seg->leg_cmd.proc_turn.max_excrs_time)
-	    != 1 ||
-	    !parse_alt_constr(&comps[10], &seg->alt_constr) ||
-	    !parse_spd_constr(&comps[12], &seg->spd_constr))
+	if (sscanf(comps[4], "%d", &seg->leg_cmd.radius_arc.cw) != 1 ||
+	    (seg->leg_cmd.radius_arc.cw != 1 &&
+	    seg->leg_cmd.radius_arc.cw != 2))
 		return (0);
-	(void) strlcpy(seg->leg_cmd.dme_arc.navaid, comps[5],
-	    sizeof (seg->leg_cmd.dme_arc.navaid));
+	/* change CW flag from 1-2 to 0-1 */
+	seg->leg_cmd.radius_arc.cw--;
+	(void) strlcpy(seg->leg_cmd.radius_arc.navaid, comps[5],
+	    sizeof (seg->leg_cmd.radius_arc.navaid));
+	if (!parse_proc_seg_fix(&comps[1], &seg->term_cond.fix) ||
+	    sscanf(comps[6], "%lf", &seg->leg_cmd.radius_arc.end_radial) != 1 ||
+	    !is_valid_hdg(seg->leg_cmd.radius_arc.end_radial) ||
+	    sscanf(comps[7], "%lf", &seg->leg_cmd.radius_arc.radius) != 1 ||
+	    !is_valid_arc_radius(seg->leg_cmd.radius_arc.radius) ||
+	    !parse_alt_constr(&comps[8], &seg->alt_constr) ||
+	    !parse_spd_constr(&comps[11], &seg->spd_constr))
+		return (0);
+
 	return (1);
 }
-*/
+
+static int
+parse_VA_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
+{
+	if (num_comps != 16)
+		return (0);
+	seg->type = NAVPROC_SEG_TYPE_HDG_TO_ALT;
+	if (sscanf(comps[2], "%lf", &seg->leg_cmd.hdg) != 1 ||
+	    !is_valid_hdg(seg->leg_cmd.hdg) ||
+	    !parse_alt_constr(&comps[3], &seg->alt_constr) ||
+	    /* alt constr mandatory on VA segs */
+	    seg->alt_constr.type == ALT_CONSTR_NONE ||
+	    !parse_spd_constr(&comps[6], &seg->spd_constr))
+		return (0);
+	seg->term_cond.alt = seg->alt_constr;
+
+	return (1);
+}
+
+static int
+parse_VD_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
+{
+	if (num_comps != 18)
+		return (0);
+	seg->type = NAVPROC_SEG_TYPE_HDG_TO_DME;
+	if (sscanf(comps[8], "%lf", &seg->leg_cmd.hdg) != 1 ||
+	    !is_valid_hdg(seg->leg_cmd.hdg) ||
+	    sscanf(comps[9], "%lf", &seg->term_cond.dme.dist) != 1 ||
+	    !parse_alt_constr(&comps[10], &seg->alt_constr) ||
+	    !parse_spd_constr(&comps[13], &seg->spd_constr))
+		return (0);
+	(void) strlcpy(seg->term_cond.dme.navaid, comps[5],
+	    sizeof (seg->term_cond.dme.navaid));
+
+	return (1);
+}
+
+static int
+parse_VI_VM_VR_seg(char **comps, size_t num_comps, navproc_seg_t *seg,
+    navproc_seg_type_t type)
+{
+	if (num_comps != 13)
+		return (0);
+	seg->type = type;
+	if (sscanf(comps[4], "%lf", &seg->leg_cmd.hdg) != 1 ||
+	    !is_valid_hdg(seg->leg_cmd.hdg) ||
+	    (type == NAVPROC_SEG_TYPE_HDG_TO_RADIAL &&
+	    (sscanf(comps[4], "%lf", &seg->term_cond.radial.radial) != 1 ||
+	    !is_valid_hdg(seg->term_cond.radial.radial))) ||
+	    !parse_alt_constr(&comps[5], &seg->alt_constr) ||
+	    !parse_spd_constr(&comps[8], &seg->spd_constr))
+		return (0);
+	if (type == NAVPROC_SEG_TYPE_HDG_TO_INTCP &&
+	    strcmp(comps[2], " ") != 0) {
+		/* Copy non-empty navaid to termination condition on VI segs */
+		(void) strlcpy(seg->term_cond.navaid, comps[2],
+		    sizeof (seg->term_cond.navaid));
+	} else if (type == NAVPROC_SEG_TYPE_HDG_TO_RADIAL) {
+		(void) strlcpy(seg->term_cond.radial.navaid, comps[2],
+		    sizeof (seg->term_cond.radial.navaid));
+	}
+
+	return (1);
+}
 
 static int
 parse_proc_seg_line(char *line, navproc_t *proc)
@@ -526,7 +590,7 @@ parse_proc_seg_line(char *line, navproc_t *proc)
 		if (!parse_CI_CR_seg(comps, num_comps, &seg, 0))
 			goto errout;
 	} else if (strcmp(comps[0], "DF") == 0) {
-		if (!parse_DF_seg(comps, num_comps, &seg))
+		if (!parse_DF_TF_seg(comps, num_comps, &seg, 1))
 			goto errout;
 	} else if (strcmp(comps[0], "FA") == 0) {
 		if (!parse_FA_seg(comps, num_comps, &seg))
@@ -555,11 +619,30 @@ parse_proc_seg_line(char *line, navproc_t *proc)
 	} else if (strcmp(comps[0], "PI") == 0) {
 		if (!parse_PI_seg(comps, num_comps, &seg))
 			goto errout;
-/* TODO
 	} else if (strcmp(comps[0], "RF") == 0) {
 		if (!parse_RF_seg(comps, num_comps, &seg))
 			goto errout;
-*/
+	} else if (strcmp(comps[0], "TF") == 0) {
+		if (!parse_DF_TF_seg(comps, num_comps, &seg, 0))
+			goto errout;
+	} else if (strcmp(comps[0], "VA") == 0) {
+		if (!parse_VA_seg(comps, num_comps, &seg))
+			goto errout;
+	} else if (strcmp(comps[0], "VD") == 0) {
+		if (!parse_VD_seg(comps, num_comps, &seg))
+			goto errout;
+	} else if (strcmp(comps[0], "VI") == 0) {
+		if (!parse_VI_VM_VR_seg(comps, num_comps, &seg,
+		    NAVPROC_SEG_TYPE_HDG_TO_INTCP))
+			goto errout;
+	} else if (strcmp(comps[0], "VM") == 0) {
+		if (!parse_VI_VM_VR_seg(comps, num_comps, &seg,
+		    NAVPROC_SEG_TYPE_HDG_TO_MANUAL))
+			goto errout;
+	} else if (strcmp(comps[0], "VR") == 0) {
+		if (!parse_VI_VM_VR_seg(comps, num_comps, &seg,
+		    NAVPROC_SEG_TYPE_HDG_TO_RADIAL))
+			goto errout;
 	} else {
 		/* Unknown segment type */
 		goto errout;
