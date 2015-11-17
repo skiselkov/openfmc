@@ -1,0 +1,157 @@
+ATS.txt:
+
+A,UL619,6
+	“A”		Airway
+	“UL619”		Airway name
+	“6”		Airway contains 6 fixes (5 segments)
+
+
+S,ARGES,44.082222,26.826667,ASNEL,44.536667,26.330000,0,317,34.61
+
+	“S”		Airway segment
+	“ARGES”		Starting fix
+	“44.082222”	Starting fix latitude in degrees
+	”26.826667”	Starting fix longitude in degrees
+	“ASNEL”		Ending fix
+	“44.536667”	Ending fix latitude in degrees
+	”26.330000”	Ending fix longitude in degrees
+	“0”		Inbound magnetic course to starting fix (“0” undefined, “360” north)
+	“317”		Inbound magnetic course to ending fix
+	“34.61”		Segment length in NM
+
+
+
+Airports.txt:
+
+A,EGLL,HEATHROW,51.477500,-0.461389,83,6000,0,12800,0
+	“A”		Airport
+	“EGLL”		Airport ICAO code
+	“HEATHROW”	Airport symbolic name
+	“51.477500”	Airport reference point latitude in degrees
+	”-0.461389”	Airport reference point longitude in degrees
+	“83”		Airport reference point elevation AMSL in feet
+	“6000”		Departure transition altitude in feet AMSL (“0” if undefined)
+	“0”		Arrival transition level in FL (“0” if undefined)
+	“12800”		Longest runway length in feet
+	“0”		???
+
+R,09L,91,12802,164,1,110.300,91,51.477500,-0.485014,79,3.00,51,1,0
+	“R”		Runway
+	“09L”		ID
+	“91”		Magnetic heading
+	“12802”		Length in feet
+	“164”		Width in feet
+	“1”		LOC available flag (0/1)
+	“110.300”	LOC frequency (“0” if unavail)
+	“91”		LOC front course (“0” if unavail)
+	“51.477500”	Runway threshold latitude in degrees
+	“-0.485014”	Runway threshold longitude in degrees
+	“79”		Runway threshold elevation
+	“3.00”		Glidepath angle (“0.00” if ILS GS not available)
+	“51”		???
+	“1”		???
+	“0”		???
+
+
+Navaids.txt:
+
+NIT,NITRA,116.500,1,1,195,48.290556,18.050556,810,LZ,0
+	“NIT”		ID
+	“NITRA”		Symbolic name
+	“116.500”	Frequency
+	“1”		0:LOC, 1:VOR
+	”1”		0:NDB (freq in kHz), 1:VHF (freq in MHz)
+	“195”		??? (apparently always “195”)
+	“48.290556”	Latitude in degrees
+	”18.050556”	Longitude in degrees
+	”810”		Elevation AMSL in feet
+	”LZ”		ICAO country code (LZ: Slovakia)
+	”0”		??? (apparently always “0”)
+
+
+
+Waypoints.txt:
+
+AMLUH,53.428986,10.322508,ED
+	“AMLUH”		ID
+	“53.428986”	Latitude in degrees
+	”10.322508”	Longitude in degrees
+	“ED”		ICAO country code (ED: Germany)
+
+
+
+Proc:
+
+SID,BERV8A,31,2
+	“SID”		Standard Instrument Departure
+	“BERV8A”	ID
+	“31”		Originating runway
+	“2”		???
+
+SID,SSTIK3,CISKO,6
+	“SID”		Standard Instrument Departure
+	“SSTIK3”	ID
+	“CISKO”		Transition ID
+	“6”		???
+
+STAR,BERV3R,31,2
+	“STAR”		Standard Instrument Arrival
+	“BERV3R”	ID
+	“31”		Destination runway
+	“2”		???
+
+APPTR,I22,22,CIFER
+	“APPTR”		Approach transition
+	“I22”		ID
+	“22”		Destination runway
+	“CIFER”		Transition starting fix
+
+FINAL,I22,22,I,3
+	“FINAL”		Final approach procedure
+	“I22”		ID
+	“22”		Terminating runway
+	“I”		Approach type: I:ILS, N:NDB, D:VOR, G:RNAV/GNSS, C:LDA
+	“3”		Number of legs in approach (remaining legs for go-around)
+
+	Proc leg types:
+		• Course to an Altitude - CA
+		  CA,0,14.0,2,420,0,0,0,0,0,0
+			“0”		???
+			“14.0”		Magnetic heading
+			“2”		???
+			“420”		Target altitude
+			“0,0,0,0,0,0”	???
+		• Course to a Fix - CF
+		  CF,SASLY,37.678500,-122.334500,0,SFO,10.9,4.0,11.0,4.0,0,0,0,0,0,0,0,1
+			“SASLY”		Target fix ID
+			“37.678500”	Target fix latitude in degrees
+			“-122.334500”	Target fix longitude in degrees
+			“0”		???
+			“SFO”		
+			“10.9”		
+		• Direct to a Fix - DF
+		  DF,OKR,48.223861,17.290333,0, ,0.0,0.0,0,0,0,0,0,0,0,0
+			“OKR”		Target fix ID
+			“48.223861”	Target fix latitude in degrees
+			“17.290333”	Target fix longitude in degrees
+			“0, ,0.0,0.0,0,0,0,1,205,0,0,1”
+			• Fix to an Altitude - FA			• Fix to a Manual Termination - FM			• Racetrack Course Reversal (Alt Term) - HA			• Racetrack (Single Circuit - Fix Term) - HF			• Racetrack (Manual Termination) - HM			• Initial Fix - IF			• Track to a Fix - TF			• Constant Radius Arc - RF			• Heading to an Altitude - VA			• Heading to an Intercept - VI			• Heading to a Manual Termination - VM
+	“0”
+	“310.0”		Magnetic heading (“0” if unspecified)
+	“2”
+
+	CI,2, ,0.0,108.0,0,0,0,1,205,0,0,0
+	CF,D040O,48.399000,17.544722,0,JAN,356.0,13.2,40.0,16.0,0,0,0,0,0,0,0,0
+	TF,BERVA,48.617500,17.541111,0, ,0.0,0.0,0.0,0.0,0,0,0,0,0,0,0,0
+
+
+		Path type			Terminator type
+	DME ARC			A	|	A	Altitude
+	Course to		C	|	C	Distance
+	Direct track		D	|	D	DME distance
+	Course from a fix to	F	|	F	Fix
+	Holding pattern		H	|	I	Next leg
+	Initial			I	|	M	Manual termination
+	Constant radius		R	|	R	Radial termination
+	Track between		T	|
+	Heading to		V	|
