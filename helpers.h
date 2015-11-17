@@ -4,10 +4,17 @@
 #include <stdarg.h>
 
 #include "airac.h"
+#include "types.h"
 
 #ifdef	__cplusplus
 extern "C" {
 #endif
+
+#if	defined(__GNUC__) || defined(__clang__)
+#define	PRINTF_ATTR(x)	__attribute__ ((format (printf, x, x + 1)))
+#else	/* __GNUC */
+#define	PRINTF_ATTR(x)
+#endif	/* __GNUC */
 
 /* Minimum/Maximum allowable elevation AMSL of anything */
 #define	MIN_ELEV	-1000.0
@@ -26,62 +33,58 @@ extern "C" {
 
 /* generic parser validator helpers */
 
-static inline int
+static inline bool_t
 is_valid_lat(double lat)
 {
 	return (lat <= 90.0 && lat >= -90.0);
 }
 
-static inline int
+static inline bool_t
 is_valid_lon(double lon)
 {
 	return (lon <= 180.0 && lon >= -180.0);
 }
 
-static inline int
+static inline bool_t
 is_valid_elev(double elev)
 {
 	return (elev >= MIN_ELEV && elev <= MAX_ELEV);
 }
 
-static inline int
+static inline bool_t
 is_valid_alt(double alt)
 {
 	return (alt >= MIN_ALT && alt <= MAX_ALT);
 }
 
-static inline int
+static inline bool_t
 is_valid_spd(double spd)
 {
 	return (spd >= 0.0 && spd <= MAX_SPD);
 }
 
-static inline int
+static inline bool_t
 is_valid_hdg(double hdg)
 {
 	/* "0" is not a valid heading, "360" is */
 	return (hdg > 0.0 && hdg <= 360.0);
 }
 
-static inline int
+static inline bool_t
 is_valid_arc_radius(double radius)
 {
 	return (radius >= MIN_ARC_RADIUS && radius <= MAX_ARC_RADIUS);
 }
 
-int is_valid_vor_freq(double freq_mhz);
-int is_valid_loc_freq(double freq_mhz);
-int is_valid_rwy_ID(const char *rwy_ID);
-
-/* geometry parser & validator helpers */
-int geo_pos_2d_from_str(const char *lat, const char *lon, geo_pos_2d_t *pos);
-int geo_pos_3d_from_str(const char *lat, const char *lon, const char *elev,
-    geo_pos_3d_t *pos);
+bool_t is_valid_vor_freq(double freq_mhz);
+bool_t is_valid_loc_freq(double freq_mhz);
+bool_t is_valid_rwy_ID(const char *rwy_ID);
 
 /* string processing helpers */
 char **explode_line(char *line, char *delim, size_t *num_comps);
 void strip_newline(char *line);
-void append_format(char **str, size_t *sz, const char *format, ...);
+void append_format(char **str, size_t *sz, const char *format, ...)
+    PRINTF_ATTR(3);
 
 #if	defined(__GNUC__) || defined(__clang__)
 #define	highbit64(x)	(64 - __builtin_clzll(x) - 1)

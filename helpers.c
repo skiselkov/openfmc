@@ -7,7 +7,7 @@
 
 #include "helpers.h"
 
-int
+bool_t
 is_valid_vor_freq(double freq_mhz)
 {
 	int freq_khz = freq_mhz * 1000;
@@ -32,7 +32,7 @@ is_valid_vor_freq(double freq_mhz)
 	return (1);
 }
 
-int
+bool_t
 is_valid_loc_freq(double freq_mhz)
 {
 	int freq_khz = freq_mhz * 1000;
@@ -47,7 +47,7 @@ is_valid_loc_freq(double freq_mhz)
 	return (1);
 }
 
-int
+bool_t
 is_valid_rwy_ID(const char *rwy_ID)
 {
 	char hdg_str[3];

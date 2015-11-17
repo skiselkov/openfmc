@@ -22,13 +22,82 @@
 #endif
 
 /* The order in this array must follow navproc_type_t */
-static char *navproc_type_to_str[NAVPROC_TYPES] = {
+static const char *navproc_type_to_str[NAVPROC_TYPES] = {
 	"SID", "SID_COMMON", "SID_TRANSITION",
 	"STAR", "STAR_COMMON", "STAR_TRANSITION",
 	"FINAL_TRANSITION", "FINAL"
 };
 
-static int
+static void dump_AF_seg(char **result, size_t *result_sz,
+    const navproc_seg_t *seg);
+static void dump_CA_seg(char **result, size_t *result_sz,
+    const navproc_seg_t *seg);
+static void dump_CA_seg(char **result, size_t *result_sz,
+    const navproc_seg_t *seg);
+static void dump_CD_seg(char **result, size_t *result_sz,
+    const navproc_seg_t *seg);
+static void dump_CF_seg(char **result, size_t *result_sz,
+    const navproc_seg_t *seg);
+static void dump_CI_CR_seg(char **result, size_t *result_sz,
+    const navproc_seg_t *seg);
+static void dump_DF_TF_seg(char **result, size_t *result_sz,
+    const navproc_seg_t *seg);
+static void dump_FA_seg(char **result, size_t *result_sz,
+    const navproc_seg_t *seg);
+static void dump_FC_FD_seg(char **result, size_t *result_sz,
+    const navproc_seg_t *seg);
+static void dump_FM_seg(char **result, size_t *result_sz,
+    const navproc_seg_t *seg);
+static void dump_HA_HF_HM_seg(char **result, size_t *result_sz,
+    const navproc_seg_t *seg);
+static void dump_IF_seg(char **result, size_t *result_sz,
+    const navproc_seg_t *seg);
+static void dump_PI_seg(char **result, size_t *result_sz,
+    const navproc_seg_t *seg);
+static void dump_RF_seg(char **result, size_t *result_sz,
+    const navproc_seg_t *seg);
+static void dump_VA_seg(char **result, size_t *result_sz,
+    const navproc_seg_t *seg);
+static void dump_VD_seg(char **result, size_t *result_sz,
+    const navproc_seg_t *seg);
+static void dump_VI_VM_VR_seg(char **result, size_t *result_sz,
+    const navproc_seg_t *seg);
+
+typedef void (*navproc_seg_dump_func_t)(char **, size_t *,
+    const navproc_seg_t *);
+/* The order in this array must follow navproc_seg_type_t */
+static navproc_seg_dump_func_t navproc_seg_dump_funcs[NAVPROC_SEG_TYPES] = {
+	dump_AF_seg,		/* NAVPROC_SEG_TYPE_ARC_TO_FIX */
+	dump_CA_seg,		/* NAVPROC_SEG_TYPE_CRS_TO_ALT */
+	dump_CD_seg,		/* NAVPROC_SEG_TYPE_CRS_TO_DME */
+	dump_CF_seg,		/* NAVPROC_SEG_TYPE_CRS_TO_FIX */
+	dump_CI_CR_seg,		/* NAVPROC_SEG_TYPE_CRS_TO_INTCP */
+	dump_CI_CR_seg,		/* NAVPROC_SEG_TYPE_CRS_TO_RADIAL */
+	dump_DF_TF_seg,		/* NAVPROC_SEG_TYPE_DIR_TO_FIX */
+	dump_FA_seg,		/* NAVPROC_SEG_TYPE_FIX_TO_ALT */
+	dump_FC_FD_seg,		/* NAVPROC_SEG_TYPE_FIX_TO_DIST */
+	dump_FC_FD_seg,		/* NAVPROC_SEG_TYPE_FIX_TO_DME */
+	dump_FM_seg,		/* NAVPROC_SEG_TYPE_FIX_TO_MANUAL */
+	dump_HA_HF_HM_seg,	/* NAVPROC_SEG_TYPE_HOLD_TO_ALT */
+	dump_HA_HF_HM_seg,	/* NAVPROC_SEG_TYPE_HOLD_TO_FIX */
+	dump_HA_HF_HM_seg,	/* NAVPROC_SEG_TYPE_HOLD_TO_MANUAL */
+	dump_IF_seg,		/* NAVPROC_SEG_TYPE_INIT_FIX */
+	dump_PI_seg,		/* NAVPROC_SEG_TYPE_PROC_TURN */
+	dump_RF_seg,		/* NAVPROC_SEG_TYPE_RADIUS_ARC_TO_FIX */
+	dump_DF_TF_seg,		/* NAVPROC_SEG_TYPE_TRK_TO_FIX */
+	dump_VA_seg,		/* NAVPROC_SEG_TYPE_HDG_TO_ALT */
+	dump_VD_seg,		/* NAVPROC_SEG_TYPE_HDG_TO_DME */
+	dump_VI_VM_VR_seg,	/* NAVPROC_SEG_TYPE_HDG_TO_INTCP */
+	dump_VI_VM_VR_seg,	/* NAVPROC_SEG_TYPE_HDG_TO_MANUAL */
+	dump_VI_VM_VR_seg	/* NAVPROC_SEG_TYPE_HDG_TO_RADIAL */
+};
+
+/* The order in this array must follow navproc_final_t */
+static const char *navproc_final_types_to_str[NAVPROC_FINAL_TYPES] = {
+	"ILS",	"VOR",	"NDB",	"RNAV",	"LDA"
+};
+
+static bool_t
 parse_airway_line(const char *line, airway_t *awy)
 {
 	char	*line_copy = strdup(line);
@@ -60,15 +129,15 @@ parse_airway_line(const char *line, airway_t *awy)
 
 	free(comps);
 	free(line_copy);
-	return (1);
+	return (B_TRUE);
 errout:
 	openfmc_log(OPENFMC_LOG_ERR, "Offending line was: \"%s\".", line);
 	free(comps);
 	free(line_copy);
-	return (0);
+	return (B_FALSE);
 }
 
-static int
+static bool_t
 parse_airway_seg_line(const char *line, airway_seg_t *seg)
 {
 	char	*line_copy = strdup(line);
@@ -103,14 +172,14 @@ parse_airway_seg_line(const char *line, airway_seg_t *seg)
 
 	free(comps);
 	free(line_copy);
-	return (1);
+	return (B_TRUE);
 errout:
 	free(comps);
 	free(line_copy);
-	return (0);
+	return (B_FALSE);
 }
 
-static int
+static bool_t
 parse_airway_segs(FILE *fp, airway_t *awy)
 {
 	char	*line = NULL;
@@ -141,14 +210,14 @@ parse_airway_segs(FILE *fp, airway_t *awy)
 	}
 
 	free(line);
-	return (1);
+	return (B_TRUE);
 errout:
 	openfmc_log(OPENFMC_LOG_ERR, "Offending line was: \"%s\".", line);
 	free(line);
 	free(awy->segs);
 	awy->segs = NULL;
 
-	return (0);
+	return (B_FALSE);
 }
 
 static void
@@ -237,7 +306,7 @@ airway_db_close(airway_db_t *db)
 	free(db);
 }
 
-static int
+static bool_t
 parse_arpt_line(char *line, airport_t *arpt)
 {
 	size_t num_comps;
@@ -272,13 +341,13 @@ parse_arpt_line(char *line, airport_t *arpt)
 	}
 
 	free(comps);
-	return (1);
+	return (B_TRUE);
 errout:
 	free(comps);
-	return (0);
+	return (B_FALSE);
 }
 
-static int
+static bool_t
 parse_rwy_line(const char *line, runway_t *rwy)
 {
 	size_t	num_comps;
@@ -330,21 +399,21 @@ parse_rwy_line(const char *line, runway_t *rwy)
 
 	free(comps);
 	free(line_copy);
-	return (1);
+	return (B_TRUE);
 errout:
 	openfmc_log(OPENFMC_LOG_ERR, "Error parsing runway line \"%s\".", line);
 	free(comps);
 	free(line_copy);
-	return (0);
+	return (B_FALSE);
 }
 
-static int
+static bool_t
 parse_sid_proc_line(char **comps, size_t num_comps, navproc_t *proc)
 {
 	if (num_comps != 4) {
 		openfmc_log(OPENFMC_LOG_ERR, "Error parsing SID line: "
 		    "incorrect number of columns.");
-		return (0);
+		return (B_FALSE);
 	}
 	(void) strlcpy(proc->name, comps[1], sizeof (proc->name));
 	if (is_valid_rwy_ID(comps[2])) {
@@ -357,16 +426,16 @@ parse_sid_proc_line(char **comps, size_t num_comps, navproc_t *proc)
 		(void) strlcpy(proc->fix_name, comps[2],
 		    sizeof (proc->fix_name));
 	}
-	return (1);
+	return (B_TRUE);
 }
 
-static int
+static bool_t
 parse_star_proc_line(char **comps, size_t num_comps, navproc_t *proc)
 {
 	if (num_comps != 4) {
 		openfmc_log(OPENFMC_LOG_ERR, "Error parsing STAR line: "
 		    "incorrect number of columns.");
-		return (0);
+		return (B_FALSE);
 	}
 	(void) strlcpy(proc->name, comps[1], sizeof (proc->name));
 	if (is_valid_rwy_ID(comps[2])) {
@@ -379,49 +448,49 @@ parse_star_proc_line(char **comps, size_t num_comps, navproc_t *proc)
 		(void) strlcpy(proc->fix_name, comps[2],
 		    sizeof (proc->fix_name));
 	}
-	return (1);
+	return (B_TRUE);
 }
 
-static int
+static bool_t
 parse_apptr_proc_line(char **comps, size_t num_comps, navproc_t *proc)
 {
 	if (num_comps != 4) {
 		openfmc_log(OPENFMC_LOG_ERR, "Error parsing APPTR line: "
 		    "incorrect number of columns.");
-		return (0);
+		return (B_FALSE);
 	}
 	proc->type = NAVPROC_TYPE_FINAL_TRANS;
 	if (!is_valid_rwy_ID(comps[2])) {
 		openfmc_log(OPENFMC_LOG_ERR, "Error parsing APPTR line: "
 		    "invalid runway ID \"%s\".", comps[2]);
-		return (0);
+		return (B_FALSE);
 	}
 	(void) strlcpy(proc->name, comps[1], sizeof (proc->name));
 	(void) strlcpy(proc->rwy_ID, comps[2], sizeof (proc->rwy_ID));
 	(void) strlcpy(proc->fix_name, comps[3], sizeof (proc->fix_name));
-	return (1);
+	return (B_TRUE);
 }
 
-static int
+static bool_t
 parse_final_proc_line(char **comps, size_t num_comps, navproc_t *proc)
 {
 	if (num_comps != 5) {
 		openfmc_log(OPENFMC_LOG_ERR, "Error parsing FINAL line: "
 		    "incorrect number of columns.");
-		return (0);
+		return (B_FALSE);
 	}
 	proc->type = NAVPROC_TYPE_FINAL;
 	if (!is_valid_rwy_ID(comps[2])) {
 		openfmc_log(OPENFMC_LOG_ERR, "Error parsing FINAL line: "
 		    "invalid runway ID \"%s\".", comps[2]);
-		return (0);
+		return (B_FALSE);
 	}
 	(void) strlcpy(proc->name, comps[1], sizeof (proc->name));
 	(void) strlcpy(proc->rwy_ID, comps[2], sizeof (proc->rwy_ID));
 	if (strlen(comps[3]) != 1) {
 		openfmc_log(OPENFMC_LOG_ERR, "Error parsing FINAL line: "
 		    "invalid approach type code \"%s\".", comps[3]);
-		return (0);
+		return (B_FALSE);
 	}
 	switch (comps[3][0]) {
 	case 'I':
@@ -442,38 +511,38 @@ parse_final_proc_line(char **comps, size_t num_comps, navproc_t *proc)
 	default:
 		openfmc_log(OPENFMC_LOG_ERR, "Error parsing FINAL line: "
 		    "invalid approach type code \"%s\".", comps[3]);
-		return (0);
+		return (B_FALSE);
 	}
 	if (sscanf(comps[4], "%u", &proc->num_main_segs) != 1) {
 		openfmc_log(OPENFMC_LOG_ERR, "Error parsing FINAL line: "
 		    "invalid number of main segments \"%s\".", comps[4]);
-		return (0);
+		return (B_FALSE);
 	}
-	return (1);
+	return (B_TRUE);
 }
 
-static int
-parse_alt_constr(char *comps[3], alt_constr_t *alt)
+static bool_t
+parse_alt_spd_term(char *comps[3], alt_lim_t *alt, spd_lim_t *spd)
 {
 	if (sscanf(comps[0], "%d", &alt->type) != 1) {
 		openfmc_log(OPENFMC_LOG_ERR, "Error parsing altitude "
 		    "constraint: invalid constraint type %s.", comps[0]);
-		return (0);
+		return (B_FALSE);
 	}
 	switch (alt->type) {
-	case ALT_CONSTR_NONE:
+	case ALT_LIM_NONE:
 		break;
-	case ALT_CONSTR_AT:
-	case ALT_CONSTR_AT_OR_ABV:
-	case ALT_CONSTR_AT_OR_BLW:
+	case ALT_LIM_AT:
+	case ALT_LIM_AT_OR_ABV:
+	case ALT_LIM_AT_OR_BLW:
 		if (sscanf(comps[1], "%u", &alt->alt1) != 1 ||
 		    !is_valid_alt(alt->alt1)) {
 			openfmc_log(OPENFMC_LOG_ERR, "Error parsing altitude "
 			    "constraint: invalid altitude value %s.", comps[1]);
-			return (0);
+			return (B_FALSE);
 		}
 		break;
-	case ALT_CONSTR_BETWEEN:
+	case ALT_LIM_BETWEEN:
 		if (sscanf(comps[1], "%u", &alt->alt1) != 1 ||
 		    !is_valid_alt(alt->alt1) ||
 		    sscanf(comps[2], "%u", &alt->alt2) != 1 ||
@@ -481,54 +550,49 @@ parse_alt_constr(char *comps[3], alt_constr_t *alt)
 			openfmc_log(OPENFMC_LOG_ERR, "Error parsing altitude "
 			    "constraint: invalid altitude values %s,%s.",
 			    comps[1], comps[2]);
-			return (0);
+			return (B_FALSE);
 		}
 		break;
 	default:
 		openfmc_log(OPENFMC_LOG_ERR, "Error parsing altitude "
 		    "constraint: unknown constraint type %s.", comps[0]);
-		return (0);
+		return (B_FALSE);
 	}
 
-	return (1);
-}
-
-static int
-parse_spd_constr(char *comps[2], spd_constr_t *spd)
-{
-	if (sscanf(comps[0], "%d", &spd->type) != 1) {
+	if (sscanf(comps[3], "%d", &spd->type) != 1) {
 		openfmc_log(OPENFMC_LOG_ERR, "Error parsing speed "
 		    "constraint: invalid constraint type %s.", comps[0]);
-		return (0);
+		return (B_FALSE);
 	}
 	switch (spd->type) {
-	case SPD_CONSTR_NONE:
+	case SPD_LIM_NONE:
 		break;
-	case SPD_CONSTR_AT_OR_BLW:
-		if (sscanf(comps[1], "%u", &spd->spd1) != 1 ||
+	case SPD_LIM_AT_OR_BLW:
+		if (sscanf(comps[4], "%u", &spd->spd1) != 1 ||
 		    !is_valid_spd(spd->spd1)) {
 			openfmc_log(OPENFMC_LOG_ERR, "Error parsing speed "
-			    "constraint: invalid speed value %s.", comps[1]);
-			return (0);
+			    "constraint: invalid speed value %s.", comps[4]);
+			return (B_FALSE);
 		}
 		break;
 	default:
 		openfmc_log(OPENFMC_LOG_ERR, "Error parsing speed "
-		    "constraint: unknown constraint type %s.", comps[0]);
-		return (0);
+		    "constraint: unknown constraint type %s.", comps[3]);
+		return (B_FALSE);
 	}
-	return (1);
+
+	return (B_TRUE);
 }
 
-static int
+static bool_t
 parse_proc_seg_fix(char *comps[3], fix_t *fix)
 {
 	if (strlen(comps[0]) > sizeof (fix->name) - 1)
-		return (0);
+		return (B_FALSE);
 	(void) strlcpy(fix->name, comps[0], sizeof (fix->name));
 	if (!geo_pos_2d_from_str(comps[1], comps[2], &fix->pos))
-		return (0);
-	return (1);
+		return (B_FALSE);
+	return (B_TRUE);
 }
 
 #define	CHECK_NUM_COMPS(n, seg_type) \
@@ -538,11 +602,11 @@ parse_proc_seg_fix(char *comps[3], fix_t *fix)
 			    "leg definition line: invalid number of columns " \
 			    "on line, wanted %d, got %lu.", #seg_type, n, \
 			    num_comps); \
-			return (0); \
+			return (B_FALSE); \
 		} \
 	} while (0)
 
-static int
+static bool_t
 parse_AF_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
 {
 	int dir;
@@ -552,7 +616,7 @@ parse_AF_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
 	if (sscanf(comps[4], "%d", &dir) != 1 || (dir != 1 && dir != 2)) {
 		openfmc_log(OPENFMC_LOG_ERR, "Error parsing AF segment: "
 		    "arc direction value invalid: %s.", comps[4]);
-		return (0);
+		return (B_FALSE);
 	}
 	(void) strlcpy(seg->leg_cmd.dme_arc.navaid, comps[5],
 	    sizeof (seg->leg_cmd.dme_arc.navaid));
@@ -563,11 +627,10 @@ parse_AF_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
 	    !is_valid_arc_radius(seg->leg_cmd.dme_arc.radius) ||
 	    sscanf(comps[8], "%lf", &seg->leg_cmd.dme_arc.end_radial) != 1 ||
 	    !is_valid_hdg(seg->leg_cmd.dme_arc.end_radial) ||
-	    !parse_alt_constr(&comps[9], &seg->alt_constr) ||
-	    !parse_spd_constr(&comps[12], &seg->spd_constr)) {
+	    !parse_alt_spd_term(&comps[9], &seg->alt_lim, &seg->spd_lim)) {
 		openfmc_log(OPENFMC_LOG_ERR, "Error parsing AF segment "
 		    "data fields");
-		return (0);
+		return (B_FALSE);
 	}
 	if (dir == 2) {
 		/*
@@ -580,27 +643,95 @@ parse_AF_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
 		seg->leg_cmd.dme_arc.end_radial = tmp;
 	}
 
-	return (1);
+	return (B_TRUE);
 }
 
-static int
+static void
+dump_alt_constr(const alt_lim_t *alt, char desc[32])
+{
+	switch (alt->type) {
+	case ALT_LIM_NONE:
+		desc[0] = 0;
+		break;
+	case ALT_LIM_AT:
+		sprintf(desc, ",A==%u", alt->alt1);
+		break;
+	case ALT_LIM_AT_OR_ABV:
+		sprintf(desc, ",A>=%u", alt->alt1);
+		break;
+	case ALT_LIM_AT_OR_BLW:
+		sprintf(desc, ",A<=%u", alt->alt1);
+		break;
+	case ALT_LIM_BETWEEN:
+		sprintf(desc, ",%u<=A<=%u", alt->alt2, alt->alt1);
+		break;
+	default:
+		assert(0);
+	}
+}
+
+static void
+dump_spd_constr(const spd_lim_t *spd, char desc[16])
+{
+	switch (spd->type) {
+	case SPD_LIM_NONE:
+		desc[0] = 0;
+		break;
+	case SPD_LIM_AT_OR_BLW:
+		sprintf(desc, ",S<=%u", spd->spd1);
+		break;
+	default:
+		assert(0);
+	}
+}
+
+#define	DUMP_ALT_LIM(alt) \
+	char alt_constr_desc[64]; \
+	dump_alt_constr((alt), alt_constr_desc)
+
+#define	DUMP_SPD_LIM(spd) \
+	char spd_constr_desc[32]; \
+	dump_spd_constr((spd), spd_constr_desc)
+
+static void
+dump_AF_seg(char **result, size_t *result_sz, const navproc_seg_t *seg)
+{
+	DUMP_ALT_LIM(&seg->alt_lim);
+	DUMP_SPD_LIM(&seg->spd_lim);
+	append_format(result, result_sz,
+	    "\tAF,N:%s,SR:%.01lf,ER:%.01lf,r:%.01lf,F:%s%s%s\n",
+	    seg->leg_cmd.dme_arc.navaid, seg->leg_cmd.dme_arc.start_radial,
+	    seg->leg_cmd.dme_arc.end_radial, seg->leg_cmd.dme_arc.radius,
+	    seg->term_cond.fix.name, alt_constr_desc, spd_constr_desc);
+}
+
+static bool_t
 parse_CA_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
 {
 	CHECK_NUM_COMPS(11, CA);
 	seg->type = NAVPROC_SEG_TYPE_CRS_TO_ALT;
 	if (sscanf(comps[2], "%lf", &seg->leg_cmd.crs) != 1 ||
 	    !is_valid_hdg(seg->leg_cmd.crs))
-		return (0);
-	if (!parse_alt_constr(&comps[3], &seg->term_cond.alt) ||
+		return (B_FALSE);
+	if (!parse_alt_spd_term(&comps[3], &seg->term_cond.alt,
+	    &seg->spd_lim) ||
 	    /* altitude constraint is required for CA segs */
-	    seg->term_cond.alt.type == ALT_CONSTR_NONE ||
-	    !parse_spd_constr(&comps[6], &seg->spd_constr))
-		return (0);
-	seg->alt_constr = seg->term_cond.alt;
-	return (1);
+	    seg->term_cond.alt.type == ALT_LIM_NONE)
+		return (B_FALSE);
+	seg->alt_lim = seg->term_cond.alt;
+	return (B_TRUE);
 }
 
-static int
+static void
+dump_CA_seg(char **result, size_t *result_sz, const navproc_seg_t *seg)
+{
+	DUMP_ALT_LIM(&seg->term_cond.alt);
+	DUMP_SPD_LIM(&seg->spd_lim);
+	append_format(result, result_sz, "\tCA,C:%.01lf%s%s\n",
+	    seg->leg_cmd.crs, alt_constr_desc, spd_constr_desc);
+}
+
+static bool_t
 parse_CD_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
 {
 	CHECK_NUM_COMPS(18, CD);
@@ -608,15 +739,24 @@ parse_CD_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
 	if (sscanf(comps[8], "%lf", &seg->leg_cmd.crs) != 1 ||
 	    !is_valid_hdg(seg->leg_cmd.crs) ||
 	    sscanf(comps[9], "%lf", &seg->term_cond.dme.dist) != 1 ||
-	    !parse_alt_constr(&comps[10], &seg->alt_constr) ||
-	    !parse_spd_constr(&comps[13], &seg->spd_constr))
-		return (0);
+	    !parse_alt_spd_term(&comps[10], &seg->alt_lim, &seg->spd_lim))
+		return (B_FALSE);
 	(void) strlcpy(seg->term_cond.dme.navaid, comps[5],
 	    sizeof (seg->term_cond.dme.navaid));
-	return (1);
+	return (B_TRUE);
 }
 
-static int
+static void
+dump_CD_seg(char **result, size_t *result_sz, const navproc_seg_t *seg)
+{
+	DUMP_ALT_LIM(&seg->alt_lim);
+	DUMP_SPD_LIM(&seg->spd_lim);
+	append_format(result, result_sz, "\tCD,C:%.01lf,N:%s,d:%.01lf%s%s\n",
+	    seg->leg_cmd.crs, seg->term_cond.dme.navaid,
+	    seg->term_cond.dme.dist, alt_constr_desc, spd_constr_desc);
+}
+
+static bool_t
 parse_CF_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
 {
 	CHECK_NUM_COMPS(18, CF);
@@ -624,15 +764,24 @@ parse_CF_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
 	if (sscanf(comps[8], "%lf", &seg->leg_cmd.crs) != 1 ||
 	    !is_valid_hdg(seg->leg_cmd.crs) ||
 	    !parse_proc_seg_fix(&comps[1], &seg->term_cond.fix) ||
-	    !parse_alt_constr(&comps[10], &seg->alt_constr) ||
-	    !parse_spd_constr(&comps[13], &seg->spd_constr))
-		return (0);
-	return (1);
+	    !parse_alt_spd_term(&comps[10], &seg->alt_lim, &seg->spd_lim))
+		return (B_FALSE);
+	return (B_TRUE);
 }
 
-static int
+static void
+dump_CF_seg(char **result, size_t *result_sz, const navproc_seg_t *seg)
+{
+	DUMP_ALT_LIM(&seg->alt_lim);
+	DUMP_SPD_LIM(&seg->spd_lim);
+	append_format(result, result_sz, "\tCF,C:%.01lf,F:%s%s%s\n",
+	    seg->leg_cmd.crs, seg->term_cond.fix.name, alt_constr_desc,
+	    spd_constr_desc);
+}
+
+static bool_t
 parse_CI_CR_seg(char **comps, size_t num_comps, navproc_seg_t *seg,
-    int is_CI)
+    bool_t is_CI)
 {
 	if (is_CI)
 		CHECK_NUM_COMPS(13, CI);
@@ -641,19 +790,36 @@ parse_CI_CR_seg(char **comps, size_t num_comps, navproc_seg_t *seg,
 	seg->type = NAVPROC_SEG_TYPE_CRS_TO_INTCP;
 	if (sscanf(comps[4], "%lf", &seg->leg_cmd.crs) != 1 ||
 	    !is_valid_hdg(seg->leg_cmd.crs) ||
-	    !parse_alt_constr(&comps[5], &seg->alt_constr) ||
-	    !parse_spd_constr(&comps[8], &seg->spd_constr) ||
+	    !parse_alt_spd_term(&comps[5], &seg->alt_lim, &seg->spd_lim) ||
 	    sscanf(comps[3], "%lf", &seg->term_cond.radial.radial) != 1 ||
 	    (!is_CI && !is_valid_hdg(seg->term_cond.radial.radial)))
-		return (0);
+		return (B_FALSE);
 	(void) strlcpy(seg->term_cond.radial.navaid, comps[2],
 	    sizeof (seg->term_cond.radial.navaid));
-	return (1);
+	return (B_TRUE);
 }
 
-static int
+static void
+dump_CI_CR_seg(char **result, size_t *result_sz, const navproc_seg_t *seg)
+{
+	DUMP_ALT_LIM(&seg->alt_lim);
+	DUMP_SPD_LIM(&seg->spd_lim);
+	if (seg->type == NAVPROC_SEG_TYPE_CRS_TO_INTCP) {
+		append_format(result, result_sz, "\tCI,C:%.01lf,N:%s%s%s\n",
+		    seg->leg_cmd.crs, seg->term_cond.radial.navaid,
+		    alt_constr_desc, spd_constr_desc);
+	} else {
+		append_format(result, result_sz,
+		    "\tCR,C:%.01lf,N:%s,R:%.01f%s%s\n",
+		    seg->leg_cmd.crs, seg->term_cond.radial.navaid,
+		    seg->term_cond.radial.radial, alt_constr_desc,
+		    spd_constr_desc);
+	}
+}
+
+static bool_t
 parse_DF_TF_seg(char **comps, size_t num_comps, navproc_seg_t *seg,
-    int is_DF)
+    bool_t is_DF)
 {
 	if (is_DF)
 		CHECK_NUM_COMPS(16, DF);
@@ -662,34 +828,55 @@ parse_DF_TF_seg(char **comps, size_t num_comps, navproc_seg_t *seg,
 	seg->type = is_DF ? NAVPROC_SEG_TYPE_DIR_TO_FIX :
 	    NAVPROC_SEG_TYPE_TRK_TO_FIX;
 	if (!geo_pos_2d_from_str(comps[2], comps[3], &seg->term_cond.fix.pos) ||
-	    !parse_alt_constr(&comps[is_DF ? 8 : 10], &seg->alt_constr) ||
-	    !parse_spd_constr(&comps[is_DF ? 11 : 13], &seg->spd_constr))
-		return (0);
+	    !parse_alt_spd_term(&comps[is_DF ? 8 : 10], &seg->alt_lim,
+	    &seg->spd_lim))
+		return (B_FALSE);
 	(void) strlcpy(seg->term_cond.fix.name, comps[1],
 	    sizeof (seg->term_cond.fix.name));
-	return (1);
+	return (B_TRUE);
 }
 
-static int
+static void
+dump_DF_TF_seg(char **result, size_t *result_sz, const navproc_seg_t *seg)
+{
+	DUMP_ALT_LIM(&seg->alt_lim);
+	DUMP_SPD_LIM(&seg->spd_lim);
+	append_format(result, result_sz, "\t%s,F:%s,lat:%lf,lon:%lf%s%s\n",
+	    seg->type == NAVPROC_SEG_TYPE_DIR_TO_FIX ? "DF" : "TF",
+	    seg->term_cond.fix.name, seg->term_cond.fix.pos.lat,
+	    seg->term_cond.fix.pos.lon, alt_constr_desc, spd_constr_desc);
+}
+
+static bool_t
 parse_FA_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
 {
 	CHECK_NUM_COMPS(17, FA);
 	seg->type = NAVPROC_SEG_TYPE_FIX_TO_ALT;
 	if (!geo_pos_2d_from_str(comps[2], comps[3], &seg->leg_cmd.fix.pos) ||
-	    !parse_alt_constr(&comps[9], &seg->term_cond.alt) ||
+	    !parse_alt_spd_term(&comps[9], &seg->term_cond.alt,
+	    &seg->spd_lim) ||
 	    /* altitude constraint is required for CA segs */
-	    seg->term_cond.alt.type == ALT_CONSTR_NONE ||
-	    !parse_spd_constr(&comps[12], &seg->spd_constr))
-		return (0);
-	seg->alt_constr = seg->term_cond.alt;
+	    seg->term_cond.alt.type == ALT_LIM_NONE)
+		return (B_FALSE);
+	seg->alt_lim = seg->term_cond.alt;
 	(void) strlcpy(seg->leg_cmd.fix.name, comps[1],
 	    sizeof (seg->leg_cmd.fix.name));
-	return (1);
+	return (B_TRUE);
 }
 
-static int
+static void
+dump_FA_seg(char **result, size_t *result_sz, const navproc_seg_t *seg)
+{
+	DUMP_ALT_LIM(&seg->term_cond.alt);
+	DUMP_SPD_LIM(&seg->spd_lim);
+	append_format(result, result_sz, "\tFA,F:%s,lat:%lf,lon:%lf%s%s\n",
+	    seg->leg_cmd.fix.name, seg->leg_cmd.fix.pos.lat,
+	    seg->leg_cmd.fix.pos.lon, alt_constr_desc, spd_constr_desc);
+}
+
+static bool_t
 parse_FC_FD_seg(char **comps, size_t num_comps, navproc_seg_t *seg,
-    int is_FC)
+    bool_t is_FC)
 {
 	if (is_FC) {
 		CHECK_NUM_COMPS(18, FC);
@@ -700,17 +887,29 @@ parse_FC_FD_seg(char **comps, size_t num_comps, navproc_seg_t *seg,
 	}
 	if (!geo_pos_2d_from_str(comps[2], comps[3], &seg->leg_cmd.fix.pos) ||
 	    sscanf(comps[9], "%lf", &seg->term_cond.dme.dist) != 1 ||
-	    !parse_alt_constr(&comps[10], &seg->alt_constr) ||
-	    !parse_spd_constr(&comps[13], &seg->spd_constr))
-		return (0);
+	    !parse_alt_spd_term(&comps[10], &seg->alt_lim, &seg->spd_lim))
+		return (B_FALSE);
 	(void) strlcpy(seg->leg_cmd.fix.name, comps[1],
 	    sizeof (seg->leg_cmd.fix.name));
 	(void) strlcpy(seg->term_cond.dme.navaid, comps[5],
 	    sizeof (seg->term_cond.dme.navaid));
-	return (1);
+	return (B_TRUE);
 }
 
-static int
+static void
+dump_FC_FD_seg(char **result, size_t *result_sz, const navproc_seg_t *seg)
+{
+	DUMP_ALT_LIM(&seg->alt_lim);
+	DUMP_SPD_LIM(&seg->spd_lim);
+	append_format(result, result_sz,
+	    "\t%s,F:%s,lat:%lf,lon:%lf,N:%s,d:%.01f%s%s\n",
+	    seg->type == NAVPROC_SEG_TYPE_FIX_TO_DIST ? "FA" : "FD",
+	    seg->leg_cmd.fix.name, seg->leg_cmd.fix.pos.lat,
+	    seg->leg_cmd.fix.pos.lon, seg->term_cond.dme.navaid,
+	    seg->term_cond.dme.dist, alt_constr_desc, spd_constr_desc);
+}
+
+static bool_t
 parse_FM_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
 {
 	CHECK_NUM_COMPS(17, FM);
@@ -718,15 +917,26 @@ parse_FM_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
 	if (!geo_pos_2d_from_str(comps[2], comps[3],
 	    &seg->leg_cmd.fix_trk.fix.pos) ||
 	    sscanf(comps[8], "%lf", &seg->leg_cmd.fix_trk.crs) != 1 ||
-	    !parse_alt_constr(&comps[9], &seg->alt_constr) ||
-	    !parse_spd_constr(&comps[12], &seg->spd_constr))
-		return (0);
+	    !parse_alt_spd_term(&comps[9], &seg->alt_lim, &seg->spd_lim))
+		return (B_FALSE);
 	(void) strlcpy(seg->leg_cmd.fix_trk.fix.name, comps[1],
 	    sizeof (seg->leg_cmd.fix_trk.fix.name));
-	return (1);
+	return (B_TRUE);
 }
 
-static int
+static void
+dump_FM_seg(char **result, size_t *result_sz, const navproc_seg_t *seg)
+{
+	DUMP_ALT_LIM(&seg->alt_lim);
+	DUMP_SPD_LIM(&seg->spd_lim);
+	append_format(result, result_sz,
+	    "\tFM,F:%s,lat:%lf,lon:%lf,T:%.01lf%s%s\n",
+	    seg->leg_cmd.fix_trk.fix.name, seg->leg_cmd.fix_trk.fix.pos.lat,
+	    seg->leg_cmd.fix_trk.fix.pos.lon, seg->leg_cmd.fix_trk.crs,
+	    alt_constr_desc, spd_constr_desc);
+}
+
+static bool_t
 parse_HA_HF_HM_seg(char **comps, size_t num_comps, navproc_seg_t *seg,
     navproc_seg_type_t type)
 {
@@ -742,38 +952,73 @@ parse_HA_HF_HM_seg(char **comps, size_t num_comps, navproc_seg_t *seg,
 
 	if (!geo_pos_2d_from_str(comps[2], comps[3],
 	    &seg->leg_cmd.hold.fix.pos) ||
-	    !parse_alt_constr(&comps[10], &seg->alt_constr) ||
+	    !parse_alt_spd_term(&comps[10], &seg->alt_lim, &seg->spd_lim) ||
 	    /* alt constr is mandatory on HA segs */
 	    (type == NAVPROC_SEG_TYPE_HOLD_TO_ALT &&
-	    seg->alt_constr.type == ALT_CONSTR_NONE) ||
-	    !parse_spd_constr(&comps[13], &seg->spd_constr))
-		return (0);
+	    seg->alt_lim.type == ALT_LIM_NONE) ||
+	    sscanf(comps[8], "%lf", &seg->leg_cmd.hold.inbd_crs) != 1 ||
+	    !is_valid_hdg(seg->leg_cmd.hold.inbd_crs) ||
+	    sscanf(comps[9], "%lf", &seg->leg_cmd.hold.leg_len) != 1)
+		return (B_FALSE);
 	(void) strlcpy(seg->leg_cmd.hold.fix.name, comps[1],
 	    sizeof (seg->leg_cmd.fix.name));
 	(void) strlcpy(seg->term_cond.dme.navaid, comps[5],
 	    sizeof (seg->term_cond.dme.navaid));
 	if (type == NAVPROC_SEG_TYPE_HOLD_TO_ALT)
-		seg->term_cond.alt = seg->alt_constr;
+		seg->term_cond.alt = seg->alt_lim;
 	else if (type == NAVPROC_SEG_TYPE_HOLD_TO_FIX)
 		seg->term_cond.fix = seg->leg_cmd.hold.fix;
-	return (1);
+	return (B_TRUE);
 }
 
-static int
+static void
+dump_HA_HF_HM_seg(char **result, size_t *result_sz, const navproc_seg_t *seg)
+{
+	DUMP_SPD_LIM(&seg->spd_lim);
+	if (seg->type == NAVPROC_SEG_TYPE_HOLD_TO_ALT) {
+		DUMP_ALT_LIM(&seg->term_cond.alt);
+		append_format(result, result_sz,
+		    "\tHA,F:%s,lat:%lf,lon:%lf,IC:%.01lf,L:%.01lf%s%s\n",
+		    seg->leg_cmd.hold.fix.name, seg->leg_cmd.hold.fix.pos.lat,
+		    seg->leg_cmd.hold.fix.pos.lon, seg->leg_cmd.hold.inbd_crs,
+		    seg->leg_cmd.hold.leg_len, alt_constr_desc,
+		    spd_constr_desc);
+	} else {
+		DUMP_ALT_LIM(&seg->alt_lim);
+		append_format(result, result_sz,
+		    "\t%s,F:%s,lat:%lf,lon:%lf,IC:%.01lf,L:%.01lf%s%s\n",
+		    seg->type == NAVPROC_SEG_TYPE_HOLD_TO_FIX ? "HF" : "HM",
+		    seg->leg_cmd.hold.fix.name, seg->leg_cmd.hold.fix.pos.lat,
+		    seg->leg_cmd.hold.fix.pos.lon, seg->leg_cmd.hold.inbd_crs,
+		    seg->leg_cmd.hold.leg_len, alt_constr_desc,
+		    spd_constr_desc);
+	}
+}
+
+static bool_t
 parse_IF_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
 {
 	CHECK_NUM_COMPS(15, IF);
 	seg->type = NAVPROC_SEG_TYPE_INIT_FIX;
 	if (!geo_pos_2d_from_str(comps[2], comps[3], &seg->leg_cmd.fix.pos) ||
-	    !parse_alt_constr(&comps[7], &seg->alt_constr) ||
-	    !parse_spd_constr(&comps[10], &seg->spd_constr))
-		return (0);
+	    !parse_alt_spd_term(&comps[7], &seg->alt_lim, &seg->spd_lim))
+		return (B_FALSE);
 	(void) strlcpy(seg->leg_cmd.fix.name, comps[1],
 	    sizeof (seg->leg_cmd.fix.name));
-	return (1);
+	return (B_TRUE);
 }
 
-static int
+static void
+dump_IF_seg(char **result, size_t *result_sz, const navproc_seg_t *seg)
+{
+	DUMP_ALT_LIM(&seg->alt_lim);
+	DUMP_SPD_LIM(&seg->spd_lim);
+	append_format(result, result_sz, "\tIF,F:%s,lat:%lf,lon:%lf%s%s\n",
+	    seg->leg_cmd.fix.name, seg->leg_cmd.fix.pos.lat,
+	    seg->leg_cmd.fix.pos.lon, alt_constr_desc, spd_constr_desc);
+}
+
+static bool_t
 parse_PI_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
 {
 	int turn_dir;
@@ -782,7 +1027,7 @@ parse_PI_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
 	seg->type = NAVPROC_SEG_TYPE_PROC_TURN;
 	if (!geo_pos_2d_from_str(comps[2], comps[3],
 	    &seg->leg_cmd.proc_turn.startpt.pos) ||
-	    sscanf(comps[4], "%d", &turn_dir) ||
+	    sscanf(comps[4], "%d", &turn_dir) != 1 ||
 	    (turn_dir != 1 && turn_dir != 2) ||
 	    sscanf(comps[6], "%lf", &seg->leg_cmd.proc_turn.outbd_turn_hdg)
 	    != 1 || !is_valid_hdg(seg->leg_cmd.proc_turn.outbd_turn_hdg) ||
@@ -792,17 +1037,37 @@ parse_PI_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
 	    != 1 || !is_valid_hdg(seg->leg_cmd.proc_turn.outbd_radial) ||
 	    sscanf(comps[9], "%lf", &seg->leg_cmd.proc_turn.max_excrs_time)
 	    != 1 ||
-	    !parse_alt_constr(&comps[10], &seg->alt_constr) ||
-	    !parse_spd_constr(&comps[12], &seg->spd_constr))
-		return (0);
+	    !parse_alt_spd_term(&comps[10], &seg->alt_lim, &seg->spd_lim))
+		return (B_FALSE);
+	seg->leg_cmd.proc_turn.turn_right = (turn_dir == 1);
 	(void) strlcpy(seg->leg_cmd.proc_turn.startpt.name, comps[1],
 	    sizeof (seg->leg_cmd.proc_turn.startpt.name));
 	(void) strlcpy(seg->leg_cmd.proc_turn.navaid, comps[5],
 	    sizeof (seg->leg_cmd.proc_turn.navaid));
-	return (1);
+	return (B_TRUE);
 }
 
-static int
+static void
+dump_PI_seg(char **result, size_t *result_sz, const navproc_seg_t *seg)
+{
+	DUMP_ALT_LIM(&seg->alt_lim);
+	DUMP_SPD_LIM(&seg->spd_lim);
+	append_format(result, result_sz,
+	    "\tPI,SP:%s,lat:%.01lf,lon:%.01lf,OR:%.01lf,TH:%.01lf,"
+	    "right:%d,MD:%.01lf,MT:%.01lf,N:%s%s%s\n",
+	    seg->leg_cmd.proc_turn.startpt.name,
+	    seg->leg_cmd.proc_turn.startpt.pos.lat,
+	    seg->leg_cmd.proc_turn.startpt.pos.lon,
+	    seg->leg_cmd.proc_turn.outbd_radial,
+	    seg->leg_cmd.proc_turn.outbd_turn_hdg,
+	    seg->leg_cmd.proc_turn.turn_right,
+	    seg->leg_cmd.proc_turn.max_excrs_dist,
+	    seg->leg_cmd.proc_turn.max_excrs_time,
+	    seg->leg_cmd.proc_turn.navaid,
+	    alt_constr_desc, spd_constr_desc);
+}
+
+static bool_t
 parse_RF_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
 {
 	CHECK_NUM_COMPS(16, RF);
@@ -810,7 +1075,7 @@ parse_RF_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
 	if (sscanf(comps[4], "%d", &seg->leg_cmd.radius_arc.cw) != 1 ||
 	    (seg->leg_cmd.radius_arc.cw != 1 &&
 	    seg->leg_cmd.radius_arc.cw != 2))
-		return (0);
+		return (B_FALSE);
 	/* change CW flag from 1-2 to 0-1 */
 	seg->leg_cmd.radius_arc.cw--;
 	(void) strlcpy(seg->leg_cmd.radius_arc.navaid, comps[5],
@@ -820,33 +1085,52 @@ parse_RF_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
 	    !is_valid_hdg(seg->leg_cmd.radius_arc.end_radial) ||
 	    sscanf(comps[7], "%lf", &seg->leg_cmd.radius_arc.radius) != 1 ||
 	    !is_valid_arc_radius(seg->leg_cmd.radius_arc.radius) ||
-	    !parse_alt_constr(&comps[8], &seg->alt_constr) ||
-	    !parse_spd_constr(&comps[11], &seg->spd_constr))
-		return (0);
+	    !parse_alt_spd_term(&comps[8], &seg->alt_lim, &seg->spd_lim))
+		return (B_FALSE);
 
-	return (1);
+	return (B_TRUE);
 }
 
-static int
+static void
+dump_RF_seg(char **result, size_t *result_sz, const navproc_seg_t *seg)
+{
+	DUMP_ALT_LIM(&seg->alt_lim);
+	DUMP_SPD_LIM(&seg->spd_lim);
+	append_format(result, result_sz,
+	    "\tRF,N:%s,ER:%.01lf,r:%.01lf,cw:%d,F:%s%s%s\n",
+	    seg->leg_cmd.radius_arc.navaid, seg->leg_cmd.radius_arc.end_radial,
+	    seg->leg_cmd.radius_arc.radius, seg->leg_cmd.radius_arc.cw,
+	    seg->term_cond.fix.name, alt_constr_desc, spd_constr_desc);
+}
+
+static bool_t
 parse_VA_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
 {
 	CHECK_NUM_COMPS(11, VA);
 	seg->type = NAVPROC_SEG_TYPE_HDG_TO_ALT;
 	if (sscanf(comps[2], "%lf", &seg->leg_cmd.hdg) != 1 ||
 	    !is_valid_hdg(seg->leg_cmd.hdg) ||
-	    !parse_alt_constr(&comps[3], &seg->alt_constr) ||
+	    !parse_alt_spd_term(&comps[3], &seg->alt_lim, &seg->spd_lim) ||
 	    /* alt constr mandatory on VA segs */
-	    seg->alt_constr.type == ALT_CONSTR_NONE ||
-	    !parse_spd_constr(&comps[6], &seg->spd_constr)) {
+	    seg->alt_lim.type == ALT_LIM_NONE) {
 		openfmc_log(OPENFMC_LOG_ERR, "Error parsing VA segment line");
-		return (0);
+		return (B_FALSE);
 	}
-	seg->term_cond.alt = seg->alt_constr;
+	seg->term_cond.alt = seg->alt_lim;
 
-	return (1);
+	return (B_TRUE);
 }
 
-static int
+static void
+dump_VA_seg(char **result, size_t *result_sz, const navproc_seg_t *seg)
+{
+	DUMP_ALT_LIM(&seg->term_cond.alt);
+	DUMP_SPD_LIM(&seg->spd_lim);
+	append_format(result, result_sz, "\tVA,H:%.01lf%s%s\n",
+	    seg->leg_cmd.hdg, alt_constr_desc, spd_constr_desc);
+}
+
+static bool_t
 parse_VD_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
 {
 	CHECK_NUM_COMPS(18, VD);
@@ -854,18 +1138,27 @@ parse_VD_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
 	if (sscanf(comps[8], "%lf", &seg->leg_cmd.hdg) != 1 ||
 	    !is_valid_hdg(seg->leg_cmd.hdg) ||
 	    sscanf(comps[9], "%lf", &seg->term_cond.dme.dist) != 1 ||
-	    !parse_alt_constr(&comps[10], &seg->alt_constr) ||
-	    !parse_spd_constr(&comps[13], &seg->spd_constr)) {
+	    !parse_alt_spd_term(&comps[10], &seg->alt_lim, &seg->spd_lim)) {
 		openfmc_log(OPENFMC_LOG_ERR, "Error parsing VD segment line");
-		return (0);
+		return (B_FALSE);
 	}
 	(void) strlcpy(seg->term_cond.dme.navaid, comps[5],
 	    sizeof (seg->term_cond.dme.navaid));
 
-	return (1);
+	return (B_TRUE);
 }
 
-static int
+static void
+dump_VD_seg(char **result, size_t *result_sz, const navproc_seg_t *seg)
+{
+	DUMP_ALT_LIM(&seg->alt_lim);
+	DUMP_SPD_LIM(&seg->spd_lim);
+	append_format(result, result_sz, "\tVA,H:%.01lf,N:%s,d:%.01lf%s%s\n",
+	    seg->leg_cmd.hdg, seg->term_cond.dme.navaid,
+	    seg->term_cond.dme.dist, alt_constr_desc, spd_constr_desc);
+}
+
+static bool_t
 parse_VI_VM_VR_seg(char **comps, size_t num_comps, navproc_seg_t *seg,
     navproc_seg_type_t type)
 {
@@ -888,11 +1181,10 @@ parse_VI_VM_VR_seg(char **comps, size_t num_comps, navproc_seg_t *seg,
 	    (type == NAVPROC_SEG_TYPE_HDG_TO_RADIAL &&
 	    (sscanf(comps[4], "%lf", &seg->term_cond.radial.radial) != 1 ||
 	    !is_valid_hdg(seg->term_cond.radial.radial))) ||
-	    !parse_alt_constr(&comps[5], &seg->alt_constr) ||
-	    !parse_spd_constr(&comps[8], &seg->spd_constr)) {
+	    !parse_alt_spd_term(&comps[5], &seg->alt_lim, &seg->spd_lim)) {
 		openfmc_log(OPENFMC_LOG_ERR, "Error parsing %s segment line",
 		    leg_name);
-		return (0);
+		return (B_FALSE);
 	}
 	if (type == NAVPROC_SEG_TYPE_HDG_TO_INTCP &&
 	    strcmp(comps[2], " ") != 0) {
@@ -904,10 +1196,31 @@ parse_VI_VM_VR_seg(char **comps, size_t num_comps, navproc_seg_t *seg,
 		    sizeof (seg->term_cond.radial.navaid));
 	}
 
-	return (1);
+	return (B_TRUE);
 }
 
-static int
+static void
+dump_VI_VM_VR_seg(char **result, size_t *result_sz, const navproc_seg_t *seg)
+{
+	DUMP_ALT_LIM(&seg->alt_lim);
+	DUMP_SPD_LIM(&seg->spd_lim);
+	if (seg->type == NAVPROC_SEG_TYPE_HDG_TO_INTCP) {
+		append_format(result, result_sz, "\tVI,H:%.01lf,N:%s%s%s\n",
+		    seg->leg_cmd.hdg, seg->term_cond.navaid,
+		    alt_constr_desc, spd_constr_desc);
+	} else if (seg->type == NAVPROC_SEG_TYPE_HDG_TO_MANUAL) {
+		append_format(result, result_sz, "\tVM,H:%.01lf,%s,%s\n",
+		    seg->leg_cmd.hdg, alt_constr_desc, spd_constr_desc);
+	} else {
+		append_format(result, result_sz,
+		    "\tVR,H:%.01lf,N:%s,R:%.01lf,%s,%s\n",
+		    seg->leg_cmd.hdg, seg->term_cond.radial.navaid,
+		    seg->term_cond.radial.radial, alt_constr_desc,
+		    spd_constr_desc);
+	}
+}
+
+static bool_t
 parse_proc_seg_line(const char *line, navproc_t *proc)
 {
 	char		**comps = NULL;
@@ -915,6 +1228,7 @@ parse_proc_seg_line(const char *line, navproc_t *proc)
 	navproc_seg_t	seg;
 	char		*line_copy = strdup(line);
 
+	memset(&seg, 0, sizeof (seg));
 	comps = explode_line(line_copy, ",", &num_comps);
 
 	assert(num_comps > 0);
@@ -1007,13 +1321,13 @@ parse_proc_seg_line(const char *line, navproc_t *proc)
 
 	free(comps);
 	free(line_copy);
-	return (1);
+	return (B_TRUE);
 errout:
 	openfmc_log(OPENFMC_LOG_ERR, "Error parsing procedure segment line. "
 	    "Offending line was: \"%s\".", line);
 	free(comps);
 	free(line_copy);
-	return (0);
+	return (B_FALSE);
 }
 
 static int
@@ -1083,7 +1397,7 @@ errout:
 	return (-1);
 }
 
-static int
+static bool_t
 parse_proc_file(FILE *fp, airport_t *arpt)
 {
 	navproc_t	proc;
@@ -1101,9 +1415,9 @@ parse_proc_file(FILE *fp, airport_t *arpt)
 		    sizeof (proc));
 	}
 	if (n == -1)
-		return (0);
+		return (B_FALSE);
 
-	return (1);
+	return (B_TRUE);
 }
 
 airport_t *
@@ -1116,7 +1430,7 @@ airport_open(const char *arpt_icao, const char *navdata_dir)
 	ssize_t		line_len = 0;
 	size_t		line_cap = 0;
 	char		*line = NULL;
-	int		done = 0;
+	bool_t		done = B_FALSE;
 
 	arpt = calloc(sizeof (*arpt), 1);
 	if (!arpt)
@@ -1262,16 +1576,28 @@ airport_dump(const airport_t *arpt)
 	    arpt->num_procs);
 	for (unsigned i = 0; i < arpt->num_procs; i++) {
 		const navproc_t *proc = &arpt->procs[i];
+		char final_type[32];
+
+		if (proc->type == NAVPROC_TYPE_FINAL)
+			sprintf(final_type, "      final_type: %s\n",
+			    navproc_final_types_to_str[proc->final_type]);
+		else
+			final_type[0] = 0;
 		append_format(&result, &result_sz,
 		    "    %s\n"
 		    "      name: %s\n"
+		    "%s"
 		    "      rwy: %s\n"
 		    "      fix: %s\n"
 		    "      num_segs: %u\n"
 		    "      num_main_segs: %u\n"
 		    "      Segments:\n",
-		    navproc_type_to_str[proc->type], proc->name, proc->rwy_ID,
-		    proc->fix_name, proc->num_segs, proc->num_main_segs);
+		    navproc_type_to_str[proc->type], proc->name, final_type,
+		    proc->rwy_ID, proc->fix_name, proc->num_segs,
+		    proc->num_main_segs);
+		for (unsigned j = 0; j < proc->num_segs; j++)
+			navproc_seg_dump_funcs[proc->segs[j].type](&result,
+			    &result_sz, &proc->segs[j]);
 	}
 
 	append_format(&result, &result_sz,

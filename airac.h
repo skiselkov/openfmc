@@ -3,6 +3,7 @@
 
 #include "geom.h"
 #include "htbl.h"
+#include "types.h"
 
 #ifdef	__cplusplus
 extern "C" {
@@ -53,7 +54,7 @@ typedef struct {
 	char		name[NAV_NAME_LEN];
 	char		icao_country_code[ICAO_COUNTRY_CODE_LEN + 1];
 	navaid_type_t	type;
-	unsigned int	freq;		/* in Hz */
+	unsigned	freq;		/* in Hz */
 	geo_pos_3d_t	pos;
 } navaid_t;
 
@@ -94,32 +95,33 @@ typedef enum {
 	NAVPROC_SEG_TYPE_HDG_TO_DME,		/* VD */
 	NAVPROC_SEG_TYPE_HDG_TO_INTCP,		/* VI */
 	NAVPROC_SEG_TYPE_HDG_TO_MANUAL,		/* VM */
-	NAVPROC_SEG_TYPE_HDG_TO_RADIAL		/* VR */
+	NAVPROC_SEG_TYPE_HDG_TO_RADIAL,		/* VR */
+	NAVPROC_SEG_TYPES
 } navproc_seg_type_t;
 
 typedef enum {
-	ALT_CONSTR_NONE = 0,	/* ALT unconstrained */
-	ALT_CONSTR_AT,		/* ALT == alt1 */
-	ALT_CONSTR_AT_OR_ABV,	/* ALT >= alt1 */
-	ALT_CONSTR_AT_OR_BLW,	/* ALT <= alt1 */
-	ALT_CONSTR_BETWEEN,	/* alt1 >= ALT && ALT >= alt2 */
+	ALT_LIM_NONE = 0,	/* ALT unconstrained */
+	ALT_LIM_AT,		/* ALT == alt1 */
+	ALT_LIM_AT_OR_ABV,	/* ALT >= alt1 */
+	ALT_LIM_AT_OR_BLW,	/* ALT <= alt1 */
+	ALT_LIM_BETWEEN,	/* alt1 >= ALT && ALT >= alt2 */
 } alt_type_t;
 
 typedef enum {
-	SPD_CONSTR_NONE = 0,
-	SPD_CONSTR_AT_OR_BLW	/* SPD <= spd1 */
+	SPD_LIM_NONE = 0,
+	SPD_LIM_AT_OR_BLW	/* SPD <= spd1 */
 } spd_type_t;
 
 typedef struct {
 	alt_type_t	type;
 	unsigned	alt1;
 	unsigned	alt2;
-} alt_constr_t;
+} alt_lim_t;
 
 typedef struct {
 	spd_type_t	type;
 	unsigned	spd1;
-} spd_constr_t;
+} spd_lim_t;
 
 typedef struct navproc_seg_s {
 	navproc_seg_type_t	type;
@@ -139,10 +141,10 @@ typedef struct navproc_seg_s {
 			double	radius;
 		} dme_arc;
 		struct {			/* RF */
-			char	navaid[NAV_NAME_LEN];
-			double	end_radial;
-			double	radius;
-			int	cw;		/* clockwise or counter-CW */
+			char		navaid[NAV_NAME_LEN];
+			double		end_radial;
+			double		radius;
+			bool_t	cw;	/* clockwise or counter-CW */
 		} radius_arc;
 		fix_t		fix;		/* FA, IF */
 		struct {			/* FC, FD */
@@ -161,7 +163,7 @@ typedef struct navproc_seg_s {
 			double	outbd_turn_hdg;
 			double	max_excrs_dist;
 			double	max_excrs_time;
-			int	turn_right;
+			bool_t	turn_right;
 			char	navaid[NAV_NAME_LEN];
 		} proc_turn;
 	} leg_cmd;
@@ -169,7 +171,7 @@ typedef struct navproc_seg_s {
 	/* Segment termination condition */
 	union {
 		fix_t		fix;		/* AF, CF, DF, RF, TF */
-		alt_constr_t	alt;		/* CA, FA, HA, VA */
+		alt_lim_t	alt;		/* CA, FA, HA, VA */
 		struct {			/* CR, CI (optional), VR */
 			char	navaid[NAV_NAME_LEN];
 			double	radial;
@@ -182,8 +184,9 @@ typedef struct navproc_seg_s {
 	} term_cond;
 
 	/* Generic segment constraints */
-	spd_constr_t spd_constr;
-	alt_constr_t alt_constr;
+	spd_lim_t	spd_lim;
+	alt_lim_t	alt_lim;
+	bool_t		ovrfly;
 } navproc_seg_t;
 
 typedef enum {
@@ -191,7 +194,8 @@ typedef enum {
 	NAVPROC_FINAL_VOR,		/* D */
 	NAVPROC_FINAL_NDB,		/* N */
 	NAVPROC_FINAL_RNAV,		/* G */
-	NAVPROC_FINAL_LDA		/* C */
+	NAVPROC_FINAL_LDA,		/* C */
+	NAVPROC_FINAL_TYPES
 } navproc_final_t;
 
 typedef struct navproc_s {
@@ -199,10 +203,10 @@ typedef struct navproc_s {
 	char		name[NAV_NAME_LEN];
 	char		rwy_ID[RWY_ID_LEN + 1];
 	char		fix_name[NAV_NAME_LEN];
-	unsigned int	num_segs;
+	unsigned	num_segs;
 	navproc_seg_t	*segs;
 	/* number of main procedure segments, remainder is for go-around */
-	unsigned int	num_main_segs;
+	unsigned	num_main_segs;
 	navproc_final_t	final_type;
 } navproc_t;
 
@@ -210,12 +214,12 @@ typedef struct navproc_s {
 
 typedef struct runway_s {
 	char		ID[RWY_ID_LEN + 1];
-	unsigned int	hdg;
-	unsigned int	length;
-	unsigned int	width;
-	int		loc_avail;
-	unsigned int	loc_freq;	/* in Hz */
-	unsigned int	loc_fcrs;
+	unsigned	hdg;
+	unsigned	length;
+	unsigned	width;
+	bool_t		loc_avail;
+	unsigned	loc_freq;	/* in Hz */
+	unsigned	loc_fcrs;
 	geo_pos_3d_t	thr_pos;
 	double		gp_angle;
 } runway_t;
@@ -224,14 +228,14 @@ typedef struct airport_s {
 	char		name[32];
 	char		icao[ICAO_NAME_LEN + 1];
 	geo_pos_3d_t	refpt;
-	unsigned int	TA;
-	unsigned int	TL;
-	unsigned int	longest_rwy;
-	unsigned int	num_rwys;
+	unsigned	TA;
+	unsigned	TL;
+	unsigned	longest_rwy;
+	unsigned	num_rwys;
 	runway_t	*rwys;
-	unsigned int	num_procs;
+	unsigned	num_procs;
 	navproc_t	*procs;
-	unsigned int	num_gates;
+	unsigned	num_gates;
 	fix_t		*gates;
 } airport_t;
 
