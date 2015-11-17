@@ -3,6 +3,10 @@
 
 #include "airac.h"
 
+#ifdef	__cplusplus
+extern "C" {
+#endif
+
 /* Minimum/Maximum allowable elevation AMSL of anything */
 #define	MIN_ELEV	-1000.0
 #define	MAX_ELEV	30000.0
@@ -71,5 +75,21 @@ void strip_newline(char *line);
 int geo_pos_2d_from_str(const char *lat, const char *lon, geo_pos_2d_t *pos);
 int geo_pos_3d_from_str(const char *lat, const char *lon, const char *elev,
     geo_pos_3d_t *pos);
+
+#if	defined(__GNUC__) || defined(__clang__)
+#define	highbit64(x)	(64 - __builtin_clzll(x) - 1)
+#define	highbit32(x)	(32 - __builtin_clzll(x) - 1)
+#else
+#error	"Compiler platform unsupported, please add highbit definition"
+#endif
+
+/*
+ * return x rounded up to the nearest power-of-2.
+ */
+#define	P2ROUNDUP(x)	(-(-(x) & -(1 << highbit64(x))))
+
+#ifdef	__cplusplus
+}
+#endif
 
 #endif	/* _OPENFMC_HELPERS_H_ */

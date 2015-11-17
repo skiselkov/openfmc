@@ -3,6 +3,10 @@
 
 #include "geom.h"
 
+#ifdef	__cplusplus
+extern "C" {
+#endif
+
 #define	NAV_NAME_LEN		8
 #define	ICAO_NAME_LEN		4
 #define	ICAO_COUNTRY_CODE_LEN	2
@@ -25,6 +29,10 @@ typedef struct {
 	unsigned	num_segs;
 	airway_seg_t	*segs;
 } airway_t;
+
+typedef struct {
+	
+} airway_db_t;
 
 /* Navaid structures */
 
@@ -228,5 +236,9 @@ void airport_close(airport_t *arpt);
 const runway_t *airport_find_rwy_by_ID(const airport_t *arpt,
     const char *rwy_ID);
 geo_pos_2d_t airport_find_gate_pos(const airport_t *arpt, const char *gate_ID);
+
+#ifdef	__cplusplus
+}
+#endif
 
 #endif	/* _OPENFMC_AIRAC_H_ */
