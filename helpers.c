@@ -115,3 +115,20 @@ strip_newline(char *line)
 		/* cut off trailing LF */
 		line[n - 1] = 0;
 }
+
+void
+append_format(char **str, size_t *sz, const char *format, ...)
+{
+	va_list ap;
+	int needed;
+
+	va_start(ap, format);
+	needed = vsnprintf(NULL, 0, format, ap);
+	va_end(ap);
+
+	va_start(ap, format);
+	*str = realloc(*str, *sz + needed + 1);
+	(void) vsnprintf(*str + *sz, *sz + needed + 1, format, ap);
+	*sz += needed;
+	va_end(ap);
+}

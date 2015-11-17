@@ -2,6 +2,7 @@
 #define	_OPENFMC_AIRAC_H_
 
 #include "geom.h"
+#include "htbl.h"
 
 #ifdef	__cplusplus
 extern "C" {
@@ -21,7 +22,7 @@ typedef struct {
 } fix_t;
 
 typedef struct {
-	fix_t		endpts[2];
+	fix_t		endpt[2];
 } airway_seg_t;
 
 typedef struct {
@@ -31,8 +32,11 @@ typedef struct {
 } airway_t;
 
 typedef struct {
-	
+	htbl_t		by_name;
 } airway_db_t;
+
+airway_db_t *airway_db_open(const char *navdata_dir);
+void airway_db_close(airway_db_t *db);
 
 /* Navaid structures */
 
@@ -49,7 +53,7 @@ typedef struct {
 	char		name[NAV_NAME_LEN];
 	char		icao_country_code[ICAO_COUNTRY_CODE_LEN + 1];
 	navaid_type_t	type;
-	double		freq;
+	unsigned int	freq;		/* in Hz */
 	geo_pos_3d_t	pos;
 } navaid_t;
 
@@ -63,7 +67,8 @@ typedef enum {
 	NAVPROC_TYPE_STAR_COMMON,	/* common STAR portion, "ALL" trans */
 	NAVPROC_TYPE_STAR_TRANS,	/* <fix> -> STAR/STAR_COMMON */
 	NAVPROC_TYPE_FINAL_TRANS,	/* appr trans, <fix> -> <rwy> */
-	NAVPROC_TYPE_FINAL		/* final appr: -> <rwy> */
+	NAVPROC_TYPE_FINAL,		/* final appr: -> <rwy> */
+	NAVPROC_TYPES
 } navproc_type_t;
 
 typedef enum {
@@ -194,44 +199,45 @@ typedef struct navproc_s {
 	char		name[NAV_NAME_LEN];
 	char		rwy_ID[RWY_ID_LEN + 1];
 	char		fix_name[NAV_NAME_LEN];
-	unsigned	num_segs;
+	unsigned int	num_segs;
 	navproc_seg_t	*segs;
 	/* number of main procedure segments, remainder is for go-around */
-	unsigned	num_main_segs;
+	unsigned int	num_main_segs;
 	navproc_final_t	final_type;
 } navproc_t;
 
 /* Airport structures */
 
 typedef struct runway_s {
-	char		rwy_ID[RWY_ID_LEN + 1];
-	unsigned	hdg;
-	unsigned	length;
-	unsigned	width;
+	char		ID[RWY_ID_LEN + 1];
+	unsigned int	hdg;
+	unsigned int	length;
+	unsigned int	width;
 	int		loc_avail;
-	double		loc_freq;
-	unsigned	loc_fcrs;
+	unsigned int	loc_freq;	/* in Hz */
+	unsigned int	loc_fcrs;
 	geo_pos_3d_t	thr_pos;
 	double		gp_angle;
 } runway_t;
 
 typedef struct airport_s {
-	char		name[16];
+	char		name[32];
 	char		icao[ICAO_NAME_LEN + 1];
-	geo_pos_3d_t	refpt_pos;
-	unsigned	TA;
-	unsigned	TL;
-	unsigned	longest_rwy;
-	unsigned	num_rwys;
+	geo_pos_3d_t	refpt;
+	unsigned int	TA;
+	unsigned int	TL;
+	unsigned int	longest_rwy;
+	unsigned int	num_rwys;
 	runway_t	*rwys;
-	unsigned	num_procs;
+	unsigned int	num_procs;
 	navproc_t	*procs;
-	unsigned	num_gates;
+	unsigned int	num_gates;
 	fix_t		*gates;
 } airport_t;
 
 airport_t *airport_open(const char *arpt_icao, const char *navdata_dir);
 void airport_close(airport_t *arpt);
+char *airport_dump(const airport_t *arpt);
 
 const runway_t *airport_find_rwy_by_ID(const airport_t *arpt,
     const char *rwy_ID);

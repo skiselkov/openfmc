@@ -1,6 +1,8 @@
 #ifndef	_OPENFMC_HELPERS_H_
 #define	_OPENFMC_HELPERS_H_
 
+#include <stdarg.h>
+
 #include "airac.h"
 
 #ifdef	__cplusplus
@@ -21,6 +23,8 @@ extern "C" {
 /* Minimum/Maximum allowable arc radius on any procedure */
 #define	MIN_ARC_RADIUS	0.1
 #define	MAX_ARC_RADIUS	100.0
+
+/* generic parser validator helpers */
 
 static inline int
 is_valid_lat(double lat)
@@ -69,12 +73,15 @@ int is_valid_vor_freq(double freq_mhz);
 int is_valid_loc_freq(double freq_mhz);
 int is_valid_rwy_ID(const char *rwy_ID);
 
-char **explode_line(char *line, char *delim, size_t *num_comps);
-void strip_newline(char *line);
-
+/* geometry parser & validator helpers */
 int geo_pos_2d_from_str(const char *lat, const char *lon, geo_pos_2d_t *pos);
 int geo_pos_3d_from_str(const char *lat, const char *lon, const char *elev,
     geo_pos_3d_t *pos);
+
+/* string processing helpers */
+char **explode_line(char *line, char *delim, size_t *num_comps);
+void strip_newline(char *line);
+void append_format(char **str, size_t *sz, const char *format, ...);
 
 #if	defined(__GNUC__) || defined(__clang__)
 #define	highbit64(x)	(64 - __builtin_clzll(x) - 1)

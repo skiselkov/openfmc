@@ -49,8 +49,8 @@ void list_move_tail(list_t *, list_t *);
 
 void *list_head(const list_t *);
 void *list_tail(const list_t *);
-void *list_next(const list_t *, void *);
-void *list_prev(const list_t *, void *);
+void *list_next(const list_t *, const void *);
+void *list_prev(const list_t *, const void *);
 int list_is_empty(const list_t *);
 
 void list_link_init(list_node_t *);

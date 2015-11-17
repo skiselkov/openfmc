@@ -173,7 +173,7 @@ list_tail(const list_t *list)
 }
 
 void *
-list_next(const list_t *list, void *object)
+list_next(const list_t *list, const void *object)
 {
 	list_node_t *node = list_d2l(list, object);
 
@@ -184,7 +184,7 @@ list_next(const list_t *list, void *object)
 }
 
 void *
-list_prev(const list_t *list, void *object)
+list_prev(const list_t *list, const void *object)
 {
 	list_node_t *node = list_d2l(list, object);
 
