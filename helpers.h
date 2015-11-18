@@ -81,7 +81,7 @@ bool_t is_valid_loc_freq(double freq_mhz);
 bool_t is_valid_rwy_ID(const char *rwy_ID);
 
 /* string processing helpers */
-char **explode_line(char *line, char *delim, size_t *num_comps);
+size_t explode_line(char *line, char delim, char **comps, size_t capcity);
 void strip_newline(char *line);
 void append_format(char **str, size_t *sz, const char *format, ...)
     PRINTF_ATTR(3);

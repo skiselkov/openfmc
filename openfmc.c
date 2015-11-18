@@ -8,6 +8,7 @@ main(int argc, char **argv)
 {
 	airport_t *arpt;
 	airway_db_t *awydb;
+	waypoint_db_t *wptdb;
 
 	if (argc != 3) {
 		fprintf(stderr, "Missing navdata dir & airport argument\n");
@@ -21,10 +22,13 @@ main(int argc, char **argv)
 		free(desc);
 		airport_close(arpt);
 	}
-
 	awydb = airway_db_open(argv[1]);
 	if (awydb) {
 		airway_db_close(awydb);
+	}
+	wptdb = waypoint_db_open(argv[1]);
+	if (wptdb) {
+		waypoint_db_close(wptdb);
 	}
 
 	return (0);

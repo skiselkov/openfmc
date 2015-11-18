@@ -69,38 +69,23 @@ is_valid_rwy_ID(const char *rwy_ID)
 	return (1);
 }
 
-char **
-explode_line(char *line, char *delim, size_t *num_comps)
+size_t
+explode_line(char *line, char delim, char **comps, size_t capacity)
 {
-	size_t line_len = strlen(line);
-	char **comps;
-	size_t i, n;
-	char *end = line + line_len;
-	char *p;
-	size_t delim_n = strlen(delim);
+	size_t i = 1;
 
-	for (n = 1, p = line; p < end; n++) {
-		p = strstr(p, delim);
-		if (p == NULL)
-			break;
-		else
-			p += delim_n;
+	assert(capacity != 0);
+	comps[0] = line;
+	for (char *p = line; *p != 0; p++) {
+		if (*p == delim) {
+			if (i >= capacity)
+				return ((size_t)-1);
+			*p = 0;
+			comps[i++] = p + 1;
+		}
 	}
 
-	comps = malloc(sizeof (char *) * n);
-
-	for (i = 0, p = line; p < end; i++) {
-		assert(i < n);
-		char *d = strstr(p, delim);
-		comps[i] = p;
-		if (d == NULL)
-			break;
-		d[0] = 0;
-		p = d + delim_n;
-	}
-
-	*num_comps = n;
-	return (comps);
+	return (i);
 }
 
 void

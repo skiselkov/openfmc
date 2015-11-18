@@ -46,10 +46,13 @@ htbl_destroy(htbl_t *htbl)
 }
 
 static void
-htbl_empty_multi_item(htbl_bucket_item_t *item)
+htbl_empty_multi_item(htbl_bucket_item_t *item, void (*func)(void *, void *),
+    void *arg)
 {
 	for (htbl_multi_value_t *mv = list_head(&item->multi.list); mv;
 	    mv = list_head(&item->multi.list)) {
+		if (func)
+			func(mv->value, arg);
 		list_remove_head(&item->multi.list);
 		free(mv);
 	}
@@ -57,7 +60,7 @@ htbl_empty_multi_item(htbl_bucket_item_t *item)
 }
 
 void
-htbl_empty(htbl_t *htbl)
+htbl_empty(htbl_t *htbl, void (*func)(void *, void *), void *arg)
 {
 	if (htbl->num_values == 0)
 		return;
@@ -66,7 +69,9 @@ htbl_empty(htbl_t *htbl)
 		for (htbl_bucket_item_t *item = list_head(&htbl->buckets[i]);
 		    item; item = list_head(&htbl->buckets[i])) {
 			if (htbl->multi_value)
-				htbl_empty_multi_item(item);
+				htbl_empty_multi_item(item, func, arg);
+			else if (func)
+				func(item->value, arg);
 			list_remove_head(&htbl->buckets[i]);
 			free(item);
 		}
@@ -130,7 +135,7 @@ htbl_remove(htbl_t *htbl, void *key, int nil_ok)
 		if (memcmp(item->key, key, htbl->key_sz) == 0) {
 			list_remove(bucket, item);
 			if (htbl->multi_value) {
-				htbl_empty_multi_item(item);
+				htbl_empty_multi_item(item, NULL, NULL);
 				assert(htbl->num_values >= item->multi.num);
 				htbl->num_values -= item->multi.num;
 			} else {

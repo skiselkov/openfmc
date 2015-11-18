@@ -9,8 +9,11 @@
 #include "helpers.h"
 #include "log.h"
 
-/* Maximum allowable runway length */
+/* Maximum allowable runway length & width (in feet) */
 #define	MAX_RWY_LEN	100000
+#define	MAX_RWY_WIDTH	1000
+#define	MAX_PROC_SEGS	100
+#define	MAX_AWY_SEGS	1000
 
 /* Maximum allowable glidepath angle */
 #define	GP_MAX_ANGLE	10.0
@@ -20,6 +23,15 @@
 #else
 #define	PATHSEP	"/"
 #endif
+
+#define	STRLCPY_CHECK(dst, src) \
+	do { \
+		if (strlcpy(dst, src, sizeof (dst)) > sizeof (dst)) { \
+			openfmc_log(OPENFMC_LOG_ERR, "Parsing error: input " \
+			    "line too long."); \
+			goto errout; \
+		} \
+	} while (0)
 
 /* The order in this array must follow navproc_type_t */
 static const char *navproc_type_to_str[NAVPROC_TYPES] = {
@@ -100,13 +112,13 @@ static const char *navproc_final_types_to_str[NAVPROC_FINAL_TYPES] = {
 static bool_t
 parse_airway_line(const char *line, airway_t *awy)
 {
-	char	*line_copy = strdup(line);
-	size_t	num_comps;
-	char	**comps = explode_line(line_copy, ",", &num_comps);
+	char	line_copy[128];
+	char	*comps[3];
 
-	if (num_comps != 3) {
+	STRLCPY_CHECK(line_copy, line);
+	if (explode_line(line_copy, ',', comps, 3) != 3) {
 		openfmc_log(OPENFMC_LOG_ERR, "Error parsing airway line: "
-		    "invalid number of columns, wanted 3, got %lu.", num_comps);
+		    "invalid number of columns, wanted 3.");
 		goto errout;
 	}
 	if (strcmp(comps[0], "A") != 0) {
@@ -121,44 +133,34 @@ parse_airway_line(const char *line, airway_t *awy)
 		goto errout;
 	}
 	(void) strlcpy(awy->name, comps[1], sizeof (awy->name));
-	if (sscanf(comps[2], "%u", &awy->num_segs) != 1) {
+	awy->num_segs = atoi(comps[2]);
+	if (awy->num_segs == 0 || awy->num_segs > MAX_AWY_SEGS) {
 		openfmc_log(OPENFMC_LOG_ERR, "Error parsing airway line: "
-		    "failed to parse number of airway segments column.");
+		    "invalid number of segments \"%s\".", comps[2]);
 		goto errout;
 	}
 
-	free(comps);
-	free(line_copy);
 	return (B_TRUE);
 errout:
 	openfmc_log(OPENFMC_LOG_ERR, "Offending line was: \"%s\".", line);
-	free(comps);
-	free(line_copy);
 	return (B_FALSE);
 }
 
 static bool_t
 parse_airway_seg_line(const char *line, airway_seg_t *seg)
 {
-	char	*line_copy = strdup(line);
-	size_t	num_comps;
-	char	**comps = explode_line(line_copy, ",", &num_comps);
+	char	line_copy[128];
+	char	*comps[10];
 
-	if (num_comps != 10) {
+	STRLCPY_CHECK(line_copy, line);
+	if (explode_line(line_copy, ',', comps, 10) != 10) {
 		openfmc_log(OPENFMC_LOG_ERR, "Error parsing airway segment: "
-		    "invalid number of cols, wanted 10, got %lu.", num_comps);
+		    "invalid number of cols, wanted 10.");
 		goto errout;
 	}
 	if (strcmp(comps[0], "S") != 0) {
 		openfmc_log(OPENFMC_LOG_ERR, "Error parsing airway segment: "
 		    "wanted line type 'S', got '%s'.", comps[0]);
-		goto errout;
-	}
-	if (strlen(comps[1]) > NAV_NAME_LEN - 1 ||
-	    strlen(comps[4]) > NAV_NAME_LEN - 1) {
-		openfmc_log(OPENFMC_LOG_ERR, "Error parsing airway segment: "
-		    "segment fix name(s) too long (max allowed %d chars).",
-		    NAV_NAME_LEN - 1);
 		goto errout;
 	}
 	(void) strlcpy(seg->endpt[0].name, comps[1], NAV_NAME_LEN);
@@ -170,12 +172,9 @@ parse_airway_seg_line(const char *line, airway_seg_t *seg)
 		goto errout;
 	}
 
-	free(comps);
-	free(line_copy);
 	return (B_TRUE);
 errout:
-	free(comps);
-	free(line_copy);
+	openfmc_log(OPENFMC_LOG_ERR, "Offending line was: \"%s\".", line);
 	return (B_FALSE);
 }
 
@@ -264,11 +263,11 @@ airway_db_open(const char *navdata_dir)
 	db = calloc(sizeof (*db), 1);
 	if (!db)
 		goto errout;
-	htbl_create(&db->by_name, num_airways, NAV_NAME_LEN, 1);
+	htbl_create(&db->by_name, num_airways, NAV_NAME_LEN, B_TRUE);
 
 	while ((line_len = getline(&line, &line_cap, ats_fp)) != -1) {
 		strip_newline(line);
-		if (strlen(line) == 0)
+		if (line[0] == 0)
 			continue;
 		awy = calloc(sizeof (*awy), 1);
 		if (!awy)
@@ -300,21 +299,130 @@ errout:
 void
 airway_db_close(airway_db_t *db)
 {
-	htbl_foreach(&db->by_name, (void (*)(void *, void *))airway_free, NULL);
-	htbl_empty(&db->by_name);
+	htbl_empty(&db->by_name, (void (*)(void *, void *))airway_free, NULL);
 	htbl_destroy(&db->by_name);
 	free(db);
 }
 
 static bool_t
-parse_arpt_line(char *line, airport_t *arpt)
+parse_waypoint_line(const char *line, fix_t *wpt)
 {
-	size_t num_comps;
-	char **comps = explode_line(line, ",", &num_comps);
+	char	line_copy[128];
+	char	*comps[4];
+
+	STRLCPY_CHECK(line_copy, line);
+	if (explode_line(line_copy, ',', comps, 4) != 4) {
+		openfmc_log(OPENFMC_LOG_ERR, "Error parsing waypoint: "
+		    "line contains invalid number of columns, wanted 4.");
+		goto errout;
+	}
+	(void) strlcpy(wpt->name, comps[0], sizeof (wpt->name));
+	if (!geo_pos_2d_from_str(comps[1], comps[2], &wpt->pos)) {
+		openfmc_log(OPENFMC_LOG_ERR, "Error parsing waypoint: "
+		    "lat/lon position invalid.");
+		goto errout;
+	}
+	(void) strlcpy(wpt->icao_country_code, comps[3],
+	    sizeof (wpt->icao_country_code));
+
+	return (B_TRUE);
+errout:
+	openfmc_log(OPENFMC_LOG_ERR, "Offending line was: \"%s\".", line);
+	return (B_FALSE);
+}
+
+waypoint_db_t *
+waypoint_db_open(const char *navdata_dir)
+{
+	waypoint_db_t	*db = NULL;
+	FILE		*wpts_fp = NULL;
+	char		*wpts_fname = NULL;
+	ssize_t		line_len = 0;
+	size_t		line_cap = 0;
+	char		*line = NULL;
+	size_t		num_wpts = 0;
+	fix_t		*wpt = NULL;
+
+	/* Open Waypoints.txt */
+	wpts_fname = malloc(strlen(navdata_dir) +
+	    strlen(PATHSEP "Waypoints.txt") + 1);
+	sprintf(wpts_fname, "%s" PATHSEP "Waypoints.txt", navdata_dir);
+	wpts_fp = fopen(wpts_fname, "r");
+	if (wpts_fp == NULL) {
+		openfmc_log(OPENFMC_LOG_ERR, "Can't open %s: %s",
+		    wpts_fname, strerror(errno));
+		goto errout;
+	}
+
+	/*
+	 * Count number of lines NOT starting with " " to size up hash
+	 * table. We don't care about non-named (coordinate) waypoints, we
+	 * can construct those on the fly.
+	 */
+	while ((line_len = getline(&line, &line_cap, wpts_fp)) != -1) {
+		if (line_len > 1 && line[0] != ' ')
+			num_wpts++;
+	}
+	rewind(wpts_fp);
+	if (num_wpts == 0) {
+		openfmc_log(OPENFMC_LOG_ERR, "Error parsing %s: no waypoints "
+		    "found", wpts_fname);
+		goto errout;
+	}
+
+	db = calloc(sizeof (*db), 1);
+	if (!db)
+		goto errout;
+	htbl_create(&db->by_name, num_wpts, NAV_NAME_LEN, B_TRUE);
+
+	while ((line_len = getline(&line, &line_cap, wpts_fp)) != -1) {
+		strip_newline(line);
+		if (line[0] == 0)
+			continue;
+		wpt = calloc(sizeof (*wpt), 1);
+		if (!wpt)
+			goto errout;
+		if (!parse_waypoint_line(line, wpt))
+			goto errout;
+		htbl_set(&db->by_name, wpt->name, wpt);
+		wpt = NULL;
+	}
+
+	if (wpts_fp)
+		fclose(wpts_fp);
+	free(wpts_fname);
+	if (wpt)
+		free(wpt);
+	return (db);
+errout:
+	if (db)
+		waypoint_db_close(db);
+	if (wpts_fp)
+		fclose(wpts_fp);
+	free(wpts_fname);
+	if (wpt)
+		free(wpt);
+	return (NULL);
+}
+
+void
+waypoint_db_close(waypoint_db_t *db)
+{
+	htbl_empty(&db->by_name, (void (*)(void *, void *))free, NULL);
+	htbl_destroy(&db->by_name);
+	free(db);
+}
+
+static bool_t
+parse_arpt_line(const char *line, airport_t *arpt)
+{
+	char	line_copy[128];
+	char	*comps[10];
 
 	/* Check this is an airport line and it's the one we're looking for */
-	if (num_comps != 10 || strcmp(comps[0], "A") != 0 ||
-	    strcmp(comps[1], arpt->icao) != 0) {
+	STRLCPY_CHECK(line_copy, line);
+	if (explode_line(line_copy, ',', comps, 10) != 10 ||
+	    strcmp(comps[0], "A") != 0 || strcmp(comps[1], arpt->icao) != 0) {
 		/*
 		 * Don't log this error, this function is used to look for
 		 * airport lines.
@@ -328,35 +436,32 @@ parse_arpt_line(char *line, airport_t *arpt)
 		    "line: reference point coordinates invalid.");
 		goto errout;
 	}
-	if (/* transition altitude must be uint && a valid altitude */
-	    sscanf(comps[6], "%u", &arpt->TA) != 1 || !is_valid_alt(arpt->TA) ||
-	    /* transition level must be uint && a valid altitude */
-	    sscanf(comps[7], "%u", &arpt->TL) != 1 || !is_valid_alt(arpt->TL) ||
-	    /* longest rwy must be non-zero uint && <= MAX_RWY_LEN */
-	    sscanf(comps[8], "%u", &arpt->longest_rwy) != 1 ||
+	arpt->TA = atoi(comps[6]);
+	arpt->TL = atoi(comps[7]);
+	arpt->longest_rwy = atoi(comps[8]);
+	if (!is_valid_alt(arpt->TA) || !is_valid_alt(arpt->TL) ||
 	    arpt->longest_rwy == 0 || arpt->longest_rwy > MAX_RWY_LEN) {
 		openfmc_log(OPENFMC_LOG_ERR, "Error parsing initial airport "
 		    "line: TA, TL or longest runway parameters invalid.");
 		goto errout;
 	}
 
-	free(comps);
 	return (B_TRUE);
 errout:
-	free(comps);
 	return (B_FALSE);
 }
 
 static bool_t
 parse_rwy_line(const char *line, runway_t *rwy)
 {
-	size_t	num_comps;
-	char	*line_copy = strdup(line);
-	char	**comps = explode_line(line_copy, ",", &num_comps);
+	char	line_copy[128];
+	char	*comps[15];
 	double	loc_freq;
 
 	/* Line must start with "R" keyword */
-	if (strcmp(comps[0], "R") != 0) {
+	STRLCPY_CHECK(line_copy, line);
+	if (explode_line(line_copy, ',', comps, 15) != 15 ||
+	    strcmp(comps[0], "R") != 0) {
 		openfmc_log(OPENFMC_LOG_ERR, "Error parsing runway line: "
 		    "runway doesn't start with 'R'.");
 		goto errout;
@@ -368,42 +473,31 @@ parse_rwy_line(const char *line, runway_t *rwy)
 		goto errout;
 	}
 	(void) strcpy(rwy->ID, comps[1]);
-	if (/* hdg must be uint && valid magnetic heading */
-	    sscanf(comps[2], "%u", &rwy->hdg) != 1 ||
-	    !is_valid_hdg(rwy->hdg) ||
-	    /* length must be non-zero uint && <= MAX_RWY_LEN */
-	    sscanf(comps[3], "%u", &rwy->length) != 1 || rwy->length == 0 ||
-	    rwy->length > MAX_RWY_LEN ||
-	    /* width must be non-zero uint */
-	    sscanf(comps[4], "%u", &rwy->width) != 1 || rwy->width == 0 ||
-	    /* loc_avail must be 0 or 1 */
-	    sscanf(comps[5], "%d", &rwy->loc_avail) != 1 ||
+	rwy->hdg = atoi(comps[2]);
+	rwy->length = atoi(comps[3]);
+	rwy->width = atoi(comps[4]);
+	rwy->loc_avail = atoi(comps[5]);
+	loc_freq = atof(comps[6]);
+	rwy->loc_freq = loc_freq * 1000000;
+	rwy->loc_fcrs = atoi(comps[7]);
+	rwy->gp_angle = atof(comps[11]);
+	if (!is_valid_hdg(rwy->hdg) ||
+	    rwy->length == 0 || rwy->length > MAX_RWY_LEN ||
+	    rwy->width == 0 || rwy->width > MAX_RWY_WIDTH ||
 	    (rwy->loc_avail != 0 && rwy->loc_avail != 1) ||
-	    /* loc_freq must be real && if loc_avail, valid LOC frequency */
-	    sscanf(comps[6], "%lf", &loc_freq) != 1 ||
 	    (rwy->loc_avail && !is_valid_loc_freq(loc_freq)) ||
-	    /* loc_fcrs must be real && if loc_avail, valid magnetic heading */
-	    sscanf(comps[7], "%u", &rwy->loc_fcrs) != 1 ||
 	    (rwy->loc_avail && !is_valid_hdg(rwy->loc_fcrs)) ||
-	    /* threshold must have valid position */
 	    !geo_pos_3d_from_str(comps[8], comps[9], comps[10],
 	    &rwy->thr_pos) ||
-	    /* GP angle must be between 0.0 and GP_MAX_ANGLE */
-	    sscanf(comps[11], "%lf", &rwy->gp_angle) != 1 ||
 	    rwy->gp_angle < 0.0 || rwy->gp_angle > GP_MAX_ANGLE) {
 		openfmc_log(OPENFMC_LOG_ERR, "Error parsing runway line: "
 		    "invalid parameters found.");
 		goto errout;
 	}
-	rwy->loc_freq = loc_freq * 1000000;
 
-	free(comps);
-	free(line_copy);
 	return (B_TRUE);
 errout:
 	openfmc_log(OPENFMC_LOG_ERR, "Error parsing runway line \"%s\".", line);
-	free(comps);
-	free(line_copy);
 	return (B_FALSE);
 }
 
@@ -513,7 +607,8 @@ parse_final_proc_line(char **comps, size_t num_comps, navproc_t *proc)
 		    "invalid approach type code \"%s\".", comps[3]);
 		return (B_FALSE);
 	}
-	if (sscanf(comps[4], "%u", &proc->num_main_segs) != 1) {
+	proc->num_main_segs = atoi(comps[4]);
+	if (proc->num_main_segs == 0 || proc->num_main_segs > MAX_PROC_SEGS) {
 		openfmc_log(OPENFMC_LOG_ERR, "Error parsing FINAL line: "
 		    "invalid number of main segments \"%s\".", comps[4]);
 		return (B_FALSE);
@@ -524,60 +619,51 @@ parse_final_proc_line(char **comps, size_t num_comps, navproc_t *proc)
 static bool_t
 parse_alt_spd_term(char *comps[3], alt_lim_t *alt, spd_lim_t *spd)
 {
-	if (sscanf(comps[0], "%d", &alt->type) != 1) {
-		openfmc_log(OPENFMC_LOG_ERR, "Error parsing altitude "
-		    "constraint: invalid constraint type %s.", comps[0]);
-		return (B_FALSE);
-	}
+	alt->type = atoi(comps[0]);
 	switch (alt->type) {
 	case ALT_LIM_NONE:
 		break;
 	case ALT_LIM_AT:
 	case ALT_LIM_AT_OR_ABV:
 	case ALT_LIM_AT_OR_BLW:
-		if (sscanf(comps[1], "%u", &alt->alt1) != 1 ||
-		    !is_valid_alt(alt->alt1)) {
+		alt->alt1 = atoi(comps[1]);
+		if (!is_valid_alt(alt->alt1)) {
 			openfmc_log(OPENFMC_LOG_ERR, "Error parsing altitude "
-			    "constraint: invalid altitude value %s.", comps[1]);
+			    "limit: invalid altitude value \"%s\".", comps[1]);
 			return (B_FALSE);
 		}
 		break;
 	case ALT_LIM_BETWEEN:
-		if (sscanf(comps[1], "%u", &alt->alt1) != 1 ||
-		    !is_valid_alt(alt->alt1) ||
-		    sscanf(comps[2], "%u", &alt->alt2) != 1 ||
-		    !is_valid_alt(alt->alt2)) {
+		alt->alt1 = atoi(comps[1]);
+		alt->alt2 = atoi(comps[2]);
+		if (!is_valid_alt(alt->alt1) || !is_valid_alt(alt->alt2)) {
 			openfmc_log(OPENFMC_LOG_ERR, "Error parsing altitude "
-			    "constraint: invalid altitude values %s,%s.",
+			    "limit: invalid altitude values \"%s,%s\".",
 			    comps[1], comps[2]);
 			return (B_FALSE);
 		}
 		break;
 	default:
 		openfmc_log(OPENFMC_LOG_ERR, "Error parsing altitude "
-		    "constraint: unknown constraint type %s.", comps[0]);
+		    "limit: unknown constraint type \"%s\".", comps[0]);
 		return (B_FALSE);
 	}
 
-	if (sscanf(comps[3], "%d", &spd->type) != 1) {
-		openfmc_log(OPENFMC_LOG_ERR, "Error parsing speed "
-		    "constraint: invalid constraint type %s.", comps[0]);
-		return (B_FALSE);
-	}
+	spd->type = atoi(comps[3]);
 	switch (spd->type) {
 	case SPD_LIM_NONE:
 		break;
 	case SPD_LIM_AT_OR_BLW:
-		if (sscanf(comps[4], "%u", &spd->spd1) != 1 ||
-		    !is_valid_spd(spd->spd1)) {
+		spd->spd1 = atoi(comps[4]);
+		if (!is_valid_spd(spd->spd1)) {
 			openfmc_log(OPENFMC_LOG_ERR, "Error parsing speed "
-			    "constraint: invalid speed value %s.", comps[4]);
+			    "limit: invalid speed value \"%s\".", comps[4]);
 			return (B_FALSE);
 		}
 		break;
 	default:
 		openfmc_log(OPENFMC_LOG_ERR, "Error parsing speed "
-		    "constraint: unknown constraint type %s.", comps[3]);
+		    "limit: unknown limit type \"%s\".", comps[3]);
 		return (B_FALSE);
 	}
 
@@ -613,23 +699,18 @@ parse_AF_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
 
 	CHECK_NUM_COMPS(17, AF);
 	seg->type = NAVPROC_SEG_TYPE_ARC_TO_FIX;
-	if (sscanf(comps[4], "%d", &dir) != 1 || (dir != 1 && dir != 2)) {
-		openfmc_log(OPENFMC_LOG_ERR, "Error parsing AF segment: "
-		    "arc direction value invalid: %s.", comps[4]);
-		return (B_FALSE);
-	}
+	dir = atoi(comps[4]);
+	seg->leg_cmd.dme_arc.start_radial = atof(comps[6]);
+	seg->leg_cmd.dme_arc.radius = atof(comps[7]);
+	seg->leg_cmd.dme_arc.end_radial = atof(comps[8]);
 	(void) strlcpy(seg->leg_cmd.dme_arc.navaid, comps[5],
 	    sizeof (seg->leg_cmd.dme_arc.navaid));
-	if (!parse_proc_seg_fix(&comps[1], &seg->term_cond.fix) ||
-	    sscanf(comps[6], "%lf", &seg->leg_cmd.dme_arc.start_radial) != 1 ||
+	if ((dir != 1 && dir != 2) ||
+	    !parse_proc_seg_fix(&comps[1], &seg->term_cond.fix) ||
 	    !is_valid_hdg(seg->leg_cmd.dme_arc.start_radial) ||
-	    sscanf(comps[7], "%lf", &seg->leg_cmd.dme_arc.radius) != 1 ||
 	    !is_valid_arc_radius(seg->leg_cmd.dme_arc.radius) ||
-	    sscanf(comps[8], "%lf", &seg->leg_cmd.dme_arc.end_radial) != 1 ||
 	    !is_valid_hdg(seg->leg_cmd.dme_arc.end_radial) ||
 	    !parse_alt_spd_term(&comps[9], &seg->alt_lim, &seg->spd_lim)) {
-		openfmc_log(OPENFMC_LOG_ERR, "Error parsing AF segment "
-		    "data fields");
 		return (B_FALSE);
 	}
 	if (dir == 2) {
@@ -710,10 +791,9 @@ parse_CA_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
 {
 	CHECK_NUM_COMPS(11, CA);
 	seg->type = NAVPROC_SEG_TYPE_CRS_TO_ALT;
-	if (sscanf(comps[2], "%lf", &seg->leg_cmd.crs) != 1 ||
-	    !is_valid_hdg(seg->leg_cmd.crs))
-		return (B_FALSE);
-	if (!parse_alt_spd_term(&comps[3], &seg->term_cond.alt,
+	seg->leg_cmd.crs = atof(comps[2]);
+	if (!is_valid_hdg(seg->leg_cmd.crs) ||
+	    !parse_alt_spd_term(&comps[3], &seg->term_cond.alt,
 	    &seg->spd_lim) ||
 	    /* altitude constraint is required for CA segs */
 	    seg->term_cond.alt.type == ALT_LIM_NONE)
@@ -736,9 +816,9 @@ parse_CD_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
 {
 	CHECK_NUM_COMPS(18, CD);
 	seg->type = NAVPROC_SEG_TYPE_CRS_TO_DME;
-	if (sscanf(comps[8], "%lf", &seg->leg_cmd.crs) != 1 ||
-	    !is_valid_hdg(seg->leg_cmd.crs) ||
-	    sscanf(comps[9], "%lf", &seg->term_cond.dme.dist) != 1 ||
+	seg->leg_cmd.crs = atof(comps[8]);
+	seg->term_cond.dme.dist = atof(comps[9]);
+	if (!is_valid_hdg(seg->leg_cmd.crs) ||
 	    !parse_alt_spd_term(&comps[10], &seg->alt_lim, &seg->spd_lim))
 		return (B_FALSE);
 	(void) strlcpy(seg->term_cond.dme.navaid, comps[5],
@@ -761,8 +841,8 @@ parse_CF_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
 {
 	CHECK_NUM_COMPS(18, CF);
 	seg->type = NAVPROC_SEG_TYPE_CRS_TO_FIX;
-	if (sscanf(comps[8], "%lf", &seg->leg_cmd.crs) != 1 ||
-	    !is_valid_hdg(seg->leg_cmd.crs) ||
+	seg->leg_cmd.crs = atof(comps[8]);
+	if (!is_valid_hdg(seg->leg_cmd.crs) ||
 	    !parse_proc_seg_fix(&comps[1], &seg->term_cond.fix) ||
 	    !parse_alt_spd_term(&comps[10], &seg->alt_lim, &seg->spd_lim))
 		return (B_FALSE);
@@ -788,10 +868,10 @@ parse_CI_CR_seg(char **comps, size_t num_comps, navproc_seg_t *seg,
 	else
 		CHECK_NUM_COMPS(13, CR);
 	seg->type = NAVPROC_SEG_TYPE_CRS_TO_INTCP;
-	if (sscanf(comps[4], "%lf", &seg->leg_cmd.crs) != 1 ||
-	    !is_valid_hdg(seg->leg_cmd.crs) ||
+	seg->term_cond.radial.radial = atof(comps[3]);
+	seg->leg_cmd.crs = atof(comps[4]);
+	if (!is_valid_hdg(seg->leg_cmd.crs) ||
 	    !parse_alt_spd_term(&comps[5], &seg->alt_lim, &seg->spd_lim) ||
-	    sscanf(comps[3], "%lf", &seg->term_cond.radial.radial) != 1 ||
 	    (!is_CI && !is_valid_hdg(seg->term_cond.radial.radial)))
 		return (B_FALSE);
 	(void) strlcpy(seg->term_cond.radial.navaid, comps[2],
@@ -885,8 +965,8 @@ parse_FC_FD_seg(char **comps, size_t num_comps, navproc_seg_t *seg,
 		CHECK_NUM_COMPS(18, FD);
 		seg->type = NAVPROC_SEG_TYPE_FIX_TO_DME;
 	}
+	seg->term_cond.dme.dist = atof(comps[9]);
 	if (!geo_pos_2d_from_str(comps[2], comps[3], &seg->leg_cmd.fix.pos) ||
-	    sscanf(comps[9], "%lf", &seg->term_cond.dme.dist) != 1 ||
 	    !parse_alt_spd_term(&comps[10], &seg->alt_lim, &seg->spd_lim))
 		return (B_FALSE);
 	(void) strlcpy(seg->leg_cmd.fix.name, comps[1],
@@ -914,9 +994,9 @@ parse_FM_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
 {
 	CHECK_NUM_COMPS(17, FM);
 	seg->type = NAVPROC_SEG_TYPE_FIX_TO_MANUAL;
+	seg->leg_cmd.fix_trk.crs = atof(comps[8]);
 	if (!geo_pos_2d_from_str(comps[2], comps[3],
 	    &seg->leg_cmd.fix_trk.fix.pos) ||
-	    sscanf(comps[8], "%lf", &seg->leg_cmd.fix_trk.crs) != 1 ||
 	    !parse_alt_spd_term(&comps[9], &seg->alt_lim, &seg->spd_lim))
 		return (B_FALSE);
 	(void) strlcpy(seg->leg_cmd.fix_trk.fix.name, comps[1],
@@ -949,16 +1029,15 @@ parse_HA_HF_HM_seg(char **comps, size_t num_comps, navproc_seg_t *seg,
 	else
 		assert(0);
 	seg->type = type;
-
+	seg->leg_cmd.hold.inbd_crs = atof(comps[8]);
+	seg->leg_cmd.hold.leg_len = atof(comps[9]);
 	if (!geo_pos_2d_from_str(comps[2], comps[3],
 	    &seg->leg_cmd.hold.fix.pos) ||
 	    !parse_alt_spd_term(&comps[10], &seg->alt_lim, &seg->spd_lim) ||
 	    /* alt constr is mandatory on HA segs */
 	    (type == NAVPROC_SEG_TYPE_HOLD_TO_ALT &&
 	    seg->alt_lim.type == ALT_LIM_NONE) ||
-	    sscanf(comps[8], "%lf", &seg->leg_cmd.hold.inbd_crs) != 1 ||
-	    !is_valid_hdg(seg->leg_cmd.hold.inbd_crs) ||
-	    sscanf(comps[9], "%lf", &seg->leg_cmd.hold.leg_len) != 1)
+	    !is_valid_hdg(seg->leg_cmd.hold.inbd_crs))
 		return (B_FALSE);
 	(void) strlcpy(seg->leg_cmd.hold.fix.name, comps[1],
 	    sizeof (seg->leg_cmd.fix.name));
@@ -1025,18 +1104,16 @@ parse_PI_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
 
 	CHECK_NUM_COMPS(18, PI);
 	seg->type = NAVPROC_SEG_TYPE_PROC_TURN;
+	turn_dir = atoi(comps[4]);
+	seg->leg_cmd.proc_turn.outbd_turn_hdg = atof(comps[6]);
+	seg->leg_cmd.proc_turn.max_excrs_dist = atof(comps[7]);
+	seg->leg_cmd.proc_turn.outbd_radial = atof(comps[8]);
+	seg->leg_cmd.proc_turn.max_excrs_time = atof(comps[9]);
 	if (!geo_pos_2d_from_str(comps[2], comps[3],
 	    &seg->leg_cmd.proc_turn.startpt.pos) ||
-	    sscanf(comps[4], "%d", &turn_dir) != 1 ||
 	    (turn_dir != 1 && turn_dir != 2) ||
-	    sscanf(comps[6], "%lf", &seg->leg_cmd.proc_turn.outbd_turn_hdg)
-	    != 1 || !is_valid_hdg(seg->leg_cmd.proc_turn.outbd_turn_hdg) ||
-	    sscanf(comps[7], "%lf", &seg->leg_cmd.proc_turn.max_excrs_dist)
-	    != 1 ||
-	    sscanf(comps[8], "%lf", &seg->leg_cmd.proc_turn.outbd_radial)
-	    != 1 || !is_valid_hdg(seg->leg_cmd.proc_turn.outbd_radial) ||
-	    sscanf(comps[9], "%lf", &seg->leg_cmd.proc_turn.max_excrs_time)
-	    != 1 ||
+	    !is_valid_hdg(seg->leg_cmd.proc_turn.outbd_turn_hdg) ||
+	    !is_valid_hdg(seg->leg_cmd.proc_turn.outbd_radial) ||
 	    !parse_alt_spd_term(&comps[10], &seg->alt_lim, &seg->spd_lim))
 		return (B_FALSE);
 	seg->leg_cmd.proc_turn.turn_right = (turn_dir == 1);
@@ -1078,12 +1155,12 @@ parse_RF_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
 		return (B_FALSE);
 	/* change CW flag from 1-2 to 0-1 */
 	seg->leg_cmd.radius_arc.cw--;
+	seg->leg_cmd.radius_arc.end_radial = atof(comps[6]);
+	seg->leg_cmd.radius_arc.radius = atof(comps[7]);
 	(void) strlcpy(seg->leg_cmd.radius_arc.navaid, comps[5],
 	    sizeof (seg->leg_cmd.radius_arc.navaid));
 	if (!parse_proc_seg_fix(&comps[1], &seg->term_cond.fix) ||
-	    sscanf(comps[6], "%lf", &seg->leg_cmd.radius_arc.end_radial) != 1 ||
 	    !is_valid_hdg(seg->leg_cmd.radius_arc.end_radial) ||
-	    sscanf(comps[7], "%lf", &seg->leg_cmd.radius_arc.radius) != 1 ||
 	    !is_valid_arc_radius(seg->leg_cmd.radius_arc.radius) ||
 	    !parse_alt_spd_term(&comps[8], &seg->alt_lim, &seg->spd_lim))
 		return (B_FALSE);
@@ -1108,8 +1185,8 @@ parse_VA_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
 {
 	CHECK_NUM_COMPS(11, VA);
 	seg->type = NAVPROC_SEG_TYPE_HDG_TO_ALT;
-	if (sscanf(comps[2], "%lf", &seg->leg_cmd.hdg) != 1 ||
-	    !is_valid_hdg(seg->leg_cmd.hdg) ||
+	seg->leg_cmd.hdg = atof(comps[2]);
+	if (!is_valid_hdg(seg->leg_cmd.hdg) ||
 	    !parse_alt_spd_term(&comps[3], &seg->alt_lim, &seg->spd_lim) ||
 	    /* alt constr mandatory on VA segs */
 	    seg->alt_lim.type == ALT_LIM_NONE) {
@@ -1135,9 +1212,9 @@ parse_VD_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
 {
 	CHECK_NUM_COMPS(18, VD);
 	seg->type = NAVPROC_SEG_TYPE_HDG_TO_DME;
-	if (sscanf(comps[8], "%lf", &seg->leg_cmd.hdg) != 1 ||
-	    !is_valid_hdg(seg->leg_cmd.hdg) ||
-	    sscanf(comps[9], "%lf", &seg->term_cond.dme.dist) != 1 ||
+	seg->leg_cmd.hdg = atof(comps[8]);
+	seg->term_cond.dme.dist = atof(comps[9]);
+	if (!is_valid_hdg(seg->leg_cmd.hdg) ||
 	    !parse_alt_spd_term(&comps[10], &seg->alt_lim, &seg->spd_lim)) {
 		openfmc_log(OPENFMC_LOG_ERR, "Error parsing VD segment line");
 		return (B_FALSE);
@@ -1176,11 +1253,11 @@ parse_VI_VM_VR_seg(char **comps, size_t num_comps, navproc_seg_t *seg,
 		assert(0);
 	}
 	seg->type = type;
-	if (sscanf(comps[4], "%lf", &seg->leg_cmd.hdg) != 1 ||
-	    !is_valid_hdg(seg->leg_cmd.hdg) ||
+	seg->leg_cmd.hdg = atof(comps[4]);
+	seg->term_cond.radial.radial = atof(comps[3]);
+	if (!is_valid_hdg(seg->leg_cmd.hdg) ||
 	    (type == NAVPROC_SEG_TYPE_HDG_TO_RADIAL &&
-	    (sscanf(comps[4], "%lf", &seg->term_cond.radial.radial) != 1 ||
-	    !is_valid_hdg(seg->term_cond.radial.radial))) ||
+	    !is_valid_hdg(seg->term_cond.radial.radial)) ||
 	    !parse_alt_spd_term(&comps[5], &seg->alt_lim, &seg->spd_lim)) {
 		openfmc_log(OPENFMC_LOG_ERR, "Error parsing %s segment line",
 		    leg_name);
@@ -1223,13 +1300,14 @@ dump_VI_VM_VR_seg(char **result, size_t *result_sz, const navproc_seg_t *seg)
 static bool_t
 parse_proc_seg_line(const char *line, navproc_t *proc)
 {
-	char		**comps = NULL;
-	size_t		num_comps = 0;
+	char		*comps[24];
+	size_t		num_comps;
 	navproc_seg_t	seg;
-	char		*line_copy = strdup(line);
+	char		line_copy[256];
 
+	STRLCPY_CHECK(line_copy, line);
+	num_comps = explode_line(line_copy, ',', comps, 24);
 	memset(&seg, 0, sizeof (seg));
-	comps = explode_line(line_copy, ",", &num_comps);
 
 	assert(num_comps > 0);
 	if (strcmp(comps[0], "AF") == 0) {
@@ -1319,14 +1397,10 @@ parse_proc_seg_line(const char *line, navproc_t *proc)
 	proc->segs = realloc(proc->segs, sizeof (seg) * proc->num_segs);
 	memcpy(&proc->segs[proc->num_segs - 1], &seg, sizeof (seg));
 
-	free(comps);
-	free(line_copy);
 	return (B_TRUE);
 errout:
 	openfmc_log(OPENFMC_LOG_ERR, "Error parsing procedure segment line. "
 	    "Offending line was: \"%s\".", line);
-	free(comps);
-	free(line_copy);
 	return (B_FALSE);
 }
 
@@ -1336,9 +1410,9 @@ parse_proc(FILE *fp, navproc_t *proc)
 	size_t		line_cap = 0;
 	ssize_t		line_len = 0;
 	char		*line = NULL;
-	char		*line_copy;
-	char		**comps = NULL;
-	size_t		num_comps = 0;
+	char		line_copy[128];
+	char		*comps[8];
+	size_t		num_comps;
 
 	memset(proc, 0, sizeof (*proc));
 	line_len = getline(&line, &line_cap, fp);
@@ -1347,8 +1421,8 @@ parse_proc(FILE *fp, navproc_t *proc)
 		return (0);
 	}
 	strip_newline(line);
-	line_copy = strdup(line);
-	comps = explode_line(line_copy, ",", &num_comps);
+	STRLCPY_CHECK(line_copy, line);
+	num_comps = explode_line(line_copy, ',', comps, 8);
 	assert(num_comps != 0);
 
 	if (strcmp(comps[0], "SID") == 0) {
@@ -1367,10 +1441,6 @@ parse_proc(FILE *fp, navproc_t *proc)
 		goto errout;
 	}
 
-	free(comps);
-	comps = NULL;
-	num_comps = 0;
-
 	while ((line_len = getline(&line, &line_cap, fp)) != -1) {
 		strip_newline(line);
 		if (strlen(line) == 0)
@@ -1386,14 +1456,11 @@ parse_proc(FILE *fp, navproc_t *proc)
 	}
 
 	free(line);
-	free(line_copy);
 
 	return (1);
 errout:
 	free(proc->segs);
-	free(comps);
 	free(line);
-	free(line_copy);
 	return (-1);
 }
 

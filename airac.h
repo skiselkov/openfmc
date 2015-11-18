@@ -36,8 +36,15 @@ typedef struct {
 	htbl_t		by_name;
 } airway_db_t;
 
+typedef struct {
+	htbl_t		by_name;
+} waypoint_db_t;
+
 airway_db_t *airway_db_open(const char *navdata_dir);
 void airway_db_close(airway_db_t *db);
+
+waypoint_db_t *waypoint_db_open(const char *navdata_dir);
+void waypoint_db_close(waypoint_db_t *db);
 
 /* Navaid structures */
 
@@ -53,9 +60,9 @@ typedef enum {
 typedef struct {
 	char		name[NAV_NAME_LEN];
 	char		icao_country_code[ICAO_COUNTRY_CODE_LEN + 1];
+	geo_pos_3d_t	pos;
 	navaid_type_t	type;
 	unsigned	freq;		/* in Hz */
-	geo_pos_3d_t	pos;
 } navaid_t;
 
 /* Procedure structures */
@@ -105,21 +112,21 @@ typedef enum {
 	ALT_LIM_AT_OR_ABV,	/* ALT >= alt1 */
 	ALT_LIM_AT_OR_BLW,	/* ALT <= alt1 */
 	ALT_LIM_BETWEEN,	/* alt1 >= ALT && ALT >= alt2 */
-} alt_type_t;
+} alt_lim_type_t;
 
 typedef enum {
-	SPD_LIM_NONE = 0,
+	SPD_LIM_NONE = 0,	/* SPD unconstrained */
 	SPD_LIM_AT_OR_BLW	/* SPD <= spd1 */
-} spd_type_t;
+} spd_lim_type_t;
 
 typedef struct {
-	alt_type_t	type;
+	alt_lim_type_t	type;
 	unsigned	alt1;
 	unsigned	alt2;
 } alt_lim_t;
 
 typedef struct {
-	spd_type_t	type;
+	spd_lim_type_t	type;
 	unsigned	spd1;
 } spd_lim_t;
 

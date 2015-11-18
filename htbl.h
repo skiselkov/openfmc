@@ -39,7 +39,7 @@ typedef struct {
 
 void htbl_create(htbl_t *htbl, size_t tbl_sz, size_t key_sz, int multi_value);
 void htbl_destroy(htbl_t *htbl);
-void htbl_empty(htbl_t *htbl);
+void htbl_empty(htbl_t *htbl, void (*func)(void *, void *), void *arg);
 size_t htbl_count(const htbl_t *htbl);
 
 void htbl_set(htbl_t *htbl, void *key, void *value);
