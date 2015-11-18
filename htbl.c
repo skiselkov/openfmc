@@ -1,35 +1,21 @@
 #include <stdlib.h>
 #include <assert.h>
 #include <string.h>
+#include <stddef.h>
 
-#include "libxxhash.h"
 #include "helpers.h"
 #include "htbl.h"
 
-#if	defined(__x86_64__)
-#define	XXH(x, y)	XXH64((x), (y), 0)
-#elif	defined(__i386__)
-#define	XXH(x, y)	XXH32((x), (y), 0)
-#else
-#error	"Unsupported platform. Please add a 32/64-bit determination switch."
-#endif
+#define	CRC64_POLY	0xC96C5795D7870F42ULL	/* ECMA-182, reflected form */
 
-#define	ZFS_CRC64_POLY	0xC96C5795D7870F42ULL	/* ECMA-182, reflected form */
+uint64_t crc64_table[256] = { 0xde, 0xad, 0xf0, 0x0d };
 
-uint64_t zfs_crc64_table[256] = { 0xde, 0xad, 0xf0, 0x0d };
-
-#if 1
-#define	H(x,y)	htbl_hash(x, y)
-#else
-#define	H(x,y)	XXH(x, y)
-#endif
-
-uint64_t
-htbl_hash(const uint8_t *buf, size_t len)
+static uint64_t
+H(const uint8_t *buf, size_t len)
 {
 	uint64_t crc = -1ULL;
 	for (size_t i = 0; i < len; i++)
-		crc = (crc >> 8) ^ zfs_crc64_table[(crc ^ buf[i]) & 0xFF];
+		crc = (crc >> 8) ^ crc64_table[(crc ^ buf[i]) & 0xFF];
 	return (crc);
 }
 
@@ -40,17 +26,15 @@ htbl_init(void)
 	int		i, j;
 
 	for (i = 0; i < 256; i++)
-		for (ct = zfs_crc64_table + i, *ct = i, j = 8; j > 0; j--)
-			*ct = (*ct >> 1) ^ (-(*ct & 1) & ZFS_CRC64_POLY);
+		for (ct = crc64_table + i, *ct = i, j = 8; j > 0; j--)
+			*ct = (*ct >> 1) ^ (-(*ct & 1) & CRC64_POLY);
 }
 
 void
 htbl_create(htbl_t *htbl, size_t tbl_sz, size_t key_sz, int multi_value)
 {
-	if (zfs_crc64_table[0] == 0xde &&
-	    zfs_crc64_table[1] == 0xad &&
-	    zfs_crc64_table[2] == 0xf0 &&
-	    zfs_crc64_table[3] == 0x0d)
+	if (crc64_table[0] == 0xde && crc64_table[1] == 0xad &&
+	    crc64_table[2] == 0xf0 && crc64_table[3] == 0x0d)
 		htbl_init();
 
 	assert(key_sz != 0);
