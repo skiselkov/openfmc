@@ -24,11 +24,17 @@
 #define	PATHSEP	"/"
 #endif
 
+/*
+ * Copies src to dst (for which sizeof must give its real size) and checks
+ * for overflow.
+ */
 #define	STRLCPY_CHECK(dst, src) \
+	(strlcpy(dst, src, sizeof (dst)) <= sizeof (dst))
+#define	STRLCPY_CHECK_ERROUT(dst, src) \
 	do { \
-		if (strlcpy(dst, src, sizeof (dst)) > sizeof (dst)) { \
+		if (!STRLCPY_CHECK(dst, src)) { \
 			openfmc_log(OPENFMC_LOG_ERR, "Parsing error: input " \
-			    "line too long."); \
+			    "string too long."); \
 			goto errout; \
 		} \
 	} while (0)
@@ -109,13 +115,16 @@ static const char *navproc_final_types_to_str[NAVPROC_FINAL_TYPES] = {
 	"ILS",	"VOR",	"NDB",	"RNAV",	"LDA"
 };
 
+/*
+ * Parses one airway line starting with 'A,' from ATS.txt.
+ */
 static bool_t
 parse_airway_line(const char *line, airway_t *awy)
 {
 	char	line_copy[128];
 	char	*comps[3];
 
-	STRLCPY_CHECK(line_copy, line);
+	STRLCPY_CHECK_ERROUT(line_copy, line);
 	if (explode_line(line_copy, ',', comps, 3) != 3) {
 		openfmc_log(OPENFMC_LOG_ERR, "Error parsing airway line: "
 		    "invalid number of columns, wanted 3.");
@@ -132,7 +141,7 @@ parse_airway_line(const char *line, airway_t *awy)
 		    comps[1], sizeof (awy->name) - 1);
 		goto errout;
 	}
-	(void) strlcpy(awy->name, comps[1], sizeof (awy->name));
+	STRLCPY_CHECK_ERROUT(awy->name, comps[1]);
 	awy->num_segs = atoi(comps[2]);
 	if (awy->num_segs == 0 || awy->num_segs > MAX_AWY_SEGS) {
 		openfmc_log(OPENFMC_LOG_ERR, "Error parsing airway line: "
@@ -152,7 +161,7 @@ parse_airway_seg_line(const char *line, airway_seg_t *seg)
 	char	line_copy[128];
 	char	*comps[10];
 
-	STRLCPY_CHECK(line_copy, line);
+	STRLCPY_CHECK_ERROUT(line_copy, line);
 	if (explode_line(line_copy, ',', comps, 10) != 10) {
 		openfmc_log(OPENFMC_LOG_ERR, "Error parsing airway segment: "
 		    "invalid number of cols, wanted 10.");
@@ -163,8 +172,8 @@ parse_airway_seg_line(const char *line, airway_seg_t *seg)
 		    "wanted line type 'S', got '%s'.", comps[0]);
 		goto errout;
 	}
-	(void) strlcpy(seg->endpt[0].name, comps[1], NAV_NAME_LEN);
-	(void) strlcpy(seg->endpt[1].name, comps[4], NAV_NAME_LEN);
+	STRLCPY_CHECK_ERROUT(seg->endpt[0].name, comps[1]);
+	STRLCPY_CHECK_ERROUT(seg->endpt[1].name, comps[4]);
 	if (!geo_pos_2d_from_str(comps[2], comps[3], &seg->endpt[0].pos) ||
 	    !geo_pos_2d_from_str(comps[5], comps[6], &seg->endpt[1].pos)) {
 		openfmc_log(OPENFMC_LOG_ERR, "Error parsing airway segment: "
@@ -310,20 +319,19 @@ parse_waypoint_line(const char *line, fix_t *wpt)
 	char	line_copy[128];
 	char	*comps[4];
 
-	STRLCPY_CHECK(line_copy, line);
+	STRLCPY_CHECK_ERROUT(line_copy, line);
 	if (explode_line(line_copy, ',', comps, 4) != 4) {
 		openfmc_log(OPENFMC_LOG_ERR, "Error parsing waypoint: "
 		    "line contains invalid number of columns, wanted 4.");
 		goto errout;
 	}
-	(void) strlcpy(wpt->name, comps[0], sizeof (wpt->name));
+	STRLCPY_CHECK_ERROUT(wpt->name, comps[0]);
 	if (!geo_pos_2d_from_str(comps[1], comps[2], &wpt->pos)) {
 		openfmc_log(OPENFMC_LOG_ERR, "Error parsing waypoint: "
 		    "lat/lon position invalid.");
 		goto errout;
 	}
-	(void) strlcpy(wpt->icao_country_code, comps[3],
-	    sizeof (wpt->icao_country_code));
+	STRLCPY_CHECK_ERROUT(wpt->icao_country_code, comps[3]);
 
 	return (B_TRUE);
 errout:
@@ -420,7 +428,7 @@ parse_arpt_line(const char *line, airport_t *arpt)
 	char	*comps[10];
 
 	/* Check this is an airport line and it's the one we're looking for */
-	STRLCPY_CHECK(line_copy, line);
+	STRLCPY_CHECK_ERROUT(line_copy, line);
 	if (explode_line(line_copy, ',', comps, 10) != 10 ||
 	    strcmp(comps[0], "A") != 0 || strcmp(comps[1], arpt->icao) != 0) {
 		/*
@@ -430,7 +438,7 @@ parse_arpt_line(const char *line, airport_t *arpt)
 		goto errout;
 	}
 
-	(void) strlcpy(arpt->name, comps[2], sizeof (arpt->name));
+	STRLCPY_CHECK_ERROUT(arpt->name, comps[2]);
 	if (!geo_pos_3d_from_str(comps[3], comps[4], comps[5], &arpt->refpt)) {
 		openfmc_log(OPENFMC_LOG_ERR, "Error parsing initial airport "
 		    "line: reference point coordinates invalid.");
@@ -459,7 +467,7 @@ parse_rwy_line(const char *line, runway_t *rwy)
 	double	loc_freq;
 
 	/* Line must start with "R" keyword */
-	STRLCPY_CHECK(line_copy, line);
+	STRLCPY_CHECK_ERROUT(line_copy, line);
 	if (explode_line(line_copy, ',', comps, 15) != 15 ||
 	    strcmp(comps[0], "R") != 0) {
 		openfmc_log(OPENFMC_LOG_ERR, "Error parsing runway line: "
@@ -509,18 +517,19 @@ parse_sid_proc_line(char **comps, size_t num_comps, navproc_t *proc)
 		    "incorrect number of columns.");
 		return (B_FALSE);
 	}
-	(void) strlcpy(proc->name, comps[1], sizeof (proc->name));
+	STRLCPY_CHECK_ERROUT(proc->name, comps[1]);
 	if (is_valid_rwy_ID(comps[2])) {
 		proc->type = NAVPROC_TYPE_SID;
-		(void) strlcpy(proc->rwy_ID, comps[2], sizeof (proc->rwy_ID));
+		STRLCPY_CHECK_ERROUT(proc->rwy_ID, comps[2]);
 	} else if (strcmp(comps[2], "ALL") == 0) {
 		proc->type = NAVPROC_TYPE_SID_COMMON;
 	} else {
 		proc->type = NAVPROC_TYPE_SID_TRANS;
-		(void) strlcpy(proc->fix_name, comps[2],
-		    sizeof (proc->fix_name));
+		STRLCPY_CHECK_ERROUT(proc->fix_name, comps[2]);
 	}
 	return (B_TRUE);
+errout:	/* needed for STRLCPY_CHECK_ERROUT */
+	return (B_FALSE);
 }
 
 static bool_t
@@ -531,18 +540,19 @@ parse_star_proc_line(char **comps, size_t num_comps, navproc_t *proc)
 		    "incorrect number of columns.");
 		return (B_FALSE);
 	}
-	(void) strlcpy(proc->name, comps[1], sizeof (proc->name));
+	STRLCPY_CHECK_ERROUT(proc->name, comps[1]);
 	if (is_valid_rwy_ID(comps[2])) {
 		proc->type = NAVPROC_TYPE_STAR;
-		(void) strlcpy(proc->rwy_ID, comps[2], sizeof (proc->rwy_ID));
+		STRLCPY_CHECK_ERROUT(proc->rwy_ID, comps[2]);
 	} else if (strcmp(comps[2], "ALL") == 0) {
 		proc->type = NAVPROC_TYPE_STAR_COMMON;
 	} else {
 		proc->type = NAVPROC_TYPE_STAR_TRANS;
-		(void) strlcpy(proc->fix_name, comps[2],
-		    sizeof (proc->fix_name));
+		STRLCPY_CHECK_ERROUT(proc->fix_name, comps[2]);
 	}
 	return (B_TRUE);
+errout:	/* needed for STRLCPY_CHECK_ERROUT */
+	return (B_FALSE);
 }
 
 static bool_t
@@ -559,10 +569,12 @@ parse_apptr_proc_line(char **comps, size_t num_comps, navproc_t *proc)
 		    "invalid runway ID \"%s\".", comps[2]);
 		return (B_FALSE);
 	}
-	(void) strlcpy(proc->name, comps[1], sizeof (proc->name));
-	(void) strlcpy(proc->rwy_ID, comps[2], sizeof (proc->rwy_ID));
-	(void) strlcpy(proc->fix_name, comps[3], sizeof (proc->fix_name));
+	STRLCPY_CHECK_ERROUT(proc->name, comps[1]);
+	STRLCPY_CHECK_ERROUT(proc->rwy_ID, comps[2]);
+	STRLCPY_CHECK_ERROUT(proc->fix_name, comps[3]);
 	return (B_TRUE);
+errout:	/* needed for STRLCPY_CHECK_ERROUT */
+	return (B_FALSE);
 }
 
 static bool_t
@@ -579,8 +591,8 @@ parse_final_proc_line(char **comps, size_t num_comps, navproc_t *proc)
 		    "invalid runway ID \"%s\".", comps[2]);
 		return (B_FALSE);
 	}
-	(void) strlcpy(proc->name, comps[1], sizeof (proc->name));
-	(void) strlcpy(proc->rwy_ID, comps[2], sizeof (proc->rwy_ID));
+	STRLCPY_CHECK_ERROUT(proc->name, comps[1]);
+	STRLCPY_CHECK_ERROUT(proc->rwy_ID, comps[2]);
 	if (strlen(comps[3]) != 1) {
 		openfmc_log(OPENFMC_LOG_ERR, "Error parsing FINAL line: "
 		    "invalid approach type code \"%s\".", comps[3]);
@@ -614,6 +626,8 @@ parse_final_proc_line(char **comps, size_t num_comps, navproc_t *proc)
 		return (B_FALSE);
 	}
 	return (B_TRUE);
+errout:	/* needed for STRLCPY_CHECK_ERROUT */
+	return (B_FALSE);
 }
 
 static bool_t
@@ -675,8 +689,8 @@ parse_proc_seg_fix(char *comps[3], fix_t *fix)
 {
 	if (strlen(comps[0]) > sizeof (fix->name) - 1)
 		return (B_FALSE);
-	(void) strlcpy(fix->name, comps[0], sizeof (fix->name));
-	if (!geo_pos_2d_from_str(comps[1], comps[2], &fix->pos))
+	if (!geo_pos_2d_from_str(comps[1], comps[2], &fix->pos) ||
+	    !STRLCPY_CHECK(fix->name, comps[0]))
 		return (B_FALSE);
 	return (B_TRUE);
 }
@@ -703,14 +717,13 @@ parse_AF_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
 	seg->leg_cmd.dme_arc.start_radial = atof(comps[6]);
 	seg->leg_cmd.dme_arc.radius = atof(comps[7]);
 	seg->leg_cmd.dme_arc.end_radial = atof(comps[8]);
-	(void) strlcpy(seg->leg_cmd.dme_arc.navaid, comps[5],
-	    sizeof (seg->leg_cmd.dme_arc.navaid));
 	if ((dir != 1 && dir != 2) ||
 	    !parse_proc_seg_fix(&comps[1], &seg->term_cond.fix) ||
 	    !is_valid_hdg(seg->leg_cmd.dme_arc.start_radial) ||
 	    !is_valid_arc_radius(seg->leg_cmd.dme_arc.radius) ||
 	    !is_valid_hdg(seg->leg_cmd.dme_arc.end_radial) ||
-	    !parse_alt_spd_term(&comps[9], &seg->alt_lim, &seg->spd_lim)) {
+	    !parse_alt_spd_term(&comps[9], &seg->alt_lim, &seg->spd_lim) ||
+	    !STRLCPY_CHECK(seg->leg_cmd.dme_arc.navaid, comps[5])) {
 		return (B_FALSE);
 	}
 	if (dir == 2) {
@@ -819,10 +832,9 @@ parse_CD_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
 	seg->leg_cmd.crs = atof(comps[8]);
 	seg->term_cond.dme.dist = atof(comps[9]);
 	if (!is_valid_hdg(seg->leg_cmd.crs) ||
-	    !parse_alt_spd_term(&comps[10], &seg->alt_lim, &seg->spd_lim))
+	    !parse_alt_spd_term(&comps[10], &seg->alt_lim, &seg->spd_lim) ||
+	    !STRLCPY_CHECK(seg->term_cond.dme.navaid, comps[5]))
 		return (B_FALSE);
-	(void) strlcpy(seg->term_cond.dme.navaid, comps[5],
-	    sizeof (seg->term_cond.dme.navaid));
 	return (B_TRUE);
 }
 
@@ -872,10 +884,9 @@ parse_CI_CR_seg(char **comps, size_t num_comps, navproc_seg_t *seg,
 	seg->leg_cmd.crs = atof(comps[4]);
 	if (!is_valid_hdg(seg->leg_cmd.crs) ||
 	    !parse_alt_spd_term(&comps[5], &seg->alt_lim, &seg->spd_lim) ||
-	    (!is_CI && !is_valid_hdg(seg->term_cond.radial.radial)))
+	    (!is_CI && !is_valid_hdg(seg->term_cond.radial.radial)) ||
+	    !STRLCPY_CHECK(seg->term_cond.radial.navaid, comps[2]))
 		return (B_FALSE);
-	(void) strlcpy(seg->term_cond.radial.navaid, comps[2],
-	    sizeof (seg->term_cond.radial.navaid));
 	return (B_TRUE);
 }
 
@@ -909,10 +920,8 @@ parse_DF_TF_seg(char **comps, size_t num_comps, navproc_seg_t *seg,
 	    NAVPROC_SEG_TYPE_TRK_TO_FIX;
 	if (!geo_pos_2d_from_str(comps[2], comps[3], &seg->term_cond.fix.pos) ||
 	    !parse_alt_spd_term(&comps[is_DF ? 8 : 10], &seg->alt_lim,
-	    &seg->spd_lim))
+	    &seg->spd_lim) || !STRLCPY_CHECK(seg->term_cond.fix.name, comps[1]))
 		return (B_FALSE);
-	(void) strlcpy(seg->term_cond.fix.name, comps[1],
-	    sizeof (seg->term_cond.fix.name));
 	return (B_TRUE);
 }
 
@@ -936,11 +945,10 @@ parse_FA_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
 	    !parse_alt_spd_term(&comps[9], &seg->term_cond.alt,
 	    &seg->spd_lim) ||
 	    /* altitude constraint is required for CA segs */
-	    seg->term_cond.alt.type == ALT_LIM_NONE)
+	    seg->term_cond.alt.type == ALT_LIM_NONE ||
+	    !STRLCPY_CHECK(seg->leg_cmd.fix.name, comps[1]))
 		return (B_FALSE);
 	seg->alt_lim = seg->term_cond.alt;
-	(void) strlcpy(seg->leg_cmd.fix.name, comps[1],
-	    sizeof (seg->leg_cmd.fix.name));
 	return (B_TRUE);
 }
 
@@ -967,12 +975,10 @@ parse_FC_FD_seg(char **comps, size_t num_comps, navproc_seg_t *seg,
 	}
 	seg->term_cond.dme.dist = atof(comps[9]);
 	if (!geo_pos_2d_from_str(comps[2], comps[3], &seg->leg_cmd.fix.pos) ||
-	    !parse_alt_spd_term(&comps[10], &seg->alt_lim, &seg->spd_lim))
+	    !parse_alt_spd_term(&comps[10], &seg->alt_lim, &seg->spd_lim) ||
+	    !STRLCPY_CHECK(seg->leg_cmd.fix.name, comps[1]) ||
+	    !STRLCPY_CHECK(seg->term_cond.dme.navaid, comps[5]))
 		return (B_FALSE);
-	(void) strlcpy(seg->leg_cmd.fix.name, comps[1],
-	    sizeof (seg->leg_cmd.fix.name));
-	(void) strlcpy(seg->term_cond.dme.navaid, comps[5],
-	    sizeof (seg->term_cond.dme.navaid));
 	return (B_TRUE);
 }
 
@@ -997,10 +1003,9 @@ parse_FM_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
 	seg->leg_cmd.fix_trk.crs = atof(comps[8]);
 	if (!geo_pos_2d_from_str(comps[2], comps[3],
 	    &seg->leg_cmd.fix_trk.fix.pos) ||
-	    !parse_alt_spd_term(&comps[9], &seg->alt_lim, &seg->spd_lim))
+	    !parse_alt_spd_term(&comps[9], &seg->alt_lim, &seg->spd_lim) ||
+	    !STRLCPY_CHECK(seg->leg_cmd.fix_trk.fix.name, comps[1]))
 		return (B_FALSE);
-	(void) strlcpy(seg->leg_cmd.fix_trk.fix.name, comps[1],
-	    sizeof (seg->leg_cmd.fix_trk.fix.name));
 	return (B_TRUE);
 }
 
@@ -1037,12 +1042,10 @@ parse_HA_HF_HM_seg(char **comps, size_t num_comps, navproc_seg_t *seg,
 	    /* alt constr is mandatory on HA segs */
 	    (type == NAVPROC_SEG_TYPE_HOLD_TO_ALT &&
 	    seg->alt_lim.type == ALT_LIM_NONE) ||
-	    !is_valid_hdg(seg->leg_cmd.hold.inbd_crs))
+	    !is_valid_hdg(seg->leg_cmd.hold.inbd_crs) ||
+	    !STRLCPY_CHECK(seg->leg_cmd.hold.fix.name, comps[1]) ||
+	    !STRLCPY_CHECK(seg->term_cond.dme.navaid, comps[5]))
 		return (B_FALSE);
-	(void) strlcpy(seg->leg_cmd.hold.fix.name, comps[1],
-	    sizeof (seg->leg_cmd.fix.name));
-	(void) strlcpy(seg->term_cond.dme.navaid, comps[5],
-	    sizeof (seg->term_cond.dme.navaid));
 	if (type == NAVPROC_SEG_TYPE_HOLD_TO_ALT)
 		seg->term_cond.alt = seg->alt_lim;
 	else if (type == NAVPROC_SEG_TYPE_HOLD_TO_FIX)
@@ -1080,10 +1083,9 @@ parse_IF_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
 	CHECK_NUM_COMPS(15, IF);
 	seg->type = NAVPROC_SEG_TYPE_INIT_FIX;
 	if (!geo_pos_2d_from_str(comps[2], comps[3], &seg->leg_cmd.fix.pos) ||
-	    !parse_alt_spd_term(&comps[7], &seg->alt_lim, &seg->spd_lim))
+	    !parse_alt_spd_term(&comps[7], &seg->alt_lim, &seg->spd_lim) ||
+	    !STRLCPY_CHECK(seg->leg_cmd.fix.name, comps[1]))
 		return (B_FALSE);
-	(void) strlcpy(seg->leg_cmd.fix.name, comps[1],
-	    sizeof (seg->leg_cmd.fix.name));
 	return (B_TRUE);
 }
 
@@ -1114,13 +1116,11 @@ parse_PI_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
 	    (turn_dir != 1 && turn_dir != 2) ||
 	    !is_valid_hdg(seg->leg_cmd.proc_turn.outbd_turn_hdg) ||
 	    !is_valid_hdg(seg->leg_cmd.proc_turn.outbd_radial) ||
-	    !parse_alt_spd_term(&comps[10], &seg->alt_lim, &seg->spd_lim))
+	    !parse_alt_spd_term(&comps[10], &seg->alt_lim, &seg->spd_lim) ||
+	    !STRLCPY_CHECK(seg->leg_cmd.proc_turn.startpt.name, comps[1]) ||
+	    !STRLCPY_CHECK(seg->leg_cmd.proc_turn.navaid, comps[5]))
 		return (B_FALSE);
 	seg->leg_cmd.proc_turn.turn_right = (turn_dir == 1);
-	(void) strlcpy(seg->leg_cmd.proc_turn.startpt.name, comps[1],
-	    sizeof (seg->leg_cmd.proc_turn.startpt.name));
-	(void) strlcpy(seg->leg_cmd.proc_turn.navaid, comps[5],
-	    sizeof (seg->leg_cmd.proc_turn.navaid));
 	return (B_TRUE);
 }
 
@@ -1157,12 +1157,11 @@ parse_RF_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
 	seg->leg_cmd.radius_arc.cw--;
 	seg->leg_cmd.radius_arc.end_radial = atof(comps[6]);
 	seg->leg_cmd.radius_arc.radius = atof(comps[7]);
-	(void) strlcpy(seg->leg_cmd.radius_arc.navaid, comps[5],
-	    sizeof (seg->leg_cmd.radius_arc.navaid));
 	if (!parse_proc_seg_fix(&comps[1], &seg->term_cond.fix) ||
 	    !is_valid_hdg(seg->leg_cmd.radius_arc.end_radial) ||
 	    !is_valid_arc_radius(seg->leg_cmd.radius_arc.radius) ||
-	    !parse_alt_spd_term(&comps[8], &seg->alt_lim, &seg->spd_lim))
+	    !parse_alt_spd_term(&comps[8], &seg->alt_lim, &seg->spd_lim) ||
+	    !STRLCPY_CHECK(seg->leg_cmd.radius_arc.navaid, comps[5]))
 		return (B_FALSE);
 
 	return (B_TRUE);
@@ -1215,12 +1214,11 @@ parse_VD_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
 	seg->leg_cmd.hdg = atof(comps[8]);
 	seg->term_cond.dme.dist = atof(comps[9]);
 	if (!is_valid_hdg(seg->leg_cmd.hdg) ||
-	    !parse_alt_spd_term(&comps[10], &seg->alt_lim, &seg->spd_lim)) {
+	    !parse_alt_spd_term(&comps[10], &seg->alt_lim, &seg->spd_lim) ||
+	    !STRLCPY_CHECK(seg->term_cond.dme.navaid, comps[5])) {
 		openfmc_log(OPENFMC_LOG_ERR, "Error parsing VD segment line");
 		return (B_FALSE);
 	}
-	(void) strlcpy(seg->term_cond.dme.navaid, comps[5],
-	    sizeof (seg->term_cond.dme.navaid));
 
 	return (B_TRUE);
 }
@@ -1266,14 +1264,14 @@ parse_VI_VM_VR_seg(char **comps, size_t num_comps, navproc_seg_t *seg,
 	if (type == NAVPROC_SEG_TYPE_HDG_TO_INTCP &&
 	    strcmp(comps[2], " ") != 0) {
 		/* Copy non-empty navaid to termination condition on VI segs */
-		(void) strlcpy(seg->term_cond.navaid, comps[2],
-		    sizeof (seg->term_cond.navaid));
+		STRLCPY_CHECK_ERROUT(seg->term_cond.navaid, comps[2]);
 	} else if (type == NAVPROC_SEG_TYPE_HDG_TO_RADIAL) {
-		(void) strlcpy(seg->term_cond.radial.navaid, comps[2],
-		    sizeof (seg->term_cond.radial.navaid));
+		STRLCPY_CHECK_ERROUT(seg->term_cond.radial.navaid, comps[2]);
 	}
 
 	return (B_TRUE);
+errout:	/* needed for STRLCPY_CHECK_ERROUT */
+	return (B_FALSE);
 }
 
 static void
@@ -1305,7 +1303,7 @@ parse_proc_seg_line(const char *line, navproc_t *proc)
 	navproc_seg_t	seg;
 	char		line_copy[256];
 
-	STRLCPY_CHECK(line_copy, line);
+	STRLCPY_CHECK_ERROUT(line_copy, line);
 	num_comps = explode_line(line_copy, ',', comps, 24);
 	memset(&seg, 0, sizeof (seg));
 
@@ -1421,7 +1419,7 @@ parse_proc(FILE *fp, navproc_t *proc)
 		return (0);
 	}
 	strip_newline(line);
-	STRLCPY_CHECK(line_copy, line);
+	STRLCPY_CHECK_ERROUT(line_copy, line);
 	num_comps = explode_line(line_copy, ',', comps, 8);
 	assert(num_comps != 0);
 
