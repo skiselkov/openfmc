@@ -48,6 +48,7 @@ char *airway_db_dump(const airway_db_t *db, bool_t by_awy_name);
 
 waypoint_db_t *waypoint_db_open(const char *navdata_dir);
 void waypoint_db_close(waypoint_db_t *db);
+char *waypoint_db_dump(const waypoint_db_t *db);
 
 
 /* Navaid structures */
@@ -166,8 +167,7 @@ typedef struct navproc_seg_s {
 			double	radius;
 		} dme_arc;
 		struct {			/* RF */
-			char		navaid[NAV_NAME_LEN];
-			double		end_radial;
+			char		ctr_fix[NAV_NAME_LEN];
 			double		radius;
 			bool_t	cw;	/* clockwise or counter-CW */
 		} radius_arc;
@@ -181,6 +181,7 @@ typedef struct navproc_seg_s {
 			fix_t	fix;
 			double	inbd_crs;
 			double	leg_len;
+			bool_t	turn_right;
 		} hold;
 		struct {			/* PI */
 			fix_t	startpt;

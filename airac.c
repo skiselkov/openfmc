@@ -55,9 +55,9 @@ static const char *navaid_type_name_tbl[NAVAID_TYPES] = {
 
 /* The order in this array must follow navproc_type_t */
 static const char *navproc_type_to_str[NAVPROC_TYPES] = {
-	"SID", "SID_COMMON", "SID_TRANSITION",
-	"STAR", "STAR_COMMON", "STAR_TRANSITION",
-	"FINAL_TRANSITION", "FINAL"
+	"SID", "SIDCM", "SIDTR",
+	"STAR", "STARCM", "STARTR",
+	"FINALTR", "FINAL"
 };
 
 static void dump_AF_seg(char **result, size_t *result_sz,
@@ -354,12 +354,16 @@ static void
 airway_db_dump_awy(const void *k, const airway_t *awy, db_dump_info_t *info)
 {
 	UNUSED(k);
-	append_format(info->result, info->result_sz, "  %s (%u)\n", awy->name,
-	    awy->num_segs);
+	append_format(info->result, info->result_sz,
+	    "  %s (%u):\n"
+	    "    fix 1        lat         lon     fix 2        lat "
+	    "        lon\n"
+	    "    ----- ---------- -----------     ----- ---------- "
+	    "-----------\n", awy->name, awy->num_segs);
 	for (size_t i = 0; i < awy->num_segs; i++) {
 		const airway_seg_t *seg = &awy->segs[i];
 		append_format(info->result, info->result_sz,
-		    "    %5s  %10.6lf x %11.6lf  -  %5s  %10.6lf x %11.6lf\n",
+		    "    %5s %10.6lf %11.6lf  -  %5s %10.6lf %11.6lf\n",
 		    seg->endpt[0].name, seg->endpt[0].pos.lat,
 		    seg->endpt[0].pos.lon, seg->endpt[1].name,
 		    seg->endpt[1].pos.lat, seg->endpt[1].pos.lon);
@@ -392,7 +396,7 @@ airway_db_dump(const airway_db_t *db, bool_t by_awy_name)
 
 	info.scratch[0] = 0;
 	if (by_awy_name) {
-		append_format(&result, &result_sz, "Airways (%lu):",
+		append_format(&result, &result_sz, "Airways (%lu):\n",
 		    htbl_count(&db->by_awy_name));
 		htbl_foreach(&db->by_awy_name,
 		    (void (*)(const void *, void *, void*))airway_db_dump_awy,
@@ -480,7 +484,7 @@ waypoint_db_open(const char *navdata_dir)
 
 	while ((line_len = getline(&line, &line_cap, wpts_fp)) != -1) {
 		strip_newline(line);
-		if (line[0] == 0)
+		if (line[0] == 0 || line[0] == ' ')
 			continue;
 		wpt = calloc(sizeof (*wpt), 1);
 		if (!wpt)
@@ -514,6 +518,33 @@ waypoint_db_close(waypoint_db_t *db)
 	htbl_empty(&db->by_name, (void (*)(void *, void *))free, NULL);
 	htbl_destroy(&db->by_name);
 	free(db);
+}
+
+static void
+waypoint_db_dump_cb(const void *k, const fix_t *fix, db_dump_info_t *info)
+{
+	UNUSED(k);
+	append_format(info->result, info->result_sz,
+	    "  %5s %2s %10.6lf %11.6lf\n",
+	    fix->name, fix->icao_country_code, fix->pos.lat, fix->pos.lon);
+}
+
+char *
+waypoint_db_dump(const waypoint_db_t *db)
+{
+	char		*result = NULL;
+	size_t		result_sz = 0;
+	db_dump_info_t	info = { .result = &result, .result_sz = &result_sz };
+
+	append_format(&result, &result_sz,
+	    "Waypoints (%lu):\n"
+	    "   name CC        lat         lon\n"
+	    "  ----- -- ---------- -----------\n",
+	    htbl_count(&db->by_name));
+	htbl_foreach(&db->by_name,
+	    (void (*)(const void *, void *, void*))waypoint_db_dump_cb,
+	    &info);
+	return (result);
 }
 
 static bool_t
@@ -658,7 +689,7 @@ navaid_db_dump_append(const void *k, const navaid_t *navaid,
 {
 	UNUSED(k);
 	append_format(info->result, info->result_sz,
-	    "  %9s %4s %2s %15s %6.2lf %sHz %10.6lf x %11.6lf x %d\n",
+	    "  %9s %4s %2s %15s %6.2lf %sHz %10.6lf %11.6lf %d\n",
 	    navaid_type_name_tbl[navaid->type], navaid->ID,
 	    navaid->icao_country_code, navaid->name,
 	    navaid->freq / (navaid->type == NAVAID_TYPE_NDB ? 1000.0 :
@@ -676,7 +707,12 @@ navaid_db_dump(const navaid_db_t *db)
 	    .result = &result, .result_sz = &result_sz
 	};
 
-	append_format(&result, &result_sz, "Navaids:\n");
+	append_format(&result, &result_sz,
+	    "Navaids: (%lu)\n"
+	    "       type name CC       long name       freq        lat "
+	    "        lon  elev\n"
+	    "  --------- ---- -- --------------- ---------- ---------- "
+	    "----------- -----\n", htbl_count(&db->by_name));
 	htbl_foreach(&db->by_name,
 	    (void (*)(const void *, void *, void*))navaid_db_dump_append,
 	    &info);
@@ -1296,10 +1332,13 @@ parse_HA_HF_HM_seg(char **comps, size_t num_comps, navproc_seg_t *seg,
 	else
 		ASSERT(0);
 	seg->type = type;
+	seg->leg_cmd.hold.turn_right = atoi(comps[4]);
 	seg->leg_cmd.hold.inbd_crs = atof(comps[8]);
 	seg->leg_cmd.hold.leg_len = atof(comps[9]);
 	if (!geo_pos_2d_from_str(comps[2], comps[3],
 	    &seg->leg_cmd.hold.fix.pos) ||
+	    (seg->leg_cmd.hold.turn_right != 1 &&
+	    seg->leg_cmd.hold.turn_right != 2) ||
 	    !parse_alt_spd_term(&comps[10], &seg->alt_lim, &seg->spd_lim) ||
 	    /* alt constr is mandatory on HA segs */
 	    (type == NAVPROC_SEG_TYPE_HOLD_TO_ALT &&
@@ -1312,6 +1351,8 @@ parse_HA_HF_HM_seg(char **comps, size_t num_comps, navproc_seg_t *seg,
 		seg->term_cond.alt = seg->alt_lim;
 	else if (type == NAVPROC_SEG_TYPE_HOLD_TO_FIX)
 		seg->term_cond.fix = seg->leg_cmd.hold.fix;
+	/* change turn flag from 1-2 to 0-1 */
+	seg->leg_cmd.hold.turn_right--;
 	return (B_TRUE);
 }
 
@@ -1322,20 +1363,20 @@ dump_HA_HF_HM_seg(char **result, size_t *result_sz, const navproc_seg_t *seg)
 	if (seg->type == NAVPROC_SEG_TYPE_HOLD_TO_ALT) {
 		DUMP_ALT_LIM(&seg->term_cond.alt);
 		append_format(result, result_sz,
-		    "\tHA,F:%s,lat:%lf,lon:%lf,IC:%.01lf,L:%.01lf%s%s\n",
+		    "\tHA,F:%s,lat:%lf,lon:%lf,IC:%.01lf,L:%.01lf,R:%d%s%s\n",
 		    seg->leg_cmd.hold.fix.name, seg->leg_cmd.hold.fix.pos.lat,
 		    seg->leg_cmd.hold.fix.pos.lon, seg->leg_cmd.hold.inbd_crs,
-		    seg->leg_cmd.hold.leg_len, alt_constr_desc,
-		    spd_constr_desc);
+		    seg->leg_cmd.hold.leg_len, seg->leg_cmd.hold.turn_right,
+		    alt_constr_desc, spd_constr_desc);
 	} else {
 		DUMP_ALT_LIM(&seg->alt_lim);
 		append_format(result, result_sz,
-		    "\t%s,F:%s,lat:%lf,lon:%lf,IC:%.01lf,L:%.01lf%s%s\n",
+		    "\t%s,F:%s,lat:%lf,lon:%lf,IC:%.01lf,L:%.01lf,R:%d%s%s\n",
 		    seg->type == NAVPROC_SEG_TYPE_HOLD_TO_FIX ? "HF" : "HM",
 		    seg->leg_cmd.hold.fix.name, seg->leg_cmd.hold.fix.pos.lat,
 		    seg->leg_cmd.hold.fix.pos.lon, seg->leg_cmd.hold.inbd_crs,
-		    seg->leg_cmd.hold.leg_len, alt_constr_desc,
-		    spd_constr_desc);
+		    seg->leg_cmd.hold.leg_len, seg->leg_cmd.hold.turn_right,
+		    alt_constr_desc, spd_constr_desc);
 	}
 }
 
@@ -1411,19 +1452,17 @@ parse_RF_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
 {
 	CHECK_NUM_COMPS(16, RF);
 	seg->type = NAVPROC_SEG_TYPE_RADIUS_ARC_TO_FIX;
-	if (sscanf(comps[4], "%d", &seg->leg_cmd.radius_arc.cw) != 1 ||
-	    (seg->leg_cmd.radius_arc.cw != 1 &&
-	    seg->leg_cmd.radius_arc.cw != 2))
+	seg->leg_cmd.radius_arc.cw = atoi(comps[4]);
+	if (seg->leg_cmd.radius_arc.cw != 1 &&
+	    seg->leg_cmd.radius_arc.cw != 2)
 		return (B_FALSE);
 	/* change CW flag from 1-2 to 0-1 */
 	seg->leg_cmd.radius_arc.cw--;
-	seg->leg_cmd.radius_arc.end_radial = atof(comps[6]);
 	seg->leg_cmd.radius_arc.radius = atof(comps[7]);
 	if (!parse_proc_seg_fix(&comps[1], &seg->term_cond.fix) ||
-	    !is_valid_hdg(seg->leg_cmd.radius_arc.end_radial) ||
 	    !is_valid_arc_radius(seg->leg_cmd.radius_arc.radius) ||
 	    !parse_alt_spd_term(&comps[8], &seg->alt_lim, &seg->spd_lim) ||
-	    !STRLCPY_CHECK(seg->leg_cmd.radius_arc.navaid, comps[5]))
+	    !STRLCPY_CHECK(seg->leg_cmd.radius_arc.ctr_fix, comps[5]))
 		return (B_FALSE);
 
 	return (B_TRUE);
@@ -1435,10 +1474,10 @@ dump_RF_seg(char **result, size_t *result_sz, const navproc_seg_t *seg)
 	DUMP_ALT_LIM(&seg->alt_lim);
 	DUMP_SPD_LIM(&seg->spd_lim);
 	append_format(result, result_sz,
-	    "\tRF,N:%s,ER:%.01lf,r:%.01lf,cw:%d,F:%s%s%s\n",
-	    seg->leg_cmd.radius_arc.navaid, seg->leg_cmd.radius_arc.end_radial,
-	    seg->leg_cmd.radius_arc.radius, seg->leg_cmd.radius_arc.cw,
-	    seg->term_cond.fix.name, alt_constr_desc, spd_constr_desc);
+	    "\tRF,F:%s,r:%.01lf,cw:%d,F:%s%s%s\n",
+	    seg->leg_cmd.radius_arc.ctr_fix, seg->leg_cmd.radius_arc.radius,
+	    seg->leg_cmd.radius_arc.cw, seg->term_cond.fix.name,
+	    alt_constr_desc, spd_constr_desc);
 }
 
 static bool_t
@@ -1874,63 +1913,50 @@ airport_dump(const airport_t *arpt)
 	    "  refpt: %lf x %lf\n"
 	    "  TA: %u\n"
 	    "  TL: %u\n"
-	    "  longest_rwy: %u\n"
-	    "  num_rwys: %u\n"
-	    "  Runways:\n",
+	    "  longest_rwy: %u\n\n"
+	    "  Runways (%u):\n"
+	    "    RWY hdg   len wide LOC    LOCfreq LOCcrs    thr_lat "
+	    "     thr_lon gp_angle\n"
+	    "    --- --- ----- ---- --- ---------- ------ ---------- "
+	    "------------ --------\n",
 	    arpt->name, arpt->icao, arpt->refpt.lat, arpt->refpt.lon,
 	    arpt->TA, arpt->TL, arpt->longest_rwy, arpt->num_rwys);
 
 	for (unsigned i = 0; i < arpt->num_rwys; i++) {
 		const runway_t *rwy = &arpt->rwys[i];
 		append_format(&result, &result_sz,
-		    "    %s\n"
-		    "      hdg: %u\n"
-		    "      length: %u\n"
-		    "      width: %u\n"
-		    "      loc_avail: %d\n"
-		    "      loc_freq: %u\n"
-		    "      loc_fcrs: %u\n"
-		    "      thr_pos: %lf x %lf\n"
-		    "      gp_angle: %lf\n",
-		    rwy->ID, rwy->hdg, rwy->length, rwy->width, rwy->loc_avail,
-		    rwy->loc_freq, rwy->loc_fcrs, rwy->thr_pos.lat,
+		    "    %3s %3u %5u %4u %3s %6.2lf MHz %6u %10.6lf %11.7lf "
+		    "%8.1lf\n",
+		    rwy->ID, rwy->hdg, rwy->length, rwy->width,
+		    rwy->loc_avail ? "yes" : "no",
+		    rwy->loc_freq / 1000000.0, rwy->loc_fcrs, rwy->thr_pos.lat,
 		    rwy->thr_pos.lon, rwy->gp_angle);
 	}
 
-	append_format(&result, &result_sz,
-	    "  num_procs: %u\n"
-	    "  Procedures:\n",
+	append_format(&result, &result_sz, "\n  Procedures (%u)\n",
 	    arpt->num_procs);
 	for (unsigned i = 0; i < arpt->num_procs; i++) {
 		const navproc_t *proc = &arpt->procs[i];
 		char final_type[32];
 
 		if (proc->type == NAVPROC_TYPE_FINAL)
-			sprintf(final_type, "      final_type: %s\n",
+			sprintf(final_type, "%s",
 			    navproc_final_types_to_str[proc->final_type]);
 		else
 			final_type[0] = 0;
 		append_format(&result, &result_sz,
-		    "    %s\n"
-		    "      name: %s\n"
-		    "%s"
-		    "      rwy: %s\n"
-		    "      fix: %s\n"
-		    "      num_segs: %u\n"
-		    "      num_main_segs: %u\n"
-		    "      Segments:\n",
+		    "    %-7s %6s%7s%s %s\n"
+		    "      Segments (%u/%u):\n",
 		    navproc_type_to_str[proc->type], proc->name, final_type,
-		    proc->rwy_ID, proc->fix_name, proc->num_segs,
-		    proc->num_main_segs);
+		    proc->rwy_ID, proc->fix_name,
+		    proc->num_segs, proc->num_main_segs);
 		for (unsigned j = 0; j < proc->num_segs; j++)
 			navproc_seg_dump_funcs[proc->segs[j].type](&result,
 			    &result_sz, &proc->segs[j]);
+		append_format(&result, &result_sz, "\n");
 	}
 
-	append_format(&result, &result_sz,
-	    "  num_gates: %u\n"
-	    "  Gates:\n",
-	    arpt->num_gates);
+	append_format(&result, &result_sz, "  Gates (%u):\n", arpt->num_gates);
 	for (unsigned i = 0; i < arpt->num_gates; i++) {
 		const fix_t *gate = &arpt->gates[i];
 		append_format(&result, &result_sz, "    %s  [%lf x %lf]\n",

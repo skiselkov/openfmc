@@ -26,11 +26,11 @@ test_airac(const char *navdata_dir, const char *arpt_icao, const char *dump)
 	wptdb = waypoint_db_open(navdata_dir);
 	if (wptdb) {
 		num_waypoints = htbl_count(&wptdb->by_name);
-#if 0
-		char *desc = waypoint_db_dump(wptdb);
-		fputs(desc, stdout);
-		free(desc);
-#endif
+		if (strcmp(dump, "wpt") == 0) {
+			char *desc = waypoint_db_dump(wptdb);
+			fputs(desc, stdout);
+			free(desc);
+		}
 		waypoint_db_close(wptdb);
 	}
 	awydb = airway_db_open(navdata_dir, num_waypoints);
