@@ -1,10 +1,12 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
 
 #include "airac.h"
 
-int
-main(int argc, char **argv)
+static void
+test_airac(const char *navdata_dir, const char *arpt_icao, const char *dump)
 {
 	airport_t	*arpt;
 	airway_db_t	*awydb;
@@ -12,23 +14,16 @@ main(int argc, char **argv)
 	navaid_db_t	*navaiddb;
 	size_t		num_waypoints = 0;
 
-	if (argc != 3) {
-		fprintf(stderr, "Missing navdata dir & airport argument\n");
-		return (1);
-	}
-
-	for (int i = 0; i < 1000; i++) {
-	arpt = airport_open(argv[2], argv[1]);
+	arpt = airport_open(arpt_icao, navdata_dir);
 	if (arpt) {
-#if 0
-		char *desc = airport_dump(arpt);
-		fputs(desc, stdout);
-		free(desc);
-#endif
+		if (strcmp(dump, "airport") == 0) {
+			char *desc = airport_dump(arpt);
+			fputs(desc, stdout);
+			free(desc);
+		}
 		airport_close(arpt);
 	}
-	}
-	wptdb = waypoint_db_open(argv[1]);
+	wptdb = waypoint_db_open(navdata_dir);
 	if (wptdb) {
 		num_waypoints = htbl_count(&wptdb->by_name);
 #if 0
@@ -38,29 +33,57 @@ main(int argc, char **argv)
 #endif
 		waypoint_db_close(wptdb);
 	}
-	awydb = airway_db_open(argv[1], num_waypoints);
+	awydb = airway_db_open(navdata_dir, num_waypoints);
 	if (awydb) {
-#if 0
-		char *desc = airway_db_dump(awydb, B_TRUE);
-		fputs(desc, stdout);
-		free(desc);
-#endif
-#if 0
-		char *desc = airway_db_dump(awydb, B_FALSE);
-		fputs(desc, stdout);
-		free(desc);
-#endif
+		if (strcmp(dump, "awyname") == 0) {
+			char *desc = airway_db_dump(awydb, B_TRUE);
+			fputs(desc, stdout);
+			free(desc);
+		} else if (strcmp(dump, "awyfix") == 0) {
+			char *desc = airway_db_dump(awydb, B_FALSE);
+			fputs(desc, stdout);
+			free(desc);
+		}
 		airway_db_close(awydb);
 	}
-	navaiddb = navaid_db_open(argv[1]);
+	navaiddb = navaid_db_open(navdata_dir);
 	if (navaiddb) {
-#if 0
-		char *desc = navaid_db_dump(navaiddb);
-		fputs(desc, stdout);
-		free(desc);
-#endif
+		if (strcmp(dump, "navaid") == 0) {
+			char *desc = navaid_db_dump(navaiddb);
+			fputs(desc, stdout);
+			free(desc);
+		}
 		navaid_db_close(navaiddb);
 	}
+}
+
+int
+main(int argc, char **argv)
+{
+	char opt;
+	const char *dump = "";
+
+	while ((opt = getopt(argc, argv, "d:")) != -1) {
+		switch (opt) {
+		case 'd':
+			dump = optarg;
+			break;
+		case '?':
+		default:
+			fprintf(stderr, "Usage: %s [-d <airport|awyname|awyfix"
+			    "|wpt|navaid] <navdata_dir> <arpt_icao>\n",
+			    argv[0]);
+			return (1);
+		}
+	}
+
+	if (argc - optind != 2) {
+		fprintf(stderr, "Missing navdata dir & airport argument\n");
+		return (1);
+	}
+
+	for (int i = 0; i < ((strcmp(dump, "") == 0) ? 10 : 1); i++)
+		test_airac(argv[optind], argv[optind + 1], dump);
 
 	return (0);
 }
