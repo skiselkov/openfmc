@@ -59,8 +59,8 @@ NIT,NITRA,116.500,1,1,195,48.290556,18.050556,810,LZ,0
 	“NIT”		ID
 	“NITRA”		Symbolic name
 	“116.500”	Frequency
-	“1”		0:LOC, 1:VOR
-	”1”		0:NDB (freq in kHz), 1:VHF (freq in MHz)
+	“1”		0:short range 1:long range	(wild guess!)
+	“1”		DME available flag (0/1)
 	“195”		??? (apparently always “195”)
 	“48.290556”	Latitude in degrees
 	”18.050556”	Longitude in degrees

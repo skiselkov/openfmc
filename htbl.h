@@ -30,7 +30,7 @@ typedef struct htbl_bucket_item_s {
 } htbl_bucket_item_t;
 
 typedef struct {
-	size_t		mask;
+	size_t		tbl_sz;
 	size_t		key_sz;
 	list_t		*buckets;
 	size_t		num_values;
@@ -50,9 +50,10 @@ void *htbl_lookup(const htbl_t *htbl, void *key);
 #define	HTBL_VALUE_MULTI(x)	(((htbl_multi_value_t *)(x))->value)
 const list_t *htbl_lookup_multi(const htbl_t *htbl, void *key);
 
-void htbl_foreach(const htbl_t *htbl, void (*func)(void *, void *), void *arg);
+void htbl_foreach(const htbl_t *htbl,
+    void (*func)(const void *, void *, void *), void *arg);
 
-char *htbl_dump(const htbl_t *htbl);
+char *htbl_dump(const htbl_t *htbl, bool_t printable_keys);
 
 #ifdef	__cplusplus
 }

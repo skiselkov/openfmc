@@ -17,11 +17,11 @@ extern "C" {
 #endif	/* __GNUC */
 
 /* Minimum/Maximum allowable elevation AMSL of anything */
-#define	MIN_ELEV	-1000.0
+#define	MIN_ELEV	-2000.0
 #define	MAX_ELEV	30000.0
 
 /* Minimum/Maximum allowable altitude AMSL of anything */
-#define	MIN_ALT		-1000.0
+#define	MIN_ALT		-2000.0
 #define	MAX_ALT		100000.0
 
 /* Maximum valid speed of anything */
@@ -30,6 +30,8 @@ extern "C" {
 /* Minimum/Maximum allowable arc radius on any procedure */
 #define	MIN_ARC_RADIUS	0.1
 #define	MAX_ARC_RADIUS	100.0
+
+#define	UNUSED(x)	(void)(x)
 
 /* generic parser validator helpers */
 
@@ -78,6 +80,8 @@ is_valid_arc_radius(double radius)
 
 bool_t is_valid_vor_freq(double freq_mhz);
 bool_t is_valid_loc_freq(double freq_mhz);
+bool_t is_valid_ndb_freq(double freq_khz);
+bool_t is_valid_tacan_freq(double freq_mhz);
 bool_t is_valid_rwy_ID(const char *rwy_ID);
 
 /* string processing helpers */

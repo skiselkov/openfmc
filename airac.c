@@ -15,6 +15,10 @@
 #define	MAX_PROC_SEGS	100
 #define	MAX_AWY_SEGS	1000
 
+#define	MAX_NUM_AWYS	100000
+#define	MAX_NUM_WPTS	1000000
+#define	MAX_NUM_NAVAIDS	1000000
+
 /* Maximum allowable glidepath angle */
 #define	GP_MAX_ANGLE	10.0
 
@@ -38,6 +42,17 @@
 			goto errout; \
 		} \
 	} while (0)
+
+typedef struct {
+	char	**result;
+	size_t	*result_sz;
+	char	scratch[NAV_NAME_LEN];
+} db_dump_info_t;
+
+static const char *navaid_type_name_tbl[NAVAID_TYPES] = {
+	"VOR", "VORDME", "APPVOR", "APPVORDME", "LOC", "LOCDME",
+	"NDB", "TACAN", "UNKNOWN"
+};
 
 /* The order in this array must follow navproc_type_t */
 static const char *navproc_type_to_str[NAVPROC_TYPES] = {
@@ -196,7 +211,7 @@ parse_airway_segs(FILE *fp, airway_t *awy)
 	size_t	nsegs;
 
 	assert(awy->segs == NULL);
-	awy->segs = malloc(sizeof (airway_seg_t) * awy->num_segs);
+	awy->segs = calloc(sizeof (airway_seg_t), awy->num_segs);
 
 	for (nsegs = 0; (line_len = getline(&line, &line_cap, fp)) != -1;
 	    nsegs++) {
@@ -210,10 +225,22 @@ parse_airway_segs(FILE *fp, airway_t *awy)
 		}
 		if (!parse_airway_seg_line(line, &awy->segs[nsegs]))
 			goto errout;
+
+		/* Check that adjacent airway segments are connected */
+		if (nsegs > 0 && memcmp(&awy->segs[nsegs - 1].endpt[1],
+		    &awy->segs[nsegs].endpt[0], sizeof (fix_t)) != 0) {
+			openfmc_log(OPENFMC_LOG_ERR, "Error parsing airway "
+			    "\"%s\": segment #%lu (fix %s) and #%lu "
+			    "(fix %s) aren't connected.", awy->name,
+			    nsegs - 1, awy->segs[nsegs - 1].endpt[1].name,
+			    nsegs, awy->segs[nsegs].endpt[0].name);
+			goto errout;
+		}
 	}
 	if (nsegs != awy->num_segs) {
 		openfmc_log(OPENFMC_LOG_ERR, "Error parsing airway \"%s\": "
-		    "too few segments specified.", awy->name);
+		    "expected %u segments, but only %lu 'S' lines followed.",
+		    awy->name, awy->num_segs, nsegs);
 		goto errout;
 	}
 
@@ -236,7 +263,7 @@ airway_free(airway_t *awy)
 }
 
 airway_db_t *
-airway_db_open(const char *navdata_dir)
+airway_db_open(const char *navdata_dir, size_t num_waypoints)
 {
 	airway_db_t	*db = NULL;
 	FILE		*ats_fp = NULL;
@@ -244,7 +271,7 @@ airway_db_open(const char *navdata_dir)
 	ssize_t		line_len = 0;
 	size_t		line_cap = 0;
 	char		*line = NULL;
-	size_t		num_airways = 0;
+	uint64_t	num_airways = 0;
 	airway_t	*awy = NULL;
 
 	/* Open ATS.txt */
@@ -263,16 +290,17 @@ airway_db_open(const char *navdata_dir)
 			num_airways++;
 	}
 	rewind(ats_fp);
-	if (num_airways == 0) {
-		openfmc_log(OPENFMC_LOG_ERR, "Error parsing %s: no airways "
-		    "found", ats_fname);
+	if (num_airways == 0 || num_airways > MAX_NUM_AWYS) {
+		openfmc_log(OPENFMC_LOG_ERR, "Error parsing %s: invalid "
+		    "number of airways found: %llu", ats_fname, num_airways);
 		goto errout;
 	}
 
 	db = calloc(sizeof (*db), 1);
 	if (!db)
 		goto errout;
-	htbl_create(&db->by_name, num_airways, NAV_NAME_LEN, B_TRUE);
+	htbl_create(&db->by_awy_name, num_airways, NAV_NAME_LEN, B_TRUE);
+	htbl_create(&db->by_fix_name, num_waypoints, NAV_NAME_LEN, B_TRUE);
 
 	while ((line_len = getline(&line, &line_cap, ats_fp)) != -1) {
 		strip_newline(line);
@@ -284,7 +312,14 @@ airway_db_open(const char *navdata_dir)
 		if (!parse_airway_line(line, awy) ||
 		    !parse_airway_segs(ats_fp, awy))
 			goto errout;
-		htbl_set(&db->by_name, awy->name, awy);
+		htbl_set(&db->by_awy_name, awy->name, awy);
+		for (size_t i = 0; i < awy->num_segs; i++)
+			htbl_set(&db->by_fix_name, awy->segs[i].endpt[0].name,
+			    awy);
+		if (awy->num_segs > 0) {
+			htbl_set(&db->by_fix_name,
+			    awy->segs[awy->num_segs - 1].endpt[1].name, awy);
+		}
 		awy = NULL;
 	}
 
@@ -308,9 +343,70 @@ errout:
 void
 airway_db_close(airway_db_t *db)
 {
-	htbl_empty(&db->by_name, (void (*)(void *, void *))airway_free, NULL);
-	htbl_destroy(&db->by_name);
+	htbl_empty(&db->by_awy_name,
+	    (void (*)(void *, void *))airway_free, NULL);
+	htbl_empty(&db->by_fix_name, NULL, NULL);
+	htbl_destroy(&db->by_awy_name);
+	htbl_destroy(&db->by_fix_name);
 	free(db);
+}
+
+static void
+airway_db_dump_awy(const void *k, const airway_t *awy, db_dump_info_t *info)
+{
+	UNUSED(k);
+	append_format(info->result, info->result_sz, "  %s (%u)\n", awy->name,
+	    awy->num_segs);
+	for (size_t i = 0; i < awy->num_segs; i++) {
+		const airway_seg_t *seg = &awy->segs[i];
+		append_format(info->result, info->result_sz,
+		    "    %5s  %10.6lf x %11.6lf  -  %5s  %10.6lf x %11.6lf\n",
+		    seg->endpt[0].name, seg->endpt[0].pos.lat,
+		    seg->endpt[0].pos.lon, seg->endpt[1].name,
+		    seg->endpt[1].pos.lat, seg->endpt[1].pos.lon);
+	}
+	append_format(info->result, info->result_sz, "\n");
+}
+
+static void
+airway_db_dump_fix(const void *k, const airway_t *awy, db_dump_info_t *info)
+{
+	const char *key = k;
+
+	if (strcmp(k, info->scratch) != 0) {
+		append_format(info->result, info->result_sz,
+		    "\n"
+		    "  %s\n"
+		    "    %s", key, awy->name);
+		strcpy(info->scratch, k);
+	} else {
+		append_format(info->result, info->result_sz, " %s", awy->name);
+	}
+}
+
+char *
+airway_db_dump(const airway_db_t *db, bool_t by_awy_name)
+{
+	char		*result = NULL;
+	size_t		result_sz = 0;
+	db_dump_info_t	info = { .result = &result, .result_sz = &result_sz };
+
+	info.scratch[0] = 0;
+	if (by_awy_name) {
+		append_format(&result, &result_sz, "Airways (%lu):",
+		    htbl_count(&db->by_awy_name));
+		htbl_foreach(&db->by_awy_name,
+		    (void (*)(const void *, void *, void*))airway_db_dump_awy,
+		    &info);
+	} else {
+		append_format(&result, &result_sz, "Fixes (%lu):\n",
+		    htbl_count(&db->by_fix_name));
+		htbl_foreach(&db->by_fix_name,
+		    (void (*)(const void *, void *, void*))airway_db_dump_fix,
+		    &info);
+		append_format(&result, &result_sz, "\n");
+	}
+	return (result);
 }
 
 static bool_t
@@ -348,7 +444,7 @@ waypoint_db_open(const char *navdata_dir)
 	ssize_t		line_len = 0;
 	size_t		line_cap = 0;
 	char		*line = NULL;
-	size_t		num_wpts = 0;
+	uint64_t	num_wpts = 0;
 	fix_t		*wpt = NULL;
 
 	/* Open Waypoints.txt */
@@ -372,9 +468,9 @@ waypoint_db_open(const char *navdata_dir)
 			num_wpts++;
 	}
 	rewind(wpts_fp);
-	if (num_wpts == 0) {
-		openfmc_log(OPENFMC_LOG_ERR, "Error parsing %s: no waypoints "
-		    "found", wpts_fname);
+	if (num_wpts == 0 || num_wpts > MAX_NUM_WPTS) {
+		openfmc_log(OPENFMC_LOG_ERR, "Error parsing %s: invalid "
+		    "number of waypoints found: %llu", wpts_fname, num_wpts);
 		goto errout;
 	}
 
@@ -419,6 +515,173 @@ waypoint_db_close(waypoint_db_t *db)
 	htbl_empty(&db->by_name, (void (*)(void *, void *))free, NULL);
 	htbl_destroy(&db->by_name);
 	free(db);
+}
+
+static bool_t
+parse_navaid_line(const char *line, navaid_t *navaid)
+{
+	char	line_copy[128];
+	char	*comps[11];
+	int	app, dme;
+	double	freq;
+
+	STRLCPY_CHECK_ERROUT(line_copy, line);
+	if (explode_line(line_copy, ',', comps, 11) != 11) {
+		openfmc_log(OPENFMC_LOG_ERR, "Error parsing navaids: "
+		    "line contains invalid number of columns, wanted 11.");
+		goto errout;
+	}
+	STRLCPY_CHECK_ERROUT(navaid->ID, comps[0]);
+	/* ok to truncate the name */
+	(void) strlcpy(navaid->name, comps[1], sizeof (navaid->name));
+	freq = atof(comps[2]);
+	app = atoi(comps[3]);
+	dme = atoi(comps[4]);
+	if (is_valid_ndb_freq(freq)) {
+		navaid->type = NAVAID_TYPE_NDB;
+		navaid->freq = freq * 1000;
+	} else if (is_valid_vor_freq(freq)) {
+		if (dme)
+			navaid->type = app ? NAVAID_TYPE_APPVORDME :
+			    NAVAID_TYPE_VORDME;
+		else
+			navaid->type = app ? NAVAID_TYPE_APPVOR :
+			    NAVAID_TYPE_VOR;
+		navaid->freq = freq * 1000000;
+	} else if (is_valid_loc_freq(freq)) {
+		navaid->type = dme ? NAVAID_TYPE_LOCDME : NAVAID_TYPE_LOC;
+		navaid->freq = freq * 1000000;
+	} else if (is_valid_tacan_freq(freq)) {
+		navaid->type = NAVAID_TYPE_TACAN;
+		navaid->freq = freq * 1000000;
+	} else if (freq == 0.0 && strcmp(comps[2], "000.00") == 0) {
+		navaid->type = NAVAID_TYPE_UNKNOWN;
+	} else {
+		openfmc_log(OPENFMC_LOG_ERR, "Error parsing navaid: "
+		    "\"%s\" is not a valid VOR, LOC or NDB frequency.",
+		    comps[2]);
+		goto errout;
+	}
+	if (!geo_pos_3d_from_str(comps[6], comps[7], comps[8], &navaid->pos)) {
+		openfmc_log(OPENFMC_LOG_ERR, "Error parsing navaid: "
+		    "lat/lon/elev position invalid.");
+		goto errout;
+	}
+	STRLCPY_CHECK_ERROUT(navaid->icao_country_code, comps[9]);
+
+	return (B_TRUE);
+errout:
+	openfmc_log(OPENFMC_LOG_ERR, "Offending line was: \"%s\".", line);
+	return (B_FALSE);
+}
+
+navaid_db_t *
+navaid_db_open(const char *navdata_dir)
+{
+	navaid_db_t	*db = NULL;
+	FILE		*navaids_fp = NULL;
+	char		*navaids_fname = NULL;
+	ssize_t		line_len = 0;
+	size_t		line_cap = 0;
+	char		*line = NULL;
+	uint64_t	num_navaids = 0;
+	navaid_t	*navaid = NULL;
+
+	/* Open Navaids.txt */
+	navaids_fname = malloc(strlen(navdata_dir) +
+	    strlen(PATHSEP "Navaids.txt") + 1);
+	sprintf(navaids_fname, "%s" PATHSEP "Navaids.txt", navdata_dir);
+	navaids_fp = fopen(navaids_fname, "r");
+	if (navaids_fp == NULL) {
+		openfmc_log(OPENFMC_LOG_ERR, "Can't open %s: %s",
+		    navaids_fname, strerror(errno));
+		goto errout;
+	}
+
+	while ((line_len = getline(&line, &line_cap, navaids_fp)) != -1) {
+		if (line_len > 3)
+			num_navaids++;
+	}
+	rewind(navaids_fp);
+	if (num_navaids == 0 || num_navaids > MAX_NUM_NAVAIDS) {
+		openfmc_log(OPENFMC_LOG_ERR, "Error parsing %s: invalid "
+		    "number of navaids found: %llu", navaids_fname,
+		    num_navaids);
+		goto errout;
+	}
+
+	db = calloc(sizeof (*db), 1);
+	if (!db)
+		goto errout;
+	htbl_create(&db->by_name, num_navaids, NAV_NAME_LEN, B_TRUE);
+
+	while ((line_len = getline(&line, &line_cap, navaids_fp)) != -1) {
+		strip_newline(line);
+		if (line[0] == 0)
+			continue;
+		navaid = calloc(sizeof (*navaid), 1);
+		if (!navaid)
+			goto errout;
+		if (!parse_navaid_line(line, navaid))
+			goto errout;
+		htbl_set(&db->by_name, navaid->ID, navaid);
+		navaid = NULL;
+	}
+
+	if (navaids_fp)
+		fclose(navaids_fp);
+	free(navaids_fname);
+	if (navaid)
+		free(navaid);
+	return (db);
+errout:
+	if (db)
+		navaid_db_close(db);
+	if (navaids_fp)
+		fclose(navaids_fp);
+	free(navaids_fname);
+	if (navaid)
+		free(navaid);
+	return (NULL);
+}
+
+void
+navaid_db_close(navaid_db_t *db)
+{
+	htbl_empty(&db->by_name, (void (*)(void *, void *))free, NULL);
+	htbl_destroy(&db->by_name);
+	free(db);
+}
+
+static void
+navaid_db_dump_append(const void *k, const navaid_t *navaid,
+    db_dump_info_t *info)
+{
+	UNUSED(k);
+	append_format(info->result, info->result_sz,
+	    "  %9s %4s %2s %15s %6.2lf %sHz %10.6lf x %11.6lf x %d\n",
+	    navaid_type_name_tbl[navaid->type], navaid->ID,
+	    navaid->icao_country_code, navaid->name,
+	    navaid->freq / (navaid->type == NAVAID_TYPE_NDB ? 1000.0 :
+	    1000000.0),
+	    navaid->type == NAVAID_TYPE_NDB ? "k" : "M",
+	    navaid->pos.lat, navaid->pos.lon, (int)navaid->pos.elev);
+}
+
+char *
+navaid_db_dump(const navaid_db_t *db)
+{
+	char		*result = NULL;
+	size_t		result_sz = 0;
+	db_dump_info_t	info = {
+	    .result = &result, .result_sz = &result_sz
+	};
+
+	append_format(&result, &result_sz, "Navaids:\n");
+	htbl_foreach(&db->by_name,
+	    (void (*)(const void *, void *, void*))navaid_db_dump_append,
+	    &info);
+	return (result);
 }
 
 static bool_t

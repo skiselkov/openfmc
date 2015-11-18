@@ -14,6 +14,7 @@ extern "C" {
 #define	ICAO_COUNTRY_CODE_LEN	2
 #define	RWY_ID_LEN		3
 
+
 /* Airway structures */
 
 typedef struct {
@@ -33,37 +34,54 @@ typedef struct {
 } airway_t;
 
 typedef struct {
-	htbl_t		by_name;
+	htbl_t		by_awy_name;
+	htbl_t		by_fix_name;
 } airway_db_t;
 
 typedef struct {
 	htbl_t		by_name;
 } waypoint_db_t;
 
-airway_db_t *airway_db_open(const char *navdata_dir);
+airway_db_t *airway_db_open(const char *navdata_dir, size_t num_waypoints);
 void airway_db_close(airway_db_t *db);
+char *airway_db_dump(const airway_db_t *db, bool_t by_awy_name);
 
 waypoint_db_t *waypoint_db_open(const char *navdata_dir);
 void waypoint_db_close(waypoint_db_t *db);
 
+
 /* Navaid structures */
 
 typedef enum {
-	NAVAID_TYPE_VORDME,	/* VHF Omni Range + DME */
-	NAVAID_TYPE_VORTAC,	/* VHF Omni Range + TACAN */
-	NAVAID_TYPE_VOR,	/* VHF Omni Range only */
+	NAVAID_TYPE_VOR,	/* VHF Omni Range (VOR) */
+	NAVAID_TYPE_VORDME,	/* VOR w/ DME */
+	NAVAID_TYPE_APPVOR,	/* Approach (short-range) VOR */
+	NAVAID_TYPE_APPVORDME,	/* Approach VOR w/ DME */
+	NAVAID_TYPE_LOC,	/* VHF Localizer (LOC) */
+	NAVAID_TYPE_LOCDME,	/* LOC w/ DME */
 	NAVAID_TYPE_NDB,	/* Non-Directional Beacon */
-	NAVAID_TYPE_LOCBC,	/* VHF Localizer /w back-course beam */
-	NAVAID_TYPE_LOC		/* VHF Localizer */
+	NAVAID_TYPE_TACAN,	/* Military TACANs operating in 133-136 MHz */
+	NAVAID_TYPE_UNKNOWN,	/* Ignore navaids with frequency 000.00 */
+	NAVAID_TYPES
 } navaid_type_t;
 
 typedef struct {
-	char		name[NAV_NAME_LEN];
+	char		ID[NAV_NAME_LEN];
+	char		name[16];
 	char		icao_country_code[ICAO_COUNTRY_CODE_LEN + 1];
 	geo_pos_3d_t	pos;
 	navaid_type_t	type;
 	unsigned	freq;		/* in Hz */
 } navaid_t;
+
+typedef struct {
+	htbl_t		by_name;
+} navaid_db_t;
+
+navaid_db_t *navaid_db_open(const char *navdata_dir);
+void navaid_db_close(navaid_db_t *db);
+char *navaid_db_dump(const navaid_db_t *db);
+
 
 /* Procedure structures */
 
@@ -216,6 +234,7 @@ typedef struct navproc_s {
 	unsigned	num_main_segs;
 	navproc_final_t	final_type;
 } navproc_t;
+
 
 /* Airport structures */
 

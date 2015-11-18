@@ -10,7 +10,7 @@
 bool_t
 is_valid_vor_freq(double freq_mhz)
 {
-	int freq_khz = freq_mhz * 1000;
+	unsigned freq_khz = freq_mhz * 1000;
 
 	/* Check correct frequency band */
 	if (freq_khz < 108000 || freq_khz > 117950)
@@ -22,9 +22,6 @@ is_valid_vor_freq(double freq_mhz)
 	if (freq_khz >= 108000 && freq_khz <= 112000 &&
 	    freq_khz % 200 != 0 && freq_khz % 200 != 50)
 		return (0);
-	/* 112 MHz is not allowed */
-	if (freq_khz == 112000)
-		return (0);
 	/* Above 112 MHz, frequency must be multiple of 50 kHz */
 	if (freq_khz % 50 != 0)
 		return (0);
@@ -35,7 +32,7 @@ is_valid_vor_freq(double freq_mhz)
 bool_t
 is_valid_loc_freq(double freq_mhz)
 {
-	int freq_khz = freq_mhz * 1000;
+	unsigned freq_khz = freq_mhz * 1000;
 
 	/* Check correct frequency band */
 	if (freq_khz < 108100 || freq_khz > 111950)
@@ -45,6 +42,26 @@ is_valid_loc_freq(double freq_mhz)
 		return (0);
 
 	return (1);
+}
+
+bool_t
+is_valid_tacan_freq(double freq_mhz)
+{
+	unsigned freq_khz = freq_mhz * 1000;
+
+	/* this is quite a guess! */
+	if (freq_khz < 133000 || freq_khz > 136000 ||
+	    freq_khz % 100 != 0)
+		return (0);
+	return (1);
+}
+
+bool_t
+is_valid_ndb_freq(double freq_khz)
+{
+	unsigned freq_hz = freq_khz * 1000;
+	/* 177 kHz for an NDB is the lowest I've ever seen */
+	return (freq_hz >= 177000 && freq_hz <= 1750000);
 }
 
 bool_t
