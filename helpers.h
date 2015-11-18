@@ -2,6 +2,7 @@
 #define	_OPENFMC_HELPERS_H_
 
 #include <stdarg.h>
+#include <assert.h>
 
 #include "airac.h"
 #include "types.h"
@@ -31,7 +32,15 @@ extern "C" {
 #define	MIN_ARC_RADIUS	0.1
 #define	MAX_ARC_RADIUS	100.0
 
-#define	UNUSED(x)	(void)(x)
+#define	UNUSED(x)		(void)(x)
+#ifdef	DEBUG
+#define	ASSERT(x)		assert(x)
+#define	UNUSED_NODEBUG(x)
+#else	/* !DEBUG */
+#define	ASSERT(x)
+#define	UNUSED_NODEBUG(x)	UNUSED(x)
+#endif	/* !DEBUG */
+#define	VERIFY(x)		assert(x)
 
 /* generic parser validator helpers */
 

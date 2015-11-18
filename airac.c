@@ -1,6 +1,5 @@
 #include <stdlib.h>
 #include <string.h>
-#include <assert.h>
 #include <stdio.h>
 #include <math.h>
 #include <errno.h>
@@ -210,7 +209,7 @@ parse_airway_segs(FILE *fp, airway_t *awy)
 	size_t	line_cap = 0;
 	size_t	nsegs;
 
-	assert(awy->segs == NULL);
+	ASSERT(awy->segs == NULL);
 	awy->segs = calloc(sizeof (airway_seg_t), awy->num_segs);
 
 	for (nsegs = 0; (line_len = getline(&line, &line_cap, fp)) != -1;
@@ -1023,7 +1022,7 @@ dump_alt_constr(const alt_lim_t *alt, char desc[32])
 		sprintf(desc, ",%u<=A<=%u", alt->alt2, alt->alt1);
 		break;
 	default:
-		assert(0);
+		ASSERT(0);
 	}
 }
 
@@ -1038,7 +1037,7 @@ dump_spd_constr(const spd_lim_t *spd, char desc[16])
 		sprintf(desc, ",S<=%u", spd->spd1);
 		break;
 	default:
-		assert(0);
+		ASSERT(0);
 	}
 }
 
@@ -1295,7 +1294,7 @@ parse_HA_HF_HM_seg(char **comps, size_t num_comps, navproc_seg_t *seg,
 	else if (type == NAVPROC_SEG_TYPE_HOLD_TO_MANUAL)
 		CHECK_NUM_COMPS(19, HM);
 	else
-		assert(0);
+		ASSERT(0);
 	seg->type = type;
 	seg->leg_cmd.hold.inbd_crs = atof(comps[8]);
 	seg->leg_cmd.hold.leg_len = atof(comps[9]);
@@ -1511,7 +1510,7 @@ parse_VI_VM_VR_seg(char **comps, size_t num_comps, navproc_seg_t *seg,
 		CHECK_NUM_COMPS(13, VR);
 		leg_name = "VR";
 	} else {
-		assert(0);
+		ASSERT(0);
 	}
 	seg->type = type;
 	seg->leg_cmd.hdg = atof(comps[4]);
@@ -1570,7 +1569,7 @@ parse_proc_seg_line(const char *line, navproc_t *proc)
 	num_comps = explode_line(line_copy, ',', comps, 24);
 	memset(&seg, 0, sizeof (seg));
 
-	assert(num_comps > 0);
+	ASSERT(num_comps > 0);
 	if (strcmp(comps[0], "AF") == 0) {
 		if (!parse_AF_seg(comps, num_comps, &seg))
 			goto errout;
@@ -1684,7 +1683,7 @@ parse_proc(FILE *fp, navproc_t *proc)
 	strip_newline(line);
 	STRLCPY_CHECK_ERROUT(line_copy, line);
 	num_comps = explode_line(line_copy, ',', comps, 8);
-	assert(num_comps != 0);
+	ASSERT(num_comps != 0);
 
 	if (strcmp(comps[0], "SID") == 0) {
 		if (!parse_sid_proc_line(comps, num_comps, proc))
@@ -1764,7 +1763,7 @@ airport_open(const char *arpt_icao, const char *navdata_dir)
 	if (!arpt)
 		return (NULL);
 
-	assert(strlen(arpt_icao) == 4);
+	ASSERT(strlen(arpt_icao) == 4);
 	strcpy(arpt->icao, arpt_icao);
 
 	/* Open Airports.txt */

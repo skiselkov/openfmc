@@ -1,5 +1,4 @@
 #include <stdlib.h>
-#include <assert.h>
 #include <string.h>
 #include <stddef.h>
 
@@ -37,16 +36,15 @@ htbl_create(htbl_t *htbl, size_t tbl_sz, size_t key_sz, int multi_value)
 	    crc64_table[2] == 0xf0 && crc64_table[3] == 0x0d)
 		htbl_init();
 
-	assert(key_sz != 0);
-	assert(tbl_sz != 0);
-	assert(tbl_sz <= ((size_t)1 << ((sizeof(size_t) * 8) - 1)));
+	ASSERT(key_sz != 0);
+	ASSERT(tbl_sz != 0);
+	ASSERT(tbl_sz <= ((size_t)1 << ((sizeof(size_t) * 8) - 1)));
 
 	memset(htbl, 0, sizeof (*htbl));
 	/* round table size up to nearest multiple of 2 */
-//	tbl_sz = P2ROUNDUP(tbl_sz);
 	htbl->tbl_sz = P2ROUNDUP(tbl_sz);
 	htbl->buckets = malloc(sizeof (*htbl->buckets) * htbl->tbl_sz);
-	assert(htbl->buckets != NULL);
+	ASSERT(htbl->buckets != NULL);
 	for (size_t i = 0; i < htbl->tbl_sz; i++)
 		list_create(&htbl->buckets[i], sizeof (htbl_bucket_item_t),
 		    offsetof(htbl_bucket_item_t, bucket_node));
@@ -57,12 +55,11 @@ htbl_create(htbl_t *htbl, size_t tbl_sz, size_t key_sz, int multi_value)
 void
 htbl_destroy(htbl_t *htbl)
 {
-	assert(htbl->num_values == 0);
-	assert(htbl->buckets != NULL);
+	ASSERT(htbl->num_values == 0);
+	ASSERT(htbl->buckets != NULL);
 	for (size_t i = 0; i < htbl->tbl_sz; i++)
 		list_destroy(&htbl->buckets[i]);
 	free(htbl->buckets);
-	memset(htbl, 0, sizeof (*htbl));
 }
 
 static void
@@ -105,6 +102,18 @@ htbl_count(const htbl_t *htbl)
 	return (htbl->num_values);
 }
 
+static void
+htbl_multi_value_add(htbl_t *htbl, htbl_bucket_item_t *item, void *value)
+{
+	htbl_multi_value_t *mv = malloc(sizeof (*mv));
+	ASSERT(htbl->multi_value);
+	mv->value = value;
+	mv->item = item;
+	list_insert_head(&item->multi.list, mv);
+	item->multi.num++;
+	htbl->num_values++;
+}
+
 void
 htbl_set(htbl_t *htbl, void *key, void *value)
 {
@@ -112,33 +121,23 @@ htbl_set(htbl_t *htbl, void *key, void *value)
 	    (htbl->tbl_sz - 1)];
 	htbl_bucket_item_t *item;
 
-	assert(key != NULL);
-	assert(value != NULL);
+	ASSERT(key != NULL);
+	ASSERT(value != NULL);
 	for (item = list_head(bucket); item; item = list_next(bucket, item)) {
 		if (memcmp(item->key, key, htbl->key_sz) == 0) {
-			if (htbl->multi_value) {
-				htbl_multi_value_t *mv = malloc(sizeof (*mv));
-				mv->value = value;
-				mv->item = item;
-				list_insert_head(&item->multi.list, mv);
-				item->multi.num++;
-				htbl->num_values++;
-			} else {
+			if (htbl->multi_value)
+				htbl_multi_value_add(htbl, item, value);
+			else
 				item->value = value;
-			}
 			return;
 		}
 	}
-	item = malloc(sizeof (*item) + htbl->key_sz - 1);
+	item = calloc(sizeof (*item) + htbl->key_sz - 1, 1);
 	memcpy(item->key, key, htbl->key_sz);
 	if (htbl->multi_value) {
-		htbl_multi_value_t *mv = malloc(sizeof (*mv));
-		mv->value = value;
-		mv->item = item;
 		list_create(&item->multi.list, sizeof (htbl_multi_value_t),
 		    offsetof(htbl_multi_value_t, node));
-		list_insert_head(&item->multi.list, mv);
-		item->multi.num = 1;
+		htbl_multi_value_add(htbl, item, value);
 	} else {
 		item->value = value;
 	}
@@ -158,17 +157,18 @@ htbl_remove(htbl_t *htbl, void *key, int nil_ok)
 			list_remove(bucket, item);
 			if (htbl->multi_value) {
 				htbl_empty_multi_item(item, NULL, NULL);
-				assert(htbl->num_values >= item->multi.num);
+				ASSERT(htbl->num_values >= item->multi.num);
 				htbl->num_values -= item->multi.num;
 			} else {
 				free(item);
-				assert(htbl->num_values != 0);
+				ASSERT(htbl->num_values != 0);
 				htbl->num_values--;
 			}
 			return;
 		}
 	}
-	assert(nil_ok != 0);
+	ASSERT(nil_ok != 0);
+	UNUSED_NODEBUG(nil_ok);
 }
 
 void htbl_remove_multi(htbl_t *htbl, void *key, void *list_item)
@@ -176,11 +176,11 @@ void htbl_remove_multi(htbl_t *htbl, void *key, void *list_item)
 	htbl_multi_value_t *mv = list_item;
 	htbl_bucket_item_t *item = mv->item;
 
-	assert(htbl->multi_value != 0);
-	assert(key != NULL);
-	assert(item != NULL);
-	assert(item->multi.num != 0);
-	assert(htbl->num_values != 0);
+	ASSERT(htbl->multi_value != 0);
+	ASSERT(key != NULL);
+	ASSERT(item != NULL);
+	ASSERT(item->multi.num != 0);
+	ASSERT(htbl->num_values != 0);
 
 	list_remove(&item->multi.list, mv);
 	item->multi.num--;
@@ -213,7 +213,7 @@ void *
 htbl_lookup(const htbl_t *htbl, void *key)
 {
 	htbl_bucket_item_t *item;
-	assert(htbl->multi_value == 0);
+	ASSERT(htbl->multi_value == 0);
 	item = htbl_lookup_common(htbl, key);
 	return (item != NULL ? item->value : NULL);
 }
@@ -222,7 +222,7 @@ const list_t *
 htbl_lookup_multi(const htbl_t *htbl, void *key)
 {
 	htbl_bucket_item_t *item;
-	assert(htbl->multi_value != 0);
+	ASSERT(htbl->multi_value != 0);
 	item = htbl_lookup_common(htbl, key);
 	return (item != NULL ? &item->multi.list : NULL);
 }

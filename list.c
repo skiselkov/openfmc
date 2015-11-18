@@ -34,7 +34,11 @@
 #include <sys/debug.h>
 #else
 #include <assert.h>
+#ifdef	DEBUG
 #define	ASSERT(a)	assert(a)
+#else	/* !DEBUG */
+#define	ASSERT(a)
+#endif	/* !DEBUG */
 #endif
 
 #ifdef lint

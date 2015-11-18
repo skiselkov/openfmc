@@ -1,6 +1,5 @@
 #include <stdlib.h>
 #include <string.h>
-#include <assert.h>
 #include <stdio.h>
 #include <math.h>
 #include <ctype.h>
@@ -91,7 +90,7 @@ explode_line(char *line, char delim, char **comps, size_t capacity)
 {
 	size_t i = 1;
 
-	assert(capacity != 0);
+	ASSERT(capacity != 0);
 	comps[0] = line;
 	for (char *p = line; *p != 0; p++) {
 		if (*p == delim) {
