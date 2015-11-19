@@ -740,7 +740,7 @@ navaid_db_dump_append(const void *k, const navaid_t *navaid,
 {
 	UNUSED(k);
 	append_format(info->result, info->result_sz,
-	    "  %9s %4s %2s %15s %6.2lf %sHz %10.6lf %11.6lf %d\n",
+	    "  %7s %4s %2s %15s %6.2lf %sHz %10.6lf %11.6lf %d\n",
 	    navaid_type_name(navaid->type), navaid->ID,
 	    navaid->icao_country_code, navaid->name,
 	    navaid->freq / (navaid->type == NAVAID_TYPE_NDB ? 1000.0 :
@@ -760,9 +760,9 @@ navaid_db_dump(const navaid_db_t *db)
 
 	append_format(&result, &result_sz,
 	    "Navaids: (%lu)\n"
-	    "       type name CC       long name       freq        lat "
+	    "     type name CC       long name       freq        lat "
 	    "        lon  elev\n"
-	    "  --------- ---- -- --------------- ---------- ---------- "
+	    "  ------- ---- -- --------------- ---------- ---------- "
 	    "----------- -----\n", htbl_count(&db->by_id));
 	htbl_foreach(&db->by_id,
 	    (void (*)(const void *, void *, void*))navaid_db_dump_append,
