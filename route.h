@@ -53,6 +53,10 @@ typedef struct {
 	list_node_t		legs_node;
 } route_leg_t;
 
+typedef enum {
+	ROUTE_SEG_TYPES
+} route_seg_type_t;
+
 typedef struct {
 	route_seg_type_t	type;
 	list_node_t		segs_node;

@@ -121,12 +121,11 @@ vect3_xprod(vect3_t a, vect3_t b)
 }
 
 /*
- * Converts a set of geographical coordinates into 3-space coordinate vector.
+ * Converts surface coordinates into 3-space coordinate vector from the
+ * Earth's center. Please note that this considers the Earth to be a perfect
+ * sphere and hence cannot be used for very precise calculations.
  *
- * @param lat Latitude in degrees, positive being north of the equator.
- * @param lon Longitude in degrees, positive being east.
- * @param alt_msl Altitude above mean sea level in meters.
- * @param msl_radius Globe mean sea level radius in meters.
+ * @param pos The input position to convert.
  *
  * In 3-space, axes have their origins at the globe center point, are
  * perpendicular to each other and are designated as follows:
@@ -135,16 +134,16 @@ vect3_xprod(vect3_t a, vect3_t b)
  * - z: positive & passing through lat=90
  */
 vect3_t
-geo2vect_coords(double lat, double lon, double alt_msl, double msl_radius)
+geo2vect_coords(geo_pos3_t pos)
 {
 	vect3_t result;
 	double lat_rad, lon_rad, R, R0;
 
-	lat_rad = DEG_TO_RAD(lat);
-	lon_rad = DEG_TO_RAD(lon);
+	lat_rad = DEG_TO_RAD(pos.lat);
+	lon_rad = DEG_TO_RAD(pos.lon);
 
 	/* R is total distance from center at alt_msl */
-	R = alt_msl + msl_radius;
+	R = pos.elev + EARTH_MSL;
 	/*
 	 * R0 is the radius of a circular cut parallel to the equator at the
 	 * given latitude of a sphere with radius R.
@@ -159,13 +158,13 @@ geo2vect_coords(double lat, double lon, double alt_msl, double msl_radius)
 }
 
 /*
- * Converts a 3-space coordinate vector into geographical coordinates.
+ * Converts a 3-space coordinate vector into geographical coordinates on Earth.
  * For axis alignment, see geo2vect_coords().
  */
-void
-vect2geo_coords(vect3_t v, double msl_radius, double *lat,
-    double *lon, double *alt_msl)
+geo_pos3_t
+vect2geo_coords(vect3_t v)
 {
+	geo_pos3_t pos;
 	double lat_rad, lon_rad, R, R0;
 
 	R0 = sqrt(v.x * v.x + v.y * v.y);
@@ -182,9 +181,11 @@ vect2geo_coords(vect3_t v, double msl_radius, double *lat,
 		else
 			lon_rad = lon_rad - M_PI;
 	}
-	*alt_msl = R - msl_radius;
-	*lat = RAD_TO_DEG(lat_rad);
-	*lon = RAD_TO_DEG(lon_rad);
+	pos.elev = R - EARTH_MSL;
+	pos.lat = RAD_TO_DEG(lat_rad);
+	pos.lon = RAD_TO_DEG(lon_rad);
+
+	return (pos);
 }
 
 /*

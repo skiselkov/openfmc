@@ -79,16 +79,20 @@ char *waypoint_db_dump(const waypoint_db_t *db);
 /* Navaid structures */
 
 typedef enum {
-	NAVAID_TYPE_VOR,	/* VHF Omni Range (VOR) */
-	NAVAID_TYPE_VORDME,	/* VOR w/ DME */
-	NAVAID_TYPE_APPVOR,	/* Approach (short-range) VOR */
-	NAVAID_TYPE_APPVORDME,	/* Approach VOR w/ DME */
-	NAVAID_TYPE_LOC,	/* VHF Localizer (LOC) */
-	NAVAID_TYPE_LOCDME,	/* LOC w/ DME */
-	NAVAID_TYPE_NDB,	/* Non-Directional Beacon */
-	NAVAID_TYPE_TACAN,	/* Military TACANs operating in 133-136 MHz */
-	NAVAID_TYPE_UNKNOWN,	/* Ignore navaids with frequency 000.00 */
-	NAVAID_TYPES
+	NAVAID_TYPE_VOR		= 1 << 0,	/* VHF Omni Range (VOR) */
+	NAVAID_TYPE_VORDME	= 1 << 1,	/* VOR w/ DME */
+	NAVAID_TYPE_TVOR	= 1 << 2,	/* Terminal (short-range) VOR */
+	NAVAID_TYPE_TVORDME	= 1 << 3,	/* Terminal VOR w/ DME */
+	NAVAID_TYPE_LOC		= 1 << 4,	/* VHF Localizer (LOC) */
+	NAVAID_TYPE_LOCDME	= 1 << 5,	/* LOC w/ DME */
+	NAVAID_TYPE_NDB		= 1 << 6,	/* Non-Directional Beacon */
+	NAVAID_TYPE_TACAN	= 1 << 7,	/* Military TACAN 133-136 MHz */
+	NAVAID_TYPE_UNKNOWN	= 1 << 8,	/* Known position w/o type */
+	NAVAID_TYPE_ANY_VOR	= NAVAID_TYPE_VOR | NAVAID_TYPE_VORDME |
+	    NAVAID_TYPE_TVOR | NAVAID_TYPE_TVORDME,
+	NAVAID_TYPE_ANY_LOC	= NAVAID_TYPE_LOC | NAVAID_TYPE_LOCDME,
+	NAVAID_TYPE_ANY_VORDME	= NAVAID_TYPE_VORDME | NAVAID_TYPE_TVORDME,
+	NAVAID_TYPE_ANY		= ((NAVAID_TYPE_UNKNOWN << 1) - 1)
 } navaid_type_t;
 
 typedef struct {
@@ -101,7 +105,7 @@ typedef struct {
 } navaid_t;
 
 typedef struct {
-	htbl_t		by_name;
+	htbl_t		by_id;
 } navaid_db_t;
 
 navaid_db_t *navaid_db_open(const char *navdata_dir);
@@ -185,53 +189,57 @@ typedef struct navproc_seg_s {
 			fix_t	fix;
 			double	crs;
 		} fix_crs;
+		/*
+		 * CF legs can omit the navaid portion if it is unavailable
+		 * or unreliable, provided that the previous leg ends in a
+		 * definite fix.
+		 */
 		struct {			/* CF */
-			char	navaid[NAV_NAME_LEN];
-			double	crs;
+			fix_t		navaid;
+			double		crs;
 		} navaid_crs;
 		struct {			/* AF */
-			char	navaid[NAV_NAME_LEN];
-			double	start_radial;
-			double	end_radial;
-			double	radius;
+			fix_t		navaid;
+			double		start_radial;
+			double		end_radial;
+			double		radius;
 		} dme_arc;
 		struct {			/* RF */
-			char		ctr_fix[NAV_NAME_LEN];
+			fix_t		ctr_fix;
 			double		radius;
-			bool_t	cw;	/* clockwise or counter-CW */
+			bool_t		cw;	/* clockwise or counter-CW */
 		} radius_arc;
-		fix_t		fix;		/* FA, IF */
+		fix_t			fix;	/* FA, IF */
 		struct {			/* HA, HF, HM */
-			fix_t	fix;
-			double	inbd_crs;
-			double	leg_len;
-			bool_t	turn_right;
+			fix_t		fix;
+			double		inbd_crs;
+			double		leg_len;
+			bool_t		turn_right;
 		} hold;
 		struct {			/* PI */
-			fix_t	startpt;
-			double	outbd_radial;
-			double	outbd_turn_hdg;
-			double	max_excrs_dist;
-			double	max_excrs_time;
-			bool_t	turn_right;
-			char	navaid[NAV_NAME_LEN];
+			fix_t		startpt;
+			double		outbd_radial;
+			double		outbd_turn_hdg;
+			double		max_excrs_dist;
+			double		max_excrs_time;
+			bool_t		turn_right;
+			fix_t		navaid;
 		} proc_turn;
 	} leg_cmd;
 
 	/* Segment termination condition */
 	union {
-		fix_t		fix;		/* AF, CF, DF, RF, TF */
-		alt_lim_t	alt;		/* CA, FA, HA, VA */
+		fix_t			fix;	/* AF, CF, DF, RF, TF, VI */
+		alt_lim_t		alt;	/* CA, FA, HA, VA */
 		struct {			/* CR, CI (optional), VR */
-			char	navaid[NAV_NAME_LEN];
-			double	radial;
+			fix_t		navaid;
+			double		radial;
 		} radial;
 		struct {			/* FD, CD */
-			char	navaid[NAV_NAME_LEN];
+			fix_t		navaid;
 			double	dist;
 		} dme;
 		double		dist;		/* FC */
-		char		navaid[NAV_NAME_LEN];	/* VI (optional) */
 	} term_cond;
 
 	/* Generic segment constraints */
@@ -292,7 +300,8 @@ typedef struct airport_s {
 	bool_t		true_hdg;
 } airport_t;
 
-airport_t *airport_open(const char *arpt_icao, const char *navdata_dir);
+airport_t *airport_open(const char *arpt_icao, const char *navdata_dir,
+    const waypoint_db_t *wptdb, const navaid_db_t *navdb);
 void airport_close(airport_t *arpt);
 char *airport_dump(const airport_t *arpt);
 

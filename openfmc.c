@@ -33,13 +33,26 @@
 #include "airac.h"
 
 static void
-test_arpts(const char *navdata_dir)
+test_arpts(const char *navdata_dir, const char *dump,
+    const waypoint_db_t *wptdb, const navaid_db_t *navdb)
 {
 	char		*line = NULL;
 	size_t		linecap = 0;
 	ssize_t		line_len;
 	char		*arpt_fname;
 	FILE		*arpt_fp;
+
+	if (strlen(dump) == 4) {
+		airport_t *arpt = airport_open(dump, navdata_dir, wptdb, navdb);
+		if (!arpt)
+			exit(EXIT_FAILURE);
+		char *desc = airport_dump(arpt);
+		fputs(desc, stdout);
+		free(desc);
+		airport_close(arpt);
+		return;
+	} else if (strlen(dump) > 0)
+		return;
 
 	arpt_fname = malloc(strlen(navdata_dir) + 1 +
 	    strlen("Airports.txt") + 1);
@@ -58,19 +71,10 @@ test_arpts(const char *navdata_dir)
 		    strcmp(comps[0], "A") != 0)
 			continue;
 
-		arpt = airport_open(comps[1], navdata_dir);
-		if (arpt) {
-#if 0
-			if (strcmp(dump, "airport") == 0) {
-				char *desc = airport_dump(arpt);
-				fputs(desc, stdout);
-				free(desc);
-			}
-#endif
+		arpt = airport_open(comps[1], navdata_dir, wptdb, navdb);
+		if (arpt)
+		//	exit(EXIT_FAILURE);
 			airport_close(arpt);
-		} else {
-			exit(EXIT_FAILURE);
-		}
 	}
 	free(arpt_fname);
 	fclose(arpt_fp);
@@ -81,43 +85,40 @@ test_airac(const char *navdata_dir, const char *dump)
 {
 	airway_db_t	*awydb;
 	waypoint_db_t	*wptdb;
-	navaid_db_t	*navaiddb;
-	size_t		num_waypoints = 0;
+	navaid_db_t	*navdb;
 
-	test_arpts(navdata_dir);
-
+	navdb = navaid_db_open(navdata_dir);
 	wptdb = waypoint_db_open(navdata_dir);
-	if (wptdb) {
-		num_waypoints = htbl_count(&wptdb->by_name);
-		if (strcmp(dump, "wpt") == 0) {
-			char *desc = waypoint_db_dump(wptdb);
-			fputs(desc, stdout);
-			free(desc);
-		}
-		waypoint_db_close(wptdb);
+	if (!wptdb)
+		exit(EXIT_FAILURE);
+	awydb = airway_db_open(navdata_dir, htbl_count(&wptdb->by_name));
+	if (!navdb || !awydb)
+		exit(EXIT_FAILURE);
+
+	test_arpts(navdata_dir, dump, wptdb, navdb);
+	if (strcmp(dump, "wpt") == 0) {
+		char *desc = waypoint_db_dump(wptdb);
+		fputs(desc, stdout);
+		free(desc);
 	}
-	awydb = airway_db_open(navdata_dir, num_waypoints);
-	if (awydb) {
-		if (strcmp(dump, "awyname") == 0) {
-			char *desc = airway_db_dump(awydb, B_TRUE);
-			fputs(desc, stdout);
-			free(desc);
-		} else if (strcmp(dump, "awyfix") == 0) {
-			char *desc = airway_db_dump(awydb, B_FALSE);
-			fputs(desc, stdout);
-			free(desc);
-		}
-		airway_db_close(awydb);
+	if (strcmp(dump, "awyname") == 0) {
+		char *desc = airway_db_dump(awydb, B_TRUE);
+		fputs(desc, stdout);
+		free(desc);
+	} else if (strcmp(dump, "awyfix") == 0) {
+		char *desc = airway_db_dump(awydb, B_FALSE);
+		fputs(desc, stdout);
+		free(desc);
 	}
-	navaiddb = navaid_db_open(navdata_dir);
-	if (navaiddb) {
-		if (strcmp(dump, "navaid") == 0) {
-			char *desc = navaid_db_dump(navaiddb);
-			fputs(desc, stdout);
-			free(desc);
-		}
-		navaid_db_close(navaiddb);
+	if (strcmp(dump, "navaid") == 0) {
+		char *desc = navaid_db_dump(navdb);
+		fputs(desc, stdout);
+		free(desc);
 	}
+
+	airway_db_close(awydb);
+	waypoint_db_close(wptdb);
+	navaid_db_close(navdb);
 }
 
 int
@@ -133,7 +134,7 @@ main(int argc, char **argv)
 			break;
 		case '?':
 		default:
-			fprintf(stderr, "Usage: %s [-d <airport|awyname|awyfix"
+			fprintf(stderr, "Usage: %s [-d <ICAO|awyname|awyfix"
 			    "|wpt|navaid] <navdata_dir>\n",
 			    argv[0]);
 			return (1);

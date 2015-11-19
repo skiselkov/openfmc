@@ -26,6 +26,7 @@
 #ifndef	_OPENFMC_GEOM_H_
 #define	_OPENFMC_GEOM_H_
 
+#include <math.h>
 #include "types.h"
 
 #ifdef	__cplusplus
@@ -58,12 +59,15 @@ typedef struct {
 #define	NULL_VECT3		((vect3_t){FP_NAN, FP_NAN, FP_NAN})
 #define	NULL_GEO_POS3		((geo_pos3_t){FP_NAN, FP_NAN, FP_NAN})
 #define	NULL_GEO_POS2		((geo_pos2_t){FP_NAN, FP_NAN})
-#define	IS_NULL_VECT3(a)	(isnan(a.x))
-#define	IS_NULL_GEO_POS3(a)	(isnan(a.lat))
-#define	IS_NULL_GEO_POS2(a)	IS_NULL_GEO_POS3((a))
-#define	IS_ZERO_VECT3(a)	(a.x == 0.0 && a.y == 0.0 && a.z == 0.0)
+#define	IS_NULL_VECT3(a)	((a).x == FP_NAN)
+#define	IS_NULL_GEO_POS3(a)	((a).lat == FP_NAN)
+#define	IS_NULL_GEO_POS2(a)	((a).lat == FP_NAN)
+#define	IS_ZERO_VECT3(a)	((a).x == 0.0 && (a).y == 0.0 && (a).z == 0.0)
 
-#define	VECT3_SCMUL(v, l)	((vect3_t){v.x * l, v.y * l, v.z * l})
+#define	VECT3_SCMUL(v, l)	\
+	((vect3_t){(v).x * (l), (v).y * (l), (v).z * (l)})
+#define	GEO2_TO_GEO3(v, a)	((geo_pos3_t){(v).lat, (v).lon, (a)})
+#define	GEO3_TO_GEO2(v)		((geo_pos2_t){(v).lat, (v).lon})
 
 #define	EARTH_MSL		6371000		/* meters */
 
@@ -76,10 +80,8 @@ vect3_t vect3_scmul(vect3_t a, double b);
 double vect3_dotprod(vect3_t a, vect3_t b);
 vect3_t vect3_xprod(vect3_t a, vect3_t b);
 
-vect3_t geo2vect_coords(double lat, double lon, double alt_msl,
-    double msl_radius);
-void vect2geo_coords(vect3_t v, double msl_radius, double *lat,
-    double *lon, double *alt_msl);
+vect3_t geo2vect_coords(geo_pos3_t pos);
+geo_pos3_t vect2geo_coords(vect3_t v);
 
 int vect_sphere_intersect(vect3_t v, vect3_t o, vect3_t c,
     double r, vect3_t i[2]);

@@ -29,21 +29,22 @@
 #include <math.h>
 #include <errno.h>
 
+#include "geom.h"
 #include "airac.h"
 #include "helpers.h"
 #include "log.h"
 
 /* Maximum allowable runway length & width (in feet) */
-#define	MAX_RWY_LEN	100000
+#define	MAX_RWY_LEN	250000
+/* Maximum allowable runway glidepath angle */
+#define	GP_MAX_ANGLE	10.0
+
+/* Allocation limits */
 #define	MAX_PROC_SEGS	100
 #define	MAX_AWY_SEGS	1000
-
 #define	MAX_NUM_AWYS	100000
 #define	MAX_NUM_WPTS	1000000
 #define	MAX_NUM_NAVAIDS	1000000
-
-/* Maximum allowable glidepath angle */
-#define	GP_MAX_ANGLE	10.0
 
 /*
  * Copies src to dst (for which sizeof must give its real size) and checks
@@ -66,10 +67,40 @@ typedef struct {
 	char	scratch[NAV_NAME_LEN];
 } db_dump_info_t;
 
-static const char *navaid_type_name_tbl[NAVAID_TYPES] = {
-	"VOR", "VORDME", "APPVOR", "APPVORDME", "LOC", "LOCDME",
-	"NDB", "TACAN", "UNKNOWN"
-};
+static const char *navaid_type_name(navaid_type_t t)
+{
+	ASSERT(t <= NAVAID_TYPE_ANY);
+	switch (t) {
+	case NAVAID_TYPE_VOR:
+		return "VOR";
+	case NAVAID_TYPE_VORDME:
+		return "VORDME";
+	case NAVAID_TYPE_TVOR:
+		return "TVOR";
+	case NAVAID_TYPE_TVORDME:
+		return "TVORDME";
+	case NAVAID_TYPE_LOC:
+		return "LOC";
+	case NAVAID_TYPE_LOCDME:
+		return "LOCDME";
+	case NAVAID_TYPE_NDB:
+		return "NDB";
+	case NAVAID_TYPE_TACAN:
+		return "TACAN";
+	case NAVAID_TYPE_UNKNOWN:
+		return "UNKNOWN";
+	case NAVAID_TYPE_ANY:
+		return "(any)";
+	case NAVAID_TYPE_ANY_VOR:
+		return "(VOR/VORDME/TVOR/TVORDME)";
+	case NAVAID_TYPE_ANY_LOC:
+		return "(LOC/LOCDME)";
+	case NAVAID_TYPE_ANY_VORDME:
+		return "(VORDME/TVORDME)";
+	default:
+		return "(non-standard combo)";
+	}
+}
 
 /* The order in this array must follow navproc_type_t */
 static const char *navproc_type_to_str[NAVPROC_TYPES] = {
@@ -592,10 +623,10 @@ parse_navaid_line(const char *line, navaid_t *navaid)
 		navaid->freq = freq * 1000;
 	} else if (is_valid_vor_freq(freq)) {
 		if (dme)
-			navaid->type = app ? NAVAID_TYPE_APPVORDME :
+			navaid->type = app ? NAVAID_TYPE_TVORDME :
 			    NAVAID_TYPE_VORDME;
 		else
-			navaid->type = app ? NAVAID_TYPE_APPVOR :
+			navaid->type = app ? NAVAID_TYPE_TVOR :
 			    NAVAID_TYPE_VOR;
 		navaid->freq = freq * 1000000;
 	} else if (is_valid_loc_freq(freq)) {
@@ -663,7 +694,7 @@ navaid_db_open(const char *navdata_dir)
 	db = calloc(sizeof (*db), 1);
 	if (!db)
 		goto errout;
-	htbl_create(&db->by_name, num_navaids, NAV_NAME_LEN, B_TRUE);
+	htbl_create(&db->by_id, num_navaids, NAV_NAME_LEN, B_TRUE);
 
 	while ((line_len = getline(&line, &line_cap, navaids_fp)) != -1) {
 		strip_newline(line);
@@ -674,7 +705,7 @@ navaid_db_open(const char *navdata_dir)
 			goto errout;
 		if (!parse_navaid_line(line, navaid))
 			goto errout;
-		htbl_set(&db->by_name, navaid->ID, navaid);
+		htbl_set(&db->by_id, navaid->ID, navaid);
 		navaid = NULL;
 	}
 
@@ -698,8 +729,8 @@ errout:
 void
 navaid_db_close(navaid_db_t *db)
 {
-	htbl_empty(&db->by_name, (void (*)(void *, void *))free, NULL);
-	htbl_destroy(&db->by_name);
+	htbl_empty(&db->by_id, (void (*)(void *, void *))free, NULL);
+	htbl_destroy(&db->by_id);
 	free(db);
 }
 
@@ -710,7 +741,7 @@ navaid_db_dump_append(const void *k, const navaid_t *navaid,
 	UNUSED(k);
 	append_format(info->result, info->result_sz,
 	    "  %9s %4s %2s %15s %6.2lf %sHz %10.6lf %11.6lf %d\n",
-	    navaid_type_name_tbl[navaid->type], navaid->ID,
+	    navaid_type_name(navaid->type), navaid->ID,
 	    navaid->icao_country_code, navaid->name,
 	    navaid->freq / (navaid->type == NAVAID_TYPE_NDB ? 1000.0 :
 	    1000000.0),
@@ -732,8 +763,8 @@ navaid_db_dump(const navaid_db_t *db)
 	    "       type name CC       long name       freq        lat "
 	    "        lon  elev\n"
 	    "  --------- ---- -- --------------- ---------- ---------- "
-	    "----------- -----\n", htbl_count(&db->by_name));
-	htbl_foreach(&db->by_name,
+	    "----------- -----\n", htbl_count(&db->by_id));
+	htbl_foreach(&db->by_id,
 	    (void (*)(const void *, void *, void*))navaid_db_dump_append,
 	    &info);
 	return (result);
@@ -1018,6 +1049,87 @@ parse_proc_seg_fix(char *comps[3], fix_t *fix)
 	return (B_TRUE);
 }
 
+/*
+ * Locates the nearest fix named `name' to `refpt' in `db' and returns it
+ * as a fix for usage in procedure segments. This function allows searching
+ * either for waypoint fixes or radio navaids - pass the appropriate *db
+ * argument and set the other to NULL. Only one type of database can be
+ * searched at a time. When searching for navaids, further navaid type
+ * discrimination is possible by passing a navaid type mask. If any navaid
+ * type is acceptable, pass NAVAID_TYPE_ANY.
+ * If the object is found, its 2D geo position is returned, otherwise
+ * NULL_GEO_POS2 is returned.
+ */
+static geo_pos2_t
+find_nearest(const char *name, geo_pos3_t refpt, const waypoint_db_t *wptdb,
+    const navaid_db_t *navdb, navaid_type_t type)
+{
+	char		name_padd[NAV_NAME_LEN];
+	const list_t	*list = NULL;
+	geo_pos2_t	result = NULL_GEO_POS2;
+	vect3_t		refpt_v;
+	bool_t		usewptdb = (wptdb != NULL);
+	double		min_dist = EARTH_MSL;
+
+	ASSERT((wptdb != NULL && navdb == NULL) ||
+	    (wptdb == NULL && navdb != NULL));
+
+	memset(name_padd, 0, sizeof (name_padd));
+	(void) strlcpy(name_padd, name, sizeof (name_padd));
+
+	if (usewptdb)
+		list = htbl_lookup_multi(&wptdb->by_name, name_padd);
+	else
+		list = htbl_lookup_multi(&navdb->by_id, name_padd);
+
+	if (list == NULL)
+		return (result);
+
+	refpt_v = geo2vect_coords(refpt);
+	for (void *v = list_head(list); v != NULL; v = list_next(list, v)) {
+		geo_pos3_t	pos;
+		double		dist;
+
+		if (usewptdb) {
+			fix_t *wpt = HTBL_VALUE_MULTI(v);
+			/* use the airport refpt's elev as approximation */
+			pos = GEO2_TO_GEO3(wpt->pos, refpt.elev);
+		} else {
+			navaid_t *navaid = HTBL_VALUE_MULTI(v);
+			if (!(navaid->type & type))
+				continue;
+			pos = navaid->pos;
+		}
+		dist = vect3_abs(vect3_sub(refpt_v, geo2vect_coords(pos)));
+		if (dist < min_dist) {
+			result = GEO3_TO_GEO2(pos);
+			min_dist = dist;
+		}
+	}
+	return (result);
+}
+
+static bool_t
+proc_navaid_lookup(const char *name, fix_t *fix, const airport_t *arpt,
+    const waypoint_db_t *wptdb, const navaid_db_t *navdb, navaid_type_t type)
+{
+	geo_pos2_t	pos;
+
+	pos = find_nearest(name, arpt->refpt, wptdb, navdb, type);
+	if (IS_NULL_GEO_POS2(pos)) {
+		openfmc_log(OPENFMC_LOG_ERR, "Error looking up fix/navaid "
+		    "\"%s\" for arpt %s procedure: no fix/navaid of type "
+		    "%s found.", name, arpt->icao, navaid_type_name(type));
+		return (B_FALSE);
+	}
+
+	memset(fix, 0, sizeof (*fix));
+	(void) strlcpy(fix->name, name, sizeof (fix->name));
+	fix->pos = pos;
+
+	return (B_TRUE);
+}
+
 #define	CHECK_NUM_COMPS(n, seg_type) \
 	do { \
 		if (num_comps != (n)) { \
@@ -1030,7 +1142,8 @@ parse_proc_seg_fix(char *comps[3], fix_t *fix)
 	} while (0)
 
 static bool_t
-parse_AF_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
+parse_AF_seg(char **comps, size_t num_comps, navproc_seg_t *seg,
+    const airport_t *arpt, const navaid_db_t *db)
 {
 	int dir;
 
@@ -1046,7 +1159,8 @@ parse_AF_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
 	    !is_valid_arc_radius(seg->leg_cmd.dme_arc.radius) ||
 	    !is_valid_hdg(seg->leg_cmd.dme_arc.end_radial) ||
 	    !parse_alt_spd_term(&comps[9], &seg->alt_lim, &seg->spd_lim) ||
-	    !STRLCPY_CHECK(seg->leg_cmd.dme_arc.navaid, comps[5])) {
+	    !proc_navaid_lookup(comps[5], &seg->leg_cmd.dme_arc.navaid,
+	    arpt, NULL, db, NAVAID_TYPE_ANY)) {
 		return (B_FALSE);
 	}
 	if (dir == 2) {
@@ -1110,16 +1224,21 @@ dump_spd_constr(const spd_lim_t *spd, char desc[16])
 	char spd_lim_desc[32]; \
 	dump_spd_constr((spd), spd_lim_desc)
 
+#define	FIX_PRINTF_ARG(fix) \
+	(fix)->name, (fix)->pos.lat, (fix)->pos.lon
+
 static void
 dump_AF_seg(char **result, size_t *result_sz, const navproc_seg_t *seg)
 {
 	DUMP_ALT_LIM(&seg->alt_lim);
 	DUMP_SPD_LIM(&seg->spd_lim);
-	append_format(result, result_sz,
-	    "\tAF,N:%s,SR:%.01lf,ER:%.01lf,r:%.01lf,F:%s%s%s\n",
-	    seg->leg_cmd.dme_arc.navaid, seg->leg_cmd.dme_arc.start_radial,
-	    seg->leg_cmd.dme_arc.end_radial, seg->leg_cmd.dme_arc.radius,
-	    seg->term_cond.fix.name, alt_lim_desc, spd_lim_desc);
+	append_format(result, result_sz, "\tAF,N:%s(%lfx%lf),SR:%.01lf,"
+	    "ER:%.01lf,r:%.01lf,F:%s(%lfx%lf)%s%s\n",
+	    FIX_PRINTF_ARG(&seg->leg_cmd.dme_arc.navaid),
+	    seg->leg_cmd.dme_arc.start_radial, seg->leg_cmd.dme_arc.end_radial,
+	    seg->leg_cmd.dme_arc.radius,
+	    FIX_PRINTF_ARG(&seg->term_cond.fix), alt_lim_desc,
+	    spd_lim_desc);
 }
 
 static bool_t
@@ -1148,7 +1267,8 @@ dump_CA_seg(char **result, size_t *result_sz, const navproc_seg_t *seg)
 }
 
 static bool_t
-parse_CD_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
+parse_CD_seg(char **comps, size_t num_comps, navproc_seg_t *seg,
+    const airport_t *arpt, const navaid_db_t *db)
 {
 	CHECK_NUM_COMPS(18, CD);
 	seg->type = NAVPROC_SEG_TYPE_CRS_TO_DME;
@@ -1156,7 +1276,8 @@ parse_CD_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
 	seg->term_cond.dme.dist = atof(comps[9]);
 	if (!is_valid_hdg(seg->leg_cmd.crs) ||
 	    !parse_alt_spd_term(&comps[10], &seg->alt_lim, &seg->spd_lim) ||
-	    !STRLCPY_CHECK(seg->term_cond.dme.navaid, comps[5]))
+	    !proc_navaid_lookup(comps[5], &seg->term_cond.dme.navaid,
+	    arpt, NULL, db, NAVAID_TYPE_ANY))
 		return (B_FALSE);
 	return (B_TRUE);
 }
@@ -1166,19 +1287,28 @@ dump_CD_seg(char **result, size_t *result_sz, const navproc_seg_t *seg)
 {
 	DUMP_ALT_LIM(&seg->alt_lim);
 	DUMP_SPD_LIM(&seg->spd_lim);
-	append_format(result, result_sz, "\tCD,C:%.01lf,N:%s,d:%.01lf%s%s\n",
-	    seg->leg_cmd.crs, seg->term_cond.dme.navaid,
+	append_format(result, result_sz,
+	    "\tCD,C:%.01lf,N:%s(%lfx%lf),d:%.01lf%s%s\n",
+	    seg->leg_cmd.crs, FIX_PRINTF_ARG(&seg->term_cond.dme.navaid),
 	    seg->term_cond.dme.dist, alt_lim_desc, spd_lim_desc);
 }
 
 static bool_t
-parse_CF_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
+parse_CF_seg(char **comps, size_t num_comps, navproc_seg_t *seg,
+    const airport_t *arpt, const navaid_db_t *db)
 {
 	CHECK_NUM_COMPS(18, CF);
 	seg->type = NAVPROC_SEG_TYPE_CRS_TO_FIX;
 	seg->leg_cmd.navaid_crs.crs = atof(comps[8]);
+	memset(&seg->leg_cmd.navaid_crs.navaid, 0,
+	    sizeof (seg->leg_cmd.navaid_crs.navaid));
+	if (strcmp(comps[5], " ") != 0) {
+		/* this is optional */
+		(void) proc_navaid_lookup(comps[5],
+		    &seg->leg_cmd.navaid_crs.navaid,
+		    arpt, NULL, db, NAVAID_TYPE_ANY);
+	}
 	if (!is_valid_hdg(seg->leg_cmd.navaid_crs.crs) ||
-	    !STRLCPY_CHECK(seg->leg_cmd.navaid_crs.navaid, comps[5]) ||
 	    !parse_proc_seg_fix(&comps[1], &seg->term_cond.fix) ||
 	    !parse_alt_spd_term(&comps[10], &seg->alt_lim, &seg->spd_lim))
 		return (B_FALSE);
@@ -1190,16 +1320,16 @@ dump_CF_seg(char **result, size_t *result_sz, const navproc_seg_t *seg)
 {
 	DUMP_ALT_LIM(&seg->alt_lim);
 	DUMP_SPD_LIM(&seg->spd_lim);
-	append_format(result, result_sz, "\tCF,N:%s,c:%.01lf,F:%s,lat:%lf,"
-	    "lon:%lf,%s%s\n",
-	    seg->leg_cmd.navaid_crs.navaid, seg->leg_cmd.navaid_crs.crs,
-	    seg->term_cond.fix.name, seg->term_cond.fix.pos.lat,
-	    seg->term_cond.fix.pos.lon, alt_lim_desc, spd_lim_desc);
+	append_format(result, result_sz,
+	    "\tCF,N:%s(%lfx%lf),c:%.01lf,F:%s(%lfx%lf)%s%s\n",
+	    FIX_PRINTF_ARG(&seg->leg_cmd.navaid_crs.navaid),
+	    seg->leg_cmd.navaid_crs.crs,
+	    FIX_PRINTF_ARG(&seg->term_cond.fix), alt_lim_desc, spd_lim_desc);
 }
 
 static bool_t
 parse_CI_CR_seg(char **comps, size_t num_comps, navproc_seg_t *seg,
-    bool_t is_CI)
+    bool_t is_CI, const airport_t *arpt, const navaid_db_t *db)
 {
 	if (is_CI)
 		CHECK_NUM_COMPS(13, CI);
@@ -1211,7 +1341,11 @@ parse_CI_CR_seg(char **comps, size_t num_comps, navproc_seg_t *seg,
 	if (!is_valid_hdg(seg->leg_cmd.crs) ||
 	    !parse_alt_spd_term(&comps[5], &seg->alt_lim, &seg->spd_lim) ||
 	    (!is_CI && !is_valid_hdg(seg->term_cond.radial.radial)) ||
-	    !STRLCPY_CHECK(seg->term_cond.radial.navaid, comps[2]))
+	    (is_CI && strcmp(comps[2], " ") != 0 &&
+	    !proc_navaid_lookup(comps[2], &seg->term_cond.radial.navaid,
+	    arpt, NULL, db, NAVAID_TYPE_ANY)) ||
+	    (!is_CI && !proc_navaid_lookup(comps[2],
+	    &seg->term_cond.radial.navaid, arpt, NULL, db, NAVAID_TYPE_ANY)))
 		return (B_FALSE);
 	return (B_TRUE);
 }
@@ -1222,13 +1356,15 @@ dump_CI_CR_seg(char **result, size_t *result_sz, const navproc_seg_t *seg)
 	DUMP_ALT_LIM(&seg->alt_lim);
 	DUMP_SPD_LIM(&seg->spd_lim);
 	if (seg->type == NAVPROC_SEG_TYPE_CRS_TO_INTCP) {
-		append_format(result, result_sz, "\tCI,C:%.01lf,N:%s%s%s\n",
-		    seg->leg_cmd.crs, seg->term_cond.radial.navaid,
+		append_format(result, result_sz,
+		    "\tCI,C:%.01lf,N:%s(%lfx%lf)%s%s\n", seg->leg_cmd.crs,
+		    FIX_PRINTF_ARG(&seg->term_cond.radial.navaid),
 		    alt_lim_desc, spd_lim_desc);
 	} else {
 		append_format(result, result_sz,
-		    "\tCR,C:%.01lf,N:%s,R:%.01f%s%s\n",
-		    seg->leg_cmd.crs, seg->term_cond.radial.navaid,
+		    "\tCR,C:%.01lf,N:%s(%lfx%lf),R:%.01f%s%s\n",
+		    seg->leg_cmd.crs,
+		    FIX_PRINTF_ARG(&seg->term_cond.radial.navaid),
 		    seg->term_cond.radial.radial, alt_lim_desc, spd_lim_desc);
 	}
 }
@@ -1243,9 +1379,9 @@ parse_DF_TF_seg(char **comps, size_t num_comps, navproc_seg_t *seg,
 		CHECK_NUM_COMPS(18, TF);
 	seg->type = is_DF ? NAVPROC_SEG_TYPE_DIR_TO_FIX :
 	    NAVPROC_SEG_TYPE_TRK_TO_FIX;
-	if (!geo_pos2_from_str(comps[2], comps[3], &seg->term_cond.fix.pos) ||
+	if (!parse_proc_seg_fix(&comps[1], &seg->term_cond.fix) ||
 	    !parse_alt_spd_term(&comps[is_DF ? 8 : 10], &seg->alt_lim,
-	    &seg->spd_lim) || !STRLCPY_CHECK(seg->term_cond.fix.name, comps[1]))
+	    &seg->spd_lim))
 		return (B_FALSE);
 	return (B_TRUE);
 }
@@ -1255,7 +1391,7 @@ dump_DF_TF_seg(char **result, size_t *result_sz, const navproc_seg_t *seg)
 {
 	DUMP_ALT_LIM(&seg->alt_lim);
 	DUMP_SPD_LIM(&seg->spd_lim);
-	append_format(result, result_sz, "\t%s,F:%s,lat:%lf,lon:%lf%s%s\n",
+	append_format(result, result_sz, "\t%s,F:%s(%lfx%lf)%s%s\n",
 	    seg->type == NAVPROC_SEG_TYPE_DIR_TO_FIX ? "DF" : "TF",
 	    seg->term_cond.fix.name, seg->term_cond.fix.pos.lat,
 	    seg->term_cond.fix.pos.lon, alt_lim_desc, spd_lim_desc);
@@ -1266,12 +1402,11 @@ parse_FA_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
 {
 	CHECK_NUM_COMPS(17, FA);
 	seg->type = NAVPROC_SEG_TYPE_FIX_TO_ALT;
-	if (!geo_pos2_from_str(comps[2], comps[3], &seg->leg_cmd.fix.pos) ||
+	if (!parse_proc_seg_fix(&comps[1], &seg->leg_cmd.fix) ||
 	    !parse_alt_spd_term(&comps[9], &seg->term_cond.alt,
 	    &seg->spd_lim) ||
-	    /* altitude constraint is required for CA segs */
-	    seg->term_cond.alt.type == ALT_LIM_NONE ||
-	    !STRLCPY_CHECK(seg->leg_cmd.fix.name, comps[1]))
+	    /* altitude constraint is required for FA segs */
+	    seg->term_cond.alt.type == ALT_LIM_NONE)
 		return (B_FALSE);
 	seg->alt_lim = seg->term_cond.alt;
 	return (B_TRUE);
@@ -1295,10 +1430,9 @@ parse_FC_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
 
 	seg->leg_cmd.fix_crs.crs = atof(comps[8]);
 	seg->term_cond.dist = atof(comps[9]);
-	if (!geo_pos2_from_str(comps[2], comps[3],
-	    &seg->leg_cmd.fix_crs.fix.pos) ||
-	    !parse_alt_spd_term(&comps[10], &seg->alt_lim, &seg->spd_lim) ||
-	    !STRLCPY_CHECK(seg->leg_cmd.fix_crs.fix.name, comps[1]))
+	if (!parse_proc_seg_fix(&comps[1], &seg->leg_cmd.fix_crs.fix) ||
+	    !is_valid_hdg(seg->leg_cmd.fix_crs.crs) ||
+	    !parse_alt_spd_term(&comps[10], &seg->alt_lim, &seg->spd_lim))
 		return (B_FALSE);
 	return (B_TRUE);
 }
@@ -1308,25 +1442,24 @@ dump_FC_seg(char **result, size_t *result_sz, const navproc_seg_t *seg)
 {
 	DUMP_ALT_LIM(&seg->alt_lim);
 	DUMP_SPD_LIM(&seg->spd_lim);
-	append_format(result, result_sz,
-	    "\tFC,F:%s,lat:%lf,lon:%lf,d:%.01f%s%s\n",
-	    seg->leg_cmd.fix_crs.fix.name, seg->leg_cmd.fix_crs.fix.pos.lat,
-	    seg->leg_cmd.fix_crs.fix.pos.lon, seg->term_cond.dist,
+	append_format(result, result_sz, "\tFC,F:%s(%lfx%lf),d:%.01f%s%s\n",
+	    FIX_PRINTF_ARG(&seg->leg_cmd.fix_crs.fix), seg->term_cond.dist,
 	    alt_lim_desc, spd_lim_desc);
 }
 
 static bool_t
-parse_FD_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
+parse_FD_seg(char **comps, size_t num_comps, navproc_seg_t *seg,
+    const airport_t *arpt, const navaid_db_t *db)
 {
 	CHECK_NUM_COMPS(18, FD);
 	seg->type = NAVPROC_SEG_TYPE_FIX_TO_DME;
 
 	seg->term_cond.dme.dist = atof(comps[7]);
 	seg->leg_cmd.fix_crs.crs = atof(comps[8]);
-	if (!geo_pos2_from_str(comps[2], comps[3], &seg->leg_cmd.fix.pos) ||
+	if (!parse_proc_seg_fix(&comps[1], &seg->leg_cmd.fix) ||
 	    !parse_alt_spd_term(&comps[10], &seg->alt_lim, &seg->spd_lim) ||
-	    !STRLCPY_CHECK(seg->leg_cmd.fix_crs.fix.name, comps[1]) ||
-	    !STRLCPY_CHECK(seg->term_cond.dme.navaid, comps[5]))
+	    !proc_navaid_lookup(comps[5], &seg->term_cond.dme.navaid,
+	    arpt, NULL, db, NAVAID_TYPE_ANY))
 		return (B_FALSE);
 	return (B_TRUE);
 }
@@ -1337,10 +1470,9 @@ dump_FD_seg(char **result, size_t *result_sz, const navproc_seg_t *seg)
 	DUMP_ALT_LIM(&seg->alt_lim);
 	DUMP_SPD_LIM(&seg->spd_lim);
 	append_format(result, result_sz,
-	    "\t%s,F:%s,lat:%lf,lon:%lf,N:%s,d:%.01f%s%s\n",
-	    seg->type == NAVPROC_SEG_TYPE_FIX_TO_DIST ? "FA" : "FD",
-	    seg->leg_cmd.fix_crs.fix.name, seg->leg_cmd.fix_crs.fix.pos.lat,
-	    seg->leg_cmd.fix_crs.fix.pos.lon, seg->term_cond.dme.navaid,
+	    "\tFD,F:%s(%lfx%lf),N:%s(%lfx%lf),d:%.01f%s%s\n",
+	    FIX_PRINTF_ARG(&seg->leg_cmd.fix_crs.fix),
+	    FIX_PRINTF_ARG(&seg->term_cond.dme.navaid),
 	    seg->term_cond.dme.dist, alt_lim_desc, spd_lim_desc);
 }
 
@@ -1350,10 +1482,9 @@ parse_FM_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
 	CHECK_NUM_COMPS(17, FM);
 	seg->type = NAVPROC_SEG_TYPE_FIX_TO_MANUAL;
 	seg->leg_cmd.fix_crs.crs = atof(comps[8]);
-	if (!geo_pos2_from_str(comps[2], comps[3],
-	    &seg->leg_cmd.fix_crs.fix.pos) ||
-	    !parse_alt_spd_term(&comps[9], &seg->alt_lim, &seg->spd_lim) ||
-	    !STRLCPY_CHECK(seg->leg_cmd.fix_crs.fix.name, comps[1]))
+	if (!parse_proc_seg_fix(&comps[1], &seg->leg_cmd.fix_crs.fix) ||
+	    !is_valid_hdg(seg->leg_cmd.fix_crs.crs) ||
+	    !parse_alt_spd_term(&comps[9], &seg->alt_lim, &seg->spd_lim))
 		return (B_FALSE);
 	return (B_TRUE);
 }
@@ -1363,11 +1494,9 @@ dump_FM_seg(char **result, size_t *result_sz, const navproc_seg_t *seg)
 {
 	DUMP_ALT_LIM(&seg->alt_lim);
 	DUMP_SPD_LIM(&seg->spd_lim);
-	append_format(result, result_sz,
-	    "\tFM,F:%s,lat:%lf,lon:%lf,T:%.01lf%s%s\n",
-	    seg->leg_cmd.fix_crs.fix.name, seg->leg_cmd.fix_crs.fix.pos.lat,
-	    seg->leg_cmd.fix_crs.fix.pos.lon, seg->leg_cmd.fix_crs.crs,
-	    alt_lim_desc, spd_lim_desc);
+	append_format(result, result_sz, "\tFM,F:%s(%lfx%lf),T:%.01lf%s%s\n",
+	    FIX_PRINTF_ARG(&seg->leg_cmd.fix_crs.fix),
+	    seg->leg_cmd.fix_crs.crs, alt_lim_desc, spd_lim_desc);
 }
 
 static bool_t
@@ -1386,17 +1515,14 @@ parse_HA_HF_HM_seg(char **comps, size_t num_comps, navproc_seg_t *seg,
 	seg->leg_cmd.hold.turn_right = atoi(comps[4]);
 	seg->leg_cmd.hold.inbd_crs = atof(comps[8]);
 	seg->leg_cmd.hold.leg_len = atof(comps[9]);
-	if (!geo_pos2_from_str(comps[2], comps[3],
-	    &seg->leg_cmd.hold.fix.pos) ||
+	if (!parse_proc_seg_fix(&comps[1], &seg->leg_cmd.hold.fix) ||
 	    (seg->leg_cmd.hold.turn_right != 1 &&
 	    seg->leg_cmd.hold.turn_right != 2) ||
 	    !parse_alt_spd_term(&comps[10], &seg->alt_lim, &seg->spd_lim) ||
 	    /* alt constr is mandatory on HA segs */
 	    (type == NAVPROC_SEG_TYPE_HOLD_TO_ALT &&
 	    seg->alt_lim.type == ALT_LIM_NONE) ||
-	    !is_valid_hdg(seg->leg_cmd.hold.inbd_crs) ||
-	    !STRLCPY_CHECK(seg->leg_cmd.hold.fix.name, comps[1]) ||
-	    !STRLCPY_CHECK(seg->term_cond.dme.navaid, comps[5]))
+	    !is_valid_hdg(seg->leg_cmd.hold.inbd_crs))
 		return (B_FALSE);
 	if (type == NAVPROC_SEG_TYPE_HOLD_TO_ALT)
 		seg->term_cond.alt = seg->alt_lim;
@@ -1414,20 +1540,18 @@ dump_HA_HF_HM_seg(char **result, size_t *result_sz, const navproc_seg_t *seg)
 	if (seg->type == NAVPROC_SEG_TYPE_HOLD_TO_ALT) {
 		DUMP_ALT_LIM(&seg->term_cond.alt);
 		append_format(result, result_sz,
-		    "\tHA,F:%s,lat:%lf,lon:%lf,IC:%.01lf,L:%.01lf,R:%d%s%s\n",
-		    seg->leg_cmd.hold.fix.name, seg->leg_cmd.hold.fix.pos.lat,
-		    seg->leg_cmd.hold.fix.pos.lon, seg->leg_cmd.hold.inbd_crs,
-		    seg->leg_cmd.hold.leg_len, seg->leg_cmd.hold.turn_right,
-		    alt_lim_desc, spd_lim_desc);
+		    "\tHA,F:%s(%lfx%lf),IC:%.01lf,L:%.01lf,R:%d%s%s\n",
+		    FIX_PRINTF_ARG(&seg->leg_cmd.hold.fix),
+		    seg->leg_cmd.hold.inbd_crs, seg->leg_cmd.hold.leg_len,
+		    seg->leg_cmd.hold.turn_right, alt_lim_desc, spd_lim_desc);
 	} else {
 		DUMP_ALT_LIM(&seg->alt_lim);
 		append_format(result, result_sz,
-		    "\t%s,F:%s,lat:%lf,lon:%lf,IC:%.01lf,L:%.01lf,R:%d%s%s\n",
+		    "\t%s,F:%s(%lfx%lf),IC:%.01lf,L:%.01lf,R:%d%s%s\n",
 		    seg->type == NAVPROC_SEG_TYPE_HOLD_TO_FIX ? "HF" : "HM",
-		    seg->leg_cmd.hold.fix.name, seg->leg_cmd.hold.fix.pos.lat,
-		    seg->leg_cmd.hold.fix.pos.lon, seg->leg_cmd.hold.inbd_crs,
-		    seg->leg_cmd.hold.leg_len, seg->leg_cmd.hold.turn_right,
-		    alt_lim_desc, spd_lim_desc);
+		    FIX_PRINTF_ARG(&seg->leg_cmd.hold.fix),
+		    seg->leg_cmd.hold.inbd_crs, seg->leg_cmd.hold.leg_len,
+		    seg->leg_cmd.hold.turn_right, alt_lim_desc, spd_lim_desc);
 	}
 }
 
@@ -1436,9 +1560,8 @@ parse_IF_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
 {
 	CHECK_NUM_COMPS(15, IF);
 	seg->type = NAVPROC_SEG_TYPE_INIT_FIX;
-	if (!geo_pos2_from_str(comps[2], comps[3], &seg->leg_cmd.fix.pos) ||
-	    !parse_alt_spd_term(&comps[7], &seg->alt_lim, &seg->spd_lim) ||
-	    !STRLCPY_CHECK(seg->leg_cmd.fix.name, comps[1]))
+	if (!parse_proc_seg_fix(&comps[1], &seg->leg_cmd.fix) ||
+	    !parse_alt_spd_term(&comps[7], &seg->alt_lim, &seg->spd_lim))
 		return (B_FALSE);
 	return (B_TRUE);
 }
@@ -1448,13 +1571,13 @@ dump_IF_seg(char **result, size_t *result_sz, const navproc_seg_t *seg)
 {
 	DUMP_ALT_LIM(&seg->alt_lim);
 	DUMP_SPD_LIM(&seg->spd_lim);
-	append_format(result, result_sz, "\tIF,F:%s,lat:%lf,lon:%lf%s%s\n",
-	    seg->leg_cmd.fix.name, seg->leg_cmd.fix.pos.lat,
-	    seg->leg_cmd.fix.pos.lon, alt_lim_desc, spd_lim_desc);
+	append_format(result, result_sz, "\tIF,F:%s(%lfx%lf)%s%s\n",
+	    FIX_PRINTF_ARG(&seg->leg_cmd.fix), alt_lim_desc, spd_lim_desc);
 }
 
 static bool_t
-parse_PI_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
+parse_PI_seg(char **comps, size_t num_comps, navproc_seg_t *seg,
+    const airport_t *arpt, const navaid_db_t *db)
 {
 	int turn_dir;
 
@@ -1465,14 +1588,13 @@ parse_PI_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
 	seg->leg_cmd.proc_turn.max_excrs_dist = atof(comps[7]);
 	seg->leg_cmd.proc_turn.outbd_radial = atof(comps[8]);
 	seg->leg_cmd.proc_turn.max_excrs_time = atof(comps[9]);
-	if (!geo_pos2_from_str(comps[2], comps[3],
-	    &seg->leg_cmd.proc_turn.startpt.pos) ||
+	if (!parse_proc_seg_fix(&comps[1], &seg->leg_cmd.proc_turn.startpt) ||
 	    (turn_dir != 1 && turn_dir != 2) ||
 	    !is_valid_hdg(seg->leg_cmd.proc_turn.outbd_turn_hdg) ||
 	    !is_valid_hdg(seg->leg_cmd.proc_turn.outbd_radial) ||
 	    !parse_alt_spd_term(&comps[10], &seg->alt_lim, &seg->spd_lim) ||
-	    !STRLCPY_CHECK(seg->leg_cmd.proc_turn.startpt.name, comps[1]) ||
-	    !STRLCPY_CHECK(seg->leg_cmd.proc_turn.navaid, comps[5]))
+	    !proc_navaid_lookup(comps[5], &seg->leg_cmd.proc_turn.navaid,
+	    arpt, NULL, db, NAVAID_TYPE_ANY))
 		return (B_FALSE);
 	seg->leg_cmd.proc_turn.turn_right = (turn_dir == 1);
 	return (B_TRUE);
@@ -1484,22 +1606,21 @@ dump_PI_seg(char **result, size_t *result_sz, const navproc_seg_t *seg)
 	DUMP_ALT_LIM(&seg->alt_lim);
 	DUMP_SPD_LIM(&seg->spd_lim);
 	append_format(result, result_sz,
-	    "\tPI,SP:%s,lat:%.01lf,lon:%.01lf,OR:%.01lf,TH:%.01lf,"
-	    "right:%d,MD:%.01lf,MT:%.01lf,N:%s%s%s\n",
-	    seg->leg_cmd.proc_turn.startpt.name,
-	    seg->leg_cmd.proc_turn.startpt.pos.lat,
-	    seg->leg_cmd.proc_turn.startpt.pos.lon,
+	    "\tPI,SP:%s(%lfx%lf),OR:%.01lf,TH:%.01lf,"
+	    "right:%d,MD:%.01lf,MT:%.01lf,N:%s(%lfx%lf)%s%s\n",
+	    FIX_PRINTF_ARG(&seg->leg_cmd.proc_turn.startpt),
 	    seg->leg_cmd.proc_turn.outbd_radial,
 	    seg->leg_cmd.proc_turn.outbd_turn_hdg,
 	    seg->leg_cmd.proc_turn.turn_right,
 	    seg->leg_cmd.proc_turn.max_excrs_dist,
 	    seg->leg_cmd.proc_turn.max_excrs_time,
-	    seg->leg_cmd.proc_turn.navaid,
+	    FIX_PRINTF_ARG(&seg->leg_cmd.proc_turn.navaid),
 	    alt_lim_desc, spd_lim_desc);
 }
 
 static bool_t
-parse_RF_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
+parse_RF_seg(char **comps, size_t num_comps, navproc_seg_t *seg,
+    const airport_t *arpt, const waypoint_db_t *db)
 {
 	CHECK_NUM_COMPS(16, RF);
 	seg->type = NAVPROC_SEG_TYPE_RADIUS_ARC_TO_FIX;
@@ -1513,7 +1634,8 @@ parse_RF_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
 	if (!parse_proc_seg_fix(&comps[1], &seg->term_cond.fix) ||
 	    !is_valid_arc_radius(seg->leg_cmd.radius_arc.radius) ||
 	    !parse_alt_spd_term(&comps[8], &seg->alt_lim, &seg->spd_lim) ||
-	    !STRLCPY_CHECK(seg->leg_cmd.radius_arc.ctr_fix, comps[5]))
+	    !proc_navaid_lookup(comps[5], &seg->leg_cmd.radius_arc.ctr_fix,
+	    arpt, db, NULL, NAVAID_TYPE_ANY))
 		return (B_FALSE);
 
 	return (B_TRUE);
@@ -1525,10 +1647,10 @@ dump_RF_seg(char **result, size_t *result_sz, const navproc_seg_t *seg)
 	DUMP_ALT_LIM(&seg->alt_lim);
 	DUMP_SPD_LIM(&seg->spd_lim);
 	append_format(result, result_sz,
-	    "\tRF,F:%s,r:%.01lf,cw:%d,F:%s%s%s\n",
-	    seg->leg_cmd.radius_arc.ctr_fix, seg->leg_cmd.radius_arc.radius,
-	    seg->leg_cmd.radius_arc.cw, seg->term_cond.fix.name,
-	    alt_lim_desc, spd_lim_desc);
+	    "\tRF,F:%s(%lfx%lf),r:%.01lf,cw:%d,F:%s(%lfx%lf)%s%s\n",
+	    FIX_PRINTF_ARG(&seg->leg_cmd.radius_arc.ctr_fix),
+	    seg->leg_cmd.radius_arc.radius, seg->leg_cmd.radius_arc.cw,
+	    FIX_PRINTF_ARG(&seg->term_cond.fix), alt_lim_desc, spd_lim_desc);
 }
 
 static bool_t
@@ -1559,7 +1681,8 @@ dump_VA_seg(char **result, size_t *result_sz, const navproc_seg_t *seg)
 }
 
 static bool_t
-parse_VD_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
+parse_VD_seg(char **comps, size_t num_comps, navproc_seg_t *seg,
+    const airport_t *arpt, const navaid_db_t *db)
 {
 	CHECK_NUM_COMPS(18, VD);
 	seg->type = NAVPROC_SEG_TYPE_HDG_TO_DME;
@@ -1567,7 +1690,8 @@ parse_VD_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
 	seg->term_cond.dme.dist = atof(comps[9]);
 	if (!is_valid_hdg(seg->leg_cmd.hdg) ||
 	    !parse_alt_spd_term(&comps[10], &seg->alt_lim, &seg->spd_lim) ||
-	    !STRLCPY_CHECK(seg->term_cond.dme.navaid, comps[5])) {
+	    !proc_navaid_lookup(comps[5], &seg->term_cond.dme.navaid,
+	    arpt, NULL, db, NAVAID_TYPE_ANY)) {
 		openfmc_log(OPENFMC_LOG_ERR, "Error parsing VD segment line");
 		return (B_FALSE);
 	}
@@ -1580,14 +1704,15 @@ dump_VD_seg(char **result, size_t *result_sz, const navproc_seg_t *seg)
 {
 	DUMP_ALT_LIM(&seg->alt_lim);
 	DUMP_SPD_LIM(&seg->spd_lim);
-	append_format(result, result_sz, "\tVA,H:%.01lf,N:%s,d:%.01lf%s%s\n",
-	    seg->leg_cmd.hdg, seg->term_cond.dme.navaid,
+	append_format(result, result_sz,
+	    "\tVA,H:%.01lf,N:%s(%lfx%lf),d:%.01lf%s%s\n",
+	    seg->leg_cmd.hdg, FIX_PRINTF_ARG(&seg->term_cond.dme.navaid),
 	    seg->term_cond.dme.dist, alt_lim_desc, spd_lim_desc);
 }
 
 static bool_t
 parse_VI_VM_VR_seg(char **comps, size_t num_comps, navproc_seg_t *seg,
-    navproc_seg_type_t type)
+    navproc_seg_type_t type, const airport_t *arpt, const navaid_db_t *db)
 {
 	char *leg_name;
 	if (type == NAVPROC_SEG_TYPE_HDG_TO_INTCP) {
@@ -1613,17 +1738,17 @@ parse_VI_VM_VR_seg(char **comps, size_t num_comps, navproc_seg_t *seg,
 		    leg_name);
 		return (B_FALSE);
 	}
+	/* Grab a non-empty navaid to termination condition on VI segs */
 	if (type == NAVPROC_SEG_TYPE_HDG_TO_INTCP &&
-	    strcmp(comps[2], " ") != 0) {
-		/* Copy non-empty navaid to termination condition on VI segs */
-		STRLCPY_CHECK_ERROUT(seg->term_cond.navaid, comps[2]);
-	} else if (type == NAVPROC_SEG_TYPE_HDG_TO_RADIAL) {
-		STRLCPY_CHECK_ERROUT(seg->term_cond.radial.navaid, comps[2]);
-	}
+	    strcmp(comps[2], " ") != 0 && !proc_navaid_lookup(comps[2],
+	    &seg->term_cond.fix, arpt, NULL, db, NAVAID_TYPE_ANY))
+		return (B_FALSE);
+	else if (type == NAVPROC_SEG_TYPE_HDG_TO_RADIAL &&
+	    !proc_navaid_lookup(comps[2], &seg->term_cond.radial.navaid,
+	    arpt, NULL, db, NAVAID_TYPE_ANY))
+		return (B_FALSE);
 
 	return (B_TRUE);
-errout:	/* needed for STRLCPY_CHECK_ERROUT */
-	return (B_FALSE);
 }
 
 static void
@@ -1632,22 +1757,25 @@ dump_VI_VM_VR_seg(char **result, size_t *result_sz, const navproc_seg_t *seg)
 	DUMP_ALT_LIM(&seg->alt_lim);
 	DUMP_SPD_LIM(&seg->spd_lim);
 	if (seg->type == NAVPROC_SEG_TYPE_HDG_TO_INTCP) {
-		append_format(result, result_sz, "\tVI,H:%.01lf,N:%s%s%s\n",
-		    seg->leg_cmd.hdg, seg->term_cond.navaid,
+		append_format(result, result_sz,
+		    "\tVI,H:%.01lf,N:%s(%lfx%lf)%s%s\n",
+		    seg->leg_cmd.hdg, FIX_PRINTF_ARG(&seg->term_cond.fix),
 		    alt_lim_desc, spd_lim_desc);
 	} else if (seg->type == NAVPROC_SEG_TYPE_HDG_TO_MANUAL) {
-		append_format(result, result_sz, "\tVM,H:%.01lf,%s,%s\n",
+		append_format(result, result_sz, "\tVM,H:%.01lf%s%s\n",
 		    seg->leg_cmd.hdg, alt_lim_desc, spd_lim_desc);
 	} else {
 		append_format(result, result_sz,
-		    "\tVR,H:%.01lf,N:%s,R:%.01lf,%s,%s\n",
-		    seg->leg_cmd.hdg, seg->term_cond.radial.navaid,
+		    "\tVR,H:%.01lf,N:%s(%lfx%lf),R:%.01lf%s%s\n",
+		    seg->leg_cmd.hdg,
+		    FIX_PRINTF_ARG(&seg->term_cond.radial.navaid),
 		    seg->term_cond.radial.radial, alt_lim_desc, spd_lim_desc);
 	}
 }
 
 static bool_t
-parse_proc_seg_line(const char *line, navproc_t *proc)
+parse_proc_seg_line(const char *line, navproc_t *proc, const airport_t *arpt,
+    const waypoint_db_t *wptdb, const navaid_db_t *navdb)
 {
 	char		*comps[24];
 	size_t		num_comps;
@@ -1660,22 +1788,22 @@ parse_proc_seg_line(const char *line, navproc_t *proc)
 
 	ASSERT(num_comps > 0);
 	if (strcmp(comps[0], "AF") == 0) {
-		if (!parse_AF_seg(comps, num_comps, &seg))
+		if (!parse_AF_seg(comps, num_comps, &seg, arpt, navdb))
 			goto errout;
 	} else if (strcmp(comps[0], "CA") == 0) {
 		if (!parse_CA_seg(comps, num_comps, &seg))
 			goto errout;
 	} else if (strcmp(comps[0], "CD") == 0) {
-		if (!parse_CD_seg(comps, num_comps, &seg))
+		if (!parse_CD_seg(comps, num_comps, &seg, arpt, navdb))
 			goto errout;
 	} else if (strcmp(comps[0], "CF") == 0) {
-		if (!parse_CF_seg(comps, num_comps, &seg))
+		if (!parse_CF_seg(comps, num_comps, &seg, arpt, navdb))
 			goto errout;
 	} else if (strcmp(comps[0], "CI") == 0) {
-		if (!parse_CI_CR_seg(comps, num_comps, &seg, 1))
+		if (!parse_CI_CR_seg(comps, num_comps, &seg, 1, arpt, navdb))
 			goto errout;
 	} else if (strcmp(comps[0], "CR") == 0) {
-		if (!parse_CI_CR_seg(comps, num_comps, &seg, 0))
+		if (!parse_CI_CR_seg(comps, num_comps, &seg, 0, arpt, navdb))
 			goto errout;
 	} else if (strcmp(comps[0], "DF") == 0) {
 		if (!parse_DF_TF_seg(comps, num_comps, &seg, 1))
@@ -1687,7 +1815,7 @@ parse_proc_seg_line(const char *line, navproc_t *proc)
 		if (!parse_FC_seg(comps, num_comps, &seg))
 			goto errout;
 	} else if (strcmp(comps[0], "FD") == 0) {
-		if (!parse_FD_seg(comps, num_comps, &seg))
+		if (!parse_FD_seg(comps, num_comps, &seg, arpt, navdb))
 			goto errout;
 	} else if (strcmp(comps[0], "FM") == 0) {
 		if (!parse_FM_seg(comps, num_comps, &seg))
@@ -1708,10 +1836,10 @@ parse_proc_seg_line(const char *line, navproc_t *proc)
 		if (!parse_IF_seg(comps, num_comps, &seg))
 			goto errout;
 	} else if (strcmp(comps[0], "PI") == 0) {
-		if (!parse_PI_seg(comps, num_comps, &seg))
+		if (!parse_PI_seg(comps, num_comps, &seg, arpt, navdb))
 			goto errout;
 	} else if (strcmp(comps[0], "RF") == 0) {
-		if (!parse_RF_seg(comps, num_comps, &seg))
+		if (!parse_RF_seg(comps, num_comps, &seg, arpt, wptdb))
 			goto errout;
 	} else if (strcmp(comps[0], "TF") == 0) {
 		if (!parse_DF_TF_seg(comps, num_comps, &seg, 0))
@@ -1720,19 +1848,19 @@ parse_proc_seg_line(const char *line, navproc_t *proc)
 		if (!parse_VA_seg(comps, num_comps, &seg))
 			goto errout;
 	} else if (strcmp(comps[0], "VD") == 0) {
-		if (!parse_VD_seg(comps, num_comps, &seg))
+		if (!parse_VD_seg(comps, num_comps, &seg, arpt, navdb))
 			goto errout;
 	} else if (strcmp(comps[0], "VI") == 0) {
 		if (!parse_VI_VM_VR_seg(comps, num_comps, &seg,
-		    NAVPROC_SEG_TYPE_HDG_TO_INTCP))
+		    NAVPROC_SEG_TYPE_HDG_TO_INTCP, arpt, navdb))
 			goto errout;
 	} else if (strcmp(comps[0], "VM") == 0) {
 		if (!parse_VI_VM_VR_seg(comps, num_comps, &seg,
-		    NAVPROC_SEG_TYPE_HDG_TO_MANUAL))
+		    NAVPROC_SEG_TYPE_HDG_TO_MANUAL, arpt, navdb))
 			goto errout;
 	} else if (strcmp(comps[0], "VR") == 0) {
 		if (!parse_VI_VM_VR_seg(comps, num_comps, &seg,
-		    NAVPROC_SEG_TYPE_HDG_TO_RADIAL))
+		    NAVPROC_SEG_TYPE_HDG_TO_RADIAL, arpt, navdb))
 			goto errout;
 	} else {
 		/* Unknown segment type */
@@ -1754,7 +1882,8 @@ errout:
 }
 
 static int
-parse_proc(FILE *fp, navproc_t *proc)
+parse_proc(FILE *fp, navproc_t *proc, const airport_t *arpt,
+    const waypoint_db_t *wptdb, const navaid_db_t *navdb)
 {
 	size_t		line_cap = 0;
 	ssize_t		line_len = 0;
@@ -1794,7 +1923,7 @@ parse_proc(FILE *fp, navproc_t *proc)
 		strip_newline(line);
 		if (strlen(line) == 0)
 			break;
-		if (!parse_proc_seg_line(line, proc))
+		if (!parse_proc_seg_line(line, proc, arpt, wptdb, navdb))
 			goto errout;
 	}
 	if (proc->num_segs == 0) {
@@ -1830,16 +1959,17 @@ errout:
 	return (-1);
 }
 
-static bool_t
-parse_proc_file(FILE *fp, airport_t *arpt)
+static void
+parse_proc_file(FILE *fp, airport_t *arpt, const waypoint_db_t *wptdb,
+    const navaid_db_t *navdb)
 {
 	navproc_t	proc;
 	int		n;
 
-	while ((n = parse_proc(fp, &proc)) != -1) {
-		if (n == 0) {
-			/* EOF */
-			break;
+	while ((n = parse_proc(fp, &proc, arpt, wptdb, navdb)) != 0) {
+		if (n == -1) {
+			/* broken procedure, skip over it */
+			continue;
 		}
 		arpt->num_procs++;
 		arpt->procs = realloc(arpt->procs, sizeof (navproc_t) *
@@ -1847,14 +1977,11 @@ parse_proc_file(FILE *fp, airport_t *arpt)
 		(void) memcpy(&arpt->procs[arpt->num_procs - 1], &proc,
 		    sizeof (proc));
 	}
-	if (n == -1)
-		return (B_FALSE);
-
-	return (B_TRUE);
 }
 
 airport_t *
-airport_open(const char *arpt_icao, const char *navdata_dir)
+airport_open(const char *arpt_icao, const char *navdata_dir,
+    const waypoint_db_t *wptdb, const navaid_db_t *navdb)
 {
 	airport_t	*arpt;
 	FILE		*arpt_fp = NULL, *proc_fp = NULL;
@@ -1925,13 +2052,8 @@ airport_open(const char *arpt_icao, const char *navdata_dir)
 	sprintf(proc_fname, "%s" PATHSEP "Proc" PATHSEP "%s.txt",
 	    navdata_dir, arpt->icao);
 	proc_fp = fopen(proc_fname, "r");
-	if (proc_fp != NULL) {
-		if (!parse_proc_file(proc_fp, arpt)) {
-			openfmc_log(OPENFMC_LOG_ERR, "Error parsing airport "
-			    "procedures file %s", proc_fname);
-			goto errout;
-		}
-	}
+	if (proc_fp != NULL)
+		parse_proc_file(proc_fp, arpt, wptdb, navdb);
 
 	free(line);
 	free(arpt_fname);

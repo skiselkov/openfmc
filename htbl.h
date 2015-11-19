@@ -71,9 +71,9 @@ void htbl_set(htbl_t *htbl, void *key, void *value);
 void htbl_remove(htbl_t *htbl, void *key, int nil_ok);
 void htbl_remove_multi(htbl_t *htbl, void *key, void *list_item);
 
-void *htbl_lookup(const htbl_t *htbl, void *key);
+void *htbl_lookup(const htbl_t *htbl, const void *key);
 #define	HTBL_VALUE_MULTI(x)	(((htbl_multi_value_t *)(x))->value)
-const list_t *htbl_lookup_multi(const htbl_t *htbl, void *key);
+const list_t *htbl_lookup_multi(const htbl_t *htbl, const void *key);
 
 void htbl_foreach(const htbl_t *htbl,
     void (*func)(const void *, void *, void *), void *arg);

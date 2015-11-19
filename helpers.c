@@ -104,7 +104,6 @@ is_valid_rwy_ID(const char *rwy_ID)
 	int hdg;
 	int len = strlen(rwy_ID);
 
-	ASSERT(arpt != NULL);
 	if (len < 2 || len > 4 || !isdigit(rwy_ID[0]) || !isdigit(rwy_ID[1]))
 		return (B_FALSE);
 	hdg = atoi(rwy_ID);

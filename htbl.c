@@ -221,7 +221,7 @@ void htbl_remove_multi(htbl_t *htbl, void *key, void *list_item)
 }
 
 static htbl_bucket_item_t *
-htbl_lookup_common(const htbl_t *htbl, void *key)
+htbl_lookup_common(const htbl_t *htbl, const void *key)
 {
 	list_t *bucket = &htbl->buckets[H(key, htbl->key_sz) &
 	    (htbl->tbl_sz - 1)];
@@ -235,7 +235,7 @@ htbl_lookup_common(const htbl_t *htbl, void *key)
 }
 
 void *
-htbl_lookup(const htbl_t *htbl, void *key)
+htbl_lookup(const htbl_t *htbl, const void *key)
 {
 	htbl_bucket_item_t *item;
 	ASSERT(htbl->multi_value == 0);
@@ -244,7 +244,7 @@ htbl_lookup(const htbl_t *htbl, void *key)
 }
 
 const list_t *
-htbl_lookup_multi(const htbl_t *htbl, void *key)
+htbl_lookup_multi(const htbl_t *htbl, const void *key)
 {
 	htbl_bucket_item_t *item;
 	ASSERT(htbl->multi_value != 0);
