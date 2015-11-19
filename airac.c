@@ -2117,7 +2117,7 @@ airport_dump(const airport_t *arpt)
 	for (unsigned i = 0; i < arpt->num_rwys; i++) {
 		const runway_t *rwy = &arpt->rwys[i];
 		append_format(&result, &result_sz,
-		    "    %3s %3u %5u %4u %3s %6.2lf MHz %6u %10.6lf %11.7lf "
+		    "    %3s %3u %5u %4u %3s %6.2lf MHz %6u %10.6lf %12.6lf "
 		    "%8.1lf\n",
 		    rwy->ID, rwy->hdg, rwy->length, rwy->width,
 		    rwy->loc_avail ? "yes" : "no",
