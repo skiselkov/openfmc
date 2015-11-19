@@ -33,7 +33,7 @@ A,EGLL,HEATHROW,51.477500,-0.461389,83,6000,0,12800,0
 	“6000”		Departure transition altitude in feet AMSL (“0” if undefined)
 	“0”		Arrival transition level in FL (“0” if undefined)
 	“12800”		Longest runway length in feet
-	“0”		???
+	“0”		0: headings magnetic, 1: headings true
 
 R,09L,91,12802,164,1,110.300,91,51.477500,-0.485014,79,3.00,51,1,0
 	“R”		Runway

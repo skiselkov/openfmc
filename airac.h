@@ -1,3 +1,28 @@
+/*
+ * CDDL HEADER START
+ *
+ * The contents of this file are subject to the terms of the
+ * Common Development and Distribution License, Version 1.0 only
+ * (the "License").  You may not use this file except in compliance
+ * with the License.
+ *
+ * You can obtain a copy of the license at usr/src/OPENSOLARIS.LICENSE
+ * or http://www.opensource.org/licenses/CDDL-1.0.
+ * See the License for the specific language governing permissions
+ * and limitations under the License.
+ *
+ * When distributing Covered Code, include this CDDL HEADER in each
+ * file and include the License file at usr/src/OPENSOLARIS.LICENSE.
+ * If applicable, add the following below this CDDL HEADER, with the
+ * fields enclosed by brackets "[]" replaced with your own identifying
+ * information: Portions Copyright [yyyy] [name of copyright owner]
+ *
+ * CDDL HEADER END
+ */
+/*
+ * Copyright 2015 Saso Kiselkov. All rights reserved.
+ */
+
 #ifndef	_OPENFMC_AIRAC_H_
 #define	_OPENFMC_AIRAC_H_
 
@@ -12,7 +37,7 @@ extern "C" {
 #define	NAV_NAME_LEN		8
 #define	ICAO_NAME_LEN		4
 #define	ICAO_COUNTRY_CODE_LEN	2
-#define	RWY_ID_LEN		3
+#define	RWY_ID_LEN		4
 
 
 /* Airway structures */
@@ -155,11 +180,15 @@ typedef struct navproc_seg_s {
 	/* Segment leg */
 	union {
 		double		hdg;		/* VA, VD, VI, VM, VR */
-		double		crs;		/* CA, CD, CF, CI, CR */
-		struct {			/* FM */
+		double		crs;		/* CA, CD, CI, CR */
+		struct {			/* FC, FD, FM */
 			fix_t	fix;
 			double	crs;
-		} fix_trk;
+		} fix_crs;
+		struct {			/* CF */
+			char	navaid[NAV_NAME_LEN];
+			double	crs;
+		} navaid_crs;
 		struct {			/* AF */
 			char	navaid[NAV_NAME_LEN];
 			double	start_radial;
@@ -172,11 +201,6 @@ typedef struct navproc_seg_s {
 			bool_t	cw;	/* clockwise or counter-CW */
 		} radius_arc;
 		fix_t		fix;		/* FA, IF */
-		struct {			/* FC, FD */
-			fix_t	fix;
-			double	leg_crs;
-			double	leg_len;
-		} dist;
 		struct {			/* HA, HF, HM */
 			fix_t	fix;
 			double	inbd_crs;
@@ -202,10 +226,11 @@ typedef struct navproc_seg_s {
 			char	navaid[NAV_NAME_LEN];
 			double	radial;
 		} radial;
-		struct {			/* CD */
+		struct {			/* FD, CD */
 			char	navaid[NAV_NAME_LEN];
 			double	dist;
 		} dme;
+		double		dist;		/* FC */
 		char		navaid[NAV_NAME_LEN];	/* VI (optional) */
 	} term_cond;
 
@@ -264,6 +289,7 @@ typedef struct airport_s {
 	navproc_t	*procs;
 	unsigned	num_gates;
 	fix_t		*gates;
+	bool_t		true_hdg;
 } airport_t;
 
 airport_t *airport_open(const char *arpt_icao, const char *navdata_dir);

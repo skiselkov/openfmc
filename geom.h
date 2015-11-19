@@ -22,6 +22,7 @@
 /*
  * Copyright 2015 Saso Kiselkov. All rights reserved.
  */
+
 #ifndef	_OPENFMC_GEOM_H_
 #define	_OPENFMC_GEOM_H_
 
