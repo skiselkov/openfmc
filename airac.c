@@ -188,8 +188,8 @@ parse_airway_seg_line(const char *line, airway_seg_t *seg)
 	}
 	STRLCPY_CHECK_ERROUT(seg->endpt[0].name, comps[1]);
 	STRLCPY_CHECK_ERROUT(seg->endpt[1].name, comps[4]);
-	if (!geo_pos_2d_from_str(comps[2], comps[3], &seg->endpt[0].pos) ||
-	    !geo_pos_2d_from_str(comps[5], comps[6], &seg->endpt[1].pos)) {
+	if (!geo_pos2_from_str(comps[2], comps[3], &seg->endpt[0].pos) ||
+	    !geo_pos2_from_str(comps[5], comps[6], &seg->endpt[1].pos)) {
 		openfmc_log(OPENFMC_LOG_ERR, "Error parsing airway segment: "
 		    "segment fix positions invalid.");
 		goto errout;
@@ -425,7 +425,7 @@ parse_waypoint_line(const char *line, fix_t *wpt)
 		goto errout;
 	}
 	STRLCPY_CHECK_ERROUT(wpt->name, comps[0]);
-	if (!geo_pos_2d_from_str(comps[1], comps[2], &wpt->pos)) {
+	if (!geo_pos2_from_str(comps[1], comps[2], &wpt->pos)) {
 		openfmc_log(OPENFMC_LOG_ERR, "Error parsing waypoint: "
 		    "lat/lon position invalid.");
 		goto errout;
@@ -592,7 +592,7 @@ parse_navaid_line(const char *line, navaid_t *navaid)
 		    comps[2]);
 		goto errout;
 	}
-	if (!geo_pos_3d_from_str(comps[6], comps[7], comps[8], &navaid->pos)) {
+	if (!geo_pos3_from_str(comps[6], comps[7], comps[8], &navaid->pos)) {
 		openfmc_log(OPENFMC_LOG_ERR, "Error parsing navaid: "
 		    "lat/lon/elev position invalid.");
 		goto errout;
@@ -737,7 +737,7 @@ parse_arpt_line(const char *line, airport_t *arpt)
 	}
 
 	STRLCPY_CHECK_ERROUT(arpt->name, comps[2]);
-	if (!geo_pos_3d_from_str(comps[3], comps[4], comps[5], &arpt->refpt)) {
+	if (!geo_pos3_from_str(comps[3], comps[4], comps[5], &arpt->refpt)) {
 		openfmc_log(OPENFMC_LOG_ERR, "Error parsing initial airport "
 		    "line: reference point coordinates invalid.");
 		goto errout;
@@ -793,7 +793,7 @@ parse_rwy_line(const char *line, runway_t *rwy)
 	    (rwy->loc_avail != 0 && rwy->loc_avail != 1) ||
 	    (rwy->loc_avail && !is_valid_loc_freq(loc_freq)) ||
 	    (rwy->loc_avail && !is_valid_hdg(rwy->loc_fcrs)) ||
-	    !geo_pos_3d_from_str(comps[8], comps[9], comps[10],
+	    !geo_pos3_from_str(comps[8], comps[9], comps[10],
 	    &rwy->thr_pos) ||
 	    rwy->gp_angle < 0.0 || rwy->gp_angle > GP_MAX_ANGLE) {
 		openfmc_log(OPENFMC_LOG_ERR, "Error parsing runway line: "
@@ -987,7 +987,7 @@ parse_proc_seg_fix(char *comps[3], fix_t *fix)
 {
 	if (strlen(comps[0]) > sizeof (fix->name) - 1)
 		return (B_FALSE);
-	if (!geo_pos_2d_from_str(comps[1], comps[2], &fix->pos) ||
+	if (!geo_pos2_from_str(comps[1], comps[2], &fix->pos) ||
 	    !STRLCPY_CHECK(fix->name, comps[0]))
 		return (B_FALSE);
 	return (B_TRUE);
@@ -1216,7 +1216,7 @@ parse_DF_TF_seg(char **comps, size_t num_comps, navproc_seg_t *seg,
 		CHECK_NUM_COMPS(18, TF);
 	seg->type = is_DF ? NAVPROC_SEG_TYPE_DIR_TO_FIX :
 	    NAVPROC_SEG_TYPE_TRK_TO_FIX;
-	if (!geo_pos_2d_from_str(comps[2], comps[3], &seg->term_cond.fix.pos) ||
+	if (!geo_pos2_from_str(comps[2], comps[3], &seg->term_cond.fix.pos) ||
 	    !parse_alt_spd_term(&comps[is_DF ? 8 : 10], &seg->alt_lim,
 	    &seg->spd_lim) || !STRLCPY_CHECK(seg->term_cond.fix.name, comps[1]))
 		return (B_FALSE);
@@ -1239,7 +1239,7 @@ parse_FA_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
 {
 	CHECK_NUM_COMPS(17, FA);
 	seg->type = NAVPROC_SEG_TYPE_FIX_TO_ALT;
-	if (!geo_pos_2d_from_str(comps[2], comps[3], &seg->leg_cmd.fix.pos) ||
+	if (!geo_pos2_from_str(comps[2], comps[3], &seg->leg_cmd.fix.pos) ||
 	    !parse_alt_spd_term(&comps[9], &seg->term_cond.alt,
 	    &seg->spd_lim) ||
 	    /* altitude constraint is required for CA segs */
@@ -1272,7 +1272,7 @@ parse_FC_FD_seg(char **comps, size_t num_comps, navproc_seg_t *seg,
 		seg->type = NAVPROC_SEG_TYPE_FIX_TO_DME;
 	}
 	seg->term_cond.dme.dist = atof(comps[9]);
-	if (!geo_pos_2d_from_str(comps[2], comps[3], &seg->leg_cmd.fix.pos) ||
+	if (!geo_pos2_from_str(comps[2], comps[3], &seg->leg_cmd.fix.pos) ||
 	    !parse_alt_spd_term(&comps[10], &seg->alt_lim, &seg->spd_lim) ||
 	    !STRLCPY_CHECK(seg->leg_cmd.fix.name, comps[1]) ||
 	    !STRLCPY_CHECK(seg->term_cond.dme.navaid, comps[5]))
@@ -1299,7 +1299,7 @@ parse_FM_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
 	CHECK_NUM_COMPS(17, FM);
 	seg->type = NAVPROC_SEG_TYPE_FIX_TO_MANUAL;
 	seg->leg_cmd.fix_trk.crs = atof(comps[8]);
-	if (!geo_pos_2d_from_str(comps[2], comps[3],
+	if (!geo_pos2_from_str(comps[2], comps[3],
 	    &seg->leg_cmd.fix_trk.fix.pos) ||
 	    !parse_alt_spd_term(&comps[9], &seg->alt_lim, &seg->spd_lim) ||
 	    !STRLCPY_CHECK(seg->leg_cmd.fix_trk.fix.name, comps[1]))
@@ -1335,7 +1335,7 @@ parse_HA_HF_HM_seg(char **comps, size_t num_comps, navproc_seg_t *seg,
 	seg->leg_cmd.hold.turn_right = atoi(comps[4]);
 	seg->leg_cmd.hold.inbd_crs = atof(comps[8]);
 	seg->leg_cmd.hold.leg_len = atof(comps[9]);
-	if (!geo_pos_2d_from_str(comps[2], comps[3],
+	if (!geo_pos2_from_str(comps[2], comps[3],
 	    &seg->leg_cmd.hold.fix.pos) ||
 	    (seg->leg_cmd.hold.turn_right != 1 &&
 	    seg->leg_cmd.hold.turn_right != 2) ||
@@ -1385,7 +1385,7 @@ parse_IF_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
 {
 	CHECK_NUM_COMPS(15, IF);
 	seg->type = NAVPROC_SEG_TYPE_INIT_FIX;
-	if (!geo_pos_2d_from_str(comps[2], comps[3], &seg->leg_cmd.fix.pos) ||
+	if (!geo_pos2_from_str(comps[2], comps[3], &seg->leg_cmd.fix.pos) ||
 	    !parse_alt_spd_term(&comps[7], &seg->alt_lim, &seg->spd_lim) ||
 	    !STRLCPY_CHECK(seg->leg_cmd.fix.name, comps[1]))
 		return (B_FALSE);
@@ -1414,7 +1414,7 @@ parse_PI_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
 	seg->leg_cmd.proc_turn.max_excrs_dist = atof(comps[7]);
 	seg->leg_cmd.proc_turn.outbd_radial = atof(comps[8]);
 	seg->leg_cmd.proc_turn.max_excrs_time = atof(comps[9]);
-	if (!geo_pos_2d_from_str(comps[2], comps[3],
+	if (!geo_pos2_from_str(comps[2], comps[3],
 	    &seg->leg_cmd.proc_turn.startpt.pos) ||
 	    (turn_dir != 1 && turn_dir != 2) ||
 	    !is_valid_hdg(seg->leg_cmd.proc_turn.outbd_turn_hdg) ||
@@ -1982,12 +1982,12 @@ airport_find_rwy_by_ID(const airport_t *arpt, const char *rwy_ID)
 /*
  * Returns the position of a gate at an airport based on gate ID.
  */
-geo_pos_2d_t
+geo_pos2_t
 airport_find_gate_pos(const airport_t *arpt, const char *gate_ID)
 {
 	for (unsigned i = 0; i < arpt->num_gates; i++) {
 		if (strcmp(arpt->gates[i].name, gate_ID) == 0)
 			return arpt->gates[i].pos;
 	}
-	return (null_2d_pos);
+	return (NULL_GEO_POS2);
 }

@@ -20,7 +20,7 @@ extern "C" {
 typedef struct {
 	char		name[NAV_NAME_LEN];
 	char		icao_country_code[3];
-	geo_pos_2d_t	pos;
+	geo_pos2_t	pos;
 } fix_t;
 
 typedef struct {
@@ -70,7 +70,7 @@ typedef struct {
 	char		ID[NAV_NAME_LEN];
 	char		name[16];
 	char		icao_country_code[ICAO_COUNTRY_CODE_LEN + 1];
-	geo_pos_3d_t	pos;
+	geo_pos3_t	pos;
 	navaid_type_t	type;
 	unsigned	freq;		/* in Hz */
 } navaid_t;
@@ -247,14 +247,14 @@ typedef struct runway_s {
 	bool_t		loc_avail;
 	unsigned	loc_freq;	/* in Hz */
 	unsigned	loc_fcrs;
-	geo_pos_3d_t	thr_pos;
+	geo_pos3_t	thr_pos;
 	double		gp_angle;
 } runway_t;
 
 typedef struct airport_s {
 	char		name[32];
 	char		icao[ICAO_NAME_LEN + 1];
-	geo_pos_3d_t	refpt;
+	geo_pos3_t	refpt;
 	unsigned	TA;
 	unsigned	TL;
 	unsigned	longest_rwy;
@@ -272,7 +272,7 @@ char *airport_dump(const airport_t *arpt);
 
 const runway_t *airport_find_rwy_by_ID(const airport_t *arpt,
     const char *rwy_ID);
-geo_pos_2d_t airport_find_gate_pos(const airport_t *arpt, const char *gate_ID);
+geo_pos2_t airport_find_gate_pos(const airport_t *arpt, const char *gate_ID);
 
 #ifdef	__cplusplus
 }
