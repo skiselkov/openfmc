@@ -1,6 +1,6 @@
 all : openfmc
 
-OBJS=openfmc.o airac.o helpers.o geom.o log.o list.o htbl.o
+OBJS=openfmc.o airac.o helpers.o geom.o log.o list.o htbl.o route.o
 
 DEPS=$(patsubst %.o, %.d, $(OBJS))
 CFLAGS=$(shell pkg-config --cflags cairo) -W -Wall -Werror -O2 -g
