@@ -50,28 +50,42 @@ typedef struct {
 	double	z;
 } vect3_t;
 
-#define	RAD_TO_DEG_RATIO	0.01745329251994329576	/* 1 rad / 180 deg */
-#define	DEG_TO_RAD_RATIO	57.29577951308232087684	/* 180 deg / 1 rad */
-#define	DEG_TO_RAD(d)		(d * RAD_TO_DEG_RATIO)
-#define	RAD_TO_DEG(r)		(r * DEG_TO_RAD_RATIO)
+typedef struct {
+	double	x;
+	double	y;
+} vect2_t;
 
+#define	RAD_TO_DEG_RATIO	(M_PI / 180)		/* 1 rad / 180 deg */
+#define	DEG_TO_RAD_RATIO	(180 / M_PI)		/* 180 deg / 1 rad */
+#define	DEG_TO_RAD(d)		((d) * RAD_TO_DEG_RATIO)
+#define	RAD_TO_DEG(r)		((r) * DEG_TO_RAD_RATIO)
+
+#define	GEO_POS2(lat, lon)		((geo_pos2_t){(lat), (lon)})
+#define	GEO_POS3(lat, lon, elev)	((geo_pos3_t){(lat), (lon), (elev)})
+#define	VECT2(x, y)			((vect2_t){(x), (y)})
+#define	VECT3(x, y, z)			((vect3_t){(x), (y), (z)})
+
+#define	ZERO_VECT2		((vect2_t){0.0, 0.0})
 #define	ZERO_VECT3		((vect3_t){0.0, 0.0, 0.0})
-#define	NULL_VECT3		((vect3_t){FP_NAN, FP_NAN, FP_NAN})
-#define	NULL_GEO_POS3		((geo_pos3_t){FP_NAN, FP_NAN, FP_NAN})
-#define	NULL_GEO_POS2		((geo_pos2_t){FP_NAN, FP_NAN})
-#define	IS_NULL_VECT3(a)	((a).x == FP_NAN)
-#define	IS_NULL_GEO_POS3(a)	((a).lat == FP_NAN)
-#define	IS_NULL_GEO_POS2(a)	((a).lat == FP_NAN)
+#define	NULL_VECT2		((vect2_t){NAN, NAN})
+#define	NULL_VECT3		((vect3_t){NAN, NAN, NAN})
+#define	NULL_GEO_POS3		((geo_pos3_t){NAN, NAN, NAN})
+#define	NULL_GEO_POS2		((geo_pos2_t){NAN, NAN})
+#define	IS_NULL_VECT(a)		(isnan((a).x))
+#define	IS_NULL_GEO_POS(a)	(isnan((a).lat))
+#define	IS_ZERO_VECT2(a)	((a).x == 0.0 && (a).y == 0.0)
 #define	IS_ZERO_VECT3(a)	((a).x == 0.0 && (a).y == 0.0 && (a).z == 0.0)
 
-#define	VECT3_SCMUL(v, l)	\
-	((vect3_t){(v).x * (l), (v).y * (l), (v).z * (l)})
 #define	GEO2_TO_GEO3(v, a)	((geo_pos3_t){(v).lat, (v).lon, (a)})
 #define	GEO3_TO_GEO2(v)		((geo_pos2_t){(v).lat, (v).lon})
 
 #define	EARTH_MSL		6371000		/* meters */
+#ifndef	ABS
+#define	ABS(x)	((x) > 0 ? (x) : -(x))
+#endif
 
 double vect3_abs(vect3_t a);
+vect3_t vect3_set_abs(vect3_t a, double abs);
 vect3_t vect3_unit(vect3_t a, double *l);
 
 vect3_t vect3_add(vect3_t a, vect3_t b);
@@ -80,8 +94,8 @@ vect3_t vect3_scmul(vect3_t a, double b);
 double vect3_dotprod(vect3_t a, vect3_t b);
 vect3_t vect3_xprod(vect3_t a, vect3_t b);
 
-vect3_t geo2vect_coords(geo_pos3_t pos);
-geo_pos3_t vect2geo_coords(vect3_t v);
+vect3_t geo2vect(geo_pos3_t pos);
+geo_pos3_t vect2geo(vect3_t v);
 
 int vect_sphere_intersect(vect3_t v, vect3_t o, vect3_t c,
     double r, vect3_t i[2]);
@@ -91,7 +105,52 @@ bool_t geo_pos2_from_str(const char *lat, const char *lon, geo_pos2_t *pos);
 bool_t geo_pos3_from_str(const char *lat, const char *lon, const char *elev,
     geo_pos3_t *pos);
 
-/* vector functions */
+/*
+ * Spherical coordinate system translation.
+ */
+typedef struct {
+	double	d_lat;
+	double	d_lon;
+	double	sin_theta;
+	double	cos_theta;
+} geo_xlate_t;
+
+geo_xlate_t geo_xlate_init(geo_pos2_t displacement, double rotation);
+geo_pos2_t geo_xlate(geo_pos2_t pos, const geo_xlate_t *xlate);
+
+/*
+ * Great circle functions.
+ */
+double gc_distance(geo_pos2_t start, geo_pos2_t end);
+double gc_point_hdg(geo_pos2_t start, geo_pos2_t end, double arg);
+
+/*
+ * Generic flat-plane projections.
+ */
+typedef struct {
+	geo_xlate_t	xlate;
+	double		dist;
+} fpp_t;
+
+fpp_t fpp_init(geo_pos2_t center, double rot, double dist);
+fpp_t ortho_fpp_init(geo_pos2_t center, double rot);
+fpp_t gnomo_fpp_init(geo_pos2_t center, double rot);
+fpp_t stereo_fpp_init(geo_pos2_t center, double rot);
+vect2_t geo2fpp(geo_pos2_t pos, const fpp_t *fpp);
+
+/*
+ * Lambert conformal conic projection
+ */
+typedef struct {
+	double	reflat;
+	double	reflon;
+	double	n;
+	double	F;
+	double	rho0;
+} lcc_t;
+
+lcc_t lcc_init(double reflat, double reflon, double stdpar1, double stdpar2);
+vect2_t geo2lcc(geo_pos2_t pos, const lcc_t *lcc);
 
 #ifdef	__cplusplus
 }

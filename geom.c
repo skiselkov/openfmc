@@ -25,19 +25,25 @@
 
 #include <math.h>
 #include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
 
 #include "geom.h"
 #include "helpers.h"
 
-#if	0
+#if	1
 #include <stdio.h>
-#define	PRINT_VECT(v)		printf(#v "(%f, %f, %f)\n", v.x, v.y, v.z)
+#define	PRINT_VECT(v)	printf(#v "(%f, %f, %f)\n", v.x, v.y, v.z)
+#define	PRINT_GEO2(p)	printf(#p "(%f, %f)\n", p.lat, p.lon)
+#define	PRINT_GEO3(p)	printf(#p "(%f, %f, %f)\n", p.lat, p.lon, p.elev)
 #define	DEBUG_PRINT(...)	printf(__VA_ARGS__)
 #else
 #define	PRINT_VECT(v)
+#define	PRINT_GEO2(p)
+#define	PRINT_GEO3(p)
 #define	DEBUG_PRINT(...)
 #endif
-#define	POW2(x)	(x * x)
+#define	POW2(x)	((x) * (x))
 
 /*
  * Returns the absolute value (length) of a 3-space vector:
@@ -49,6 +55,16 @@ vect3_abs(vect3_t a)
 	return (sqrt(POW2(a.x) + POW2(a.y) + POW2(a.z)));
 }
 
+vect3_t
+vect3_set_abs(vect3_t a, double abs)
+{
+	double oldval = vect3_abs(a);
+	if (oldval != 0.0)
+		return (vect3_scmul(a, abs / oldval));
+	else
+		return (ZERO_VECT3);
+}
+
 /*
  * Returns a unit 3-space vector (vector with identical orientation but
  * a length of 1) for a given input vector. The length of the input vector
@@ -57,10 +73,13 @@ vect3_abs(vect3_t a)
 inline vect3_t
 vect3_unit(vect3_t a, double *l)
 {
-	*l = vect3_abs(a);
-	if (*l == 0)
+	double len;
+	len = vect3_abs(a);
+	if (len == 0)
 		return (NULL_VECT3);
-	return ((vect3_t){a.x / *l, a.y / *l, a.z / *l});
+	if (l)
+		*l = len;
+	return ((vect3_t){a.x / len, a.y / len, a.z / len});
 }
 
 /*
@@ -134,7 +153,7 @@ vect3_xprod(vect3_t a, vect3_t b)
  * - z: positive & passing through lat=90
  */
 vect3_t
-geo2vect_coords(geo_pos3_t pos)
+geo2vect(geo_pos3_t pos)
 {
 	vect3_t result;
 	double lat_rad, lon_rad, R, R0;
@@ -159,10 +178,10 @@ geo2vect_coords(geo_pos3_t pos)
 
 /*
  * Converts a 3-space coordinate vector into geographical coordinates on Earth.
- * For axis alignment, see geo2vect_coords().
+ * For axis alignment, see geo2vect().
  */
 geo_pos3_t
-vect2geo_coords(vect3_t v)
+vect2geo(vect3_t v)
 {
 	geo_pos3_t pos;
 	double lat_rad, lon_rad, R, R0;
@@ -346,4 +365,269 @@ geo_pos3_from_str(const char *lat, const char *lon, const char *elev,
 	pos->elev = atof(elev);
 	return (is_valid_lat(pos->lat) && is_valid_lon(pos->lon) &&
 	    is_valid_elev(pos->elev));
+}
+
+/* Cotangent */
+static inline double
+cot(double x)
+{
+	return (1.0 / tan(x));
+}
+
+/* Secant */
+static inline double
+sec(double x)
+{
+	return (1.0 / cos(x));
+}
+
+/*
+ * Prepares a set of geographical coordinate translation parameters.
+ *
+ * @param displacement The relative latitude & longitude (in degrees)
+ *	between the origins of the two respective coordinate systems.
+ *	For example, a displacement of +10 degrees of latitude (north)
+ *	and +20 degrees of longitude (east) will result in an input
+ *	coordinate of +5,+5 translating into -5,-15 in the target system
+ *	(assuming `rotation' below is zero).
+ * @param rotation The relative rotation of the axes of the target
+ *	coordinate system to the source coordinate system in degrees
+ *	counter-clockwise. For example, a rotation of +90 degrees and
+ *	no translation applied to an input coordinate of +5 degrees
+ *	of latitude (north) and +5 degrees of longitude (east) will
+ *	translate into -5,+5.
+ */
+geo_xlate_t
+geo_xlate_init(geo_pos2_t displacement, double rotation)
+{
+	geo_xlate_t	xlate;
+	double		theta = DEG_TO_RAD(rotation);
+
+	xlate.d_lat = displacement.lat;
+	xlate.d_lon = displacement.lon;
+	if (rotation != 0) {
+		xlate.sin_theta = sin(theta);
+		xlate.cos_theta = cos(theta);
+	} else {
+		xlate.sin_theta = 0.0;
+		xlate.cos_theta = 1.0;
+	}
+
+	return (xlate);
+}
+
+/*
+ * Translates a point at `pos' using the geo translation specified by `xlate'.
+ */
+geo_pos2_t
+geo_xlate(geo_pos2_t pos, const geo_xlate_t *xlate)
+{
+	double	lat0, lon0;
+
+	lat0 = pos.lat - xlate->d_lat;
+	lon0 = pos.lon - xlate->d_lon;
+
+	return (GEO_POS2(-lon0 * xlate->sin_theta + lat0 * xlate->cos_theta,
+	    lon0 * xlate->cos_theta + lat0 * xlate->sin_theta));
+}
+
+/*
+ * Returns the great circle distance between two geographical points on the
+ * Earth in meters.
+ */
+double
+gc_distance(geo_pos2_t start, geo_pos2_t end)
+{
+	/*
+	 * Convert both coordinates into 3D vectors and calculate the angle
+	 * between them. GC distance is proportional to that angle.
+	 */
+	vect3_t	start_v = geo2vect(GEO2_TO_GEO3(start, 0));
+	vect3_t	end_v = geo2vect(GEO2_TO_GEO3(end, 0));
+	vect3_t	s2e = vect3_sub(end_v, start_v);
+	double	s2e_abs = vect3_abs(s2e);
+	double	alpha = asin(s2e_abs / 2 / EARTH_MSL);
+	return	(2 * alpha * EARTH_MSL);
+}
+
+double
+gc_point_hdg(geo_pos2_t start, geo_pos2_t end, double arg)
+{
+	/* FIXME: THIS IS BROKEN !!! */
+	vect3_t	start_v, end_v, norm_v, an_v, incl_v;
+
+	start_v = geo2vect(GEO2_TO_GEO3(start, 0));
+	end_v = geo2vect(GEO2_TO_GEO3(end, 0));
+	norm_v = vect3_set_abs(vect3_xprod(end_v, start_v), EARTH_MSL);
+	an_v = vect3_set_abs(vect3_xprod(norm_v, VECT3(0, 0, 1)), EARTH_MSL);
+	incl_v = vect3_xprod(norm_v, an_v);
+	geo_pos3_t incl = vect2geo(incl_v);
+	double inclination = incl.lat;
+
+	vect3_t arg_v = {sin(DEG_TO_RAD(arg)) * EARTH_MSL,
+	    cos(DEG_TO_RAD(arg)) * EARTH_MSL, 0};
+	arg_v = VECT3(sin(DEG_TO_RAD(inclination)) * arg_v.x, arg_v.y,
+	    sin(DEG_TO_RAD(inclination)) * arg_v.z);
+	arg_v = vect3_unit(vect3_xprod(arg_v, norm_v), NULL);
+	double xy = sqrt(POW2(arg_v.x) + POW2(arg_v.y));
+
+	return (RAD_TO_DEG(acos(xy)));
+}
+
+/*
+ * Prepares a set of projection parameters for projections from a fixed
+ * origin along the projection axis onto a flat projection plane. The
+ * plane is centered at `center' and is rotated `rot' degrees relative to
+ * the sphere's native coordinate system. The projection plane touches the
+ * sphere at the center point and is parallel to its surface there. Points
+ * on the sphere are projected from a fixed origin along a projection axis
+ * that is perpendicular to the projection plane and passes through its
+ * center. The distance of this point along the projection axis from the
+ * projection plane is `dist' with positive offsets increasing away from
+ * the sphere's center.
+ *
+ *   projection.
+ *       center \ | <- projection axis (positive offsets)
+ *               v|
+ *  ==============+=============+======= <- projection plane
+ *         - '    |    ' -     / ^-- projected point
+ *       /        |        \ x <-- projecting point
+ *     /          |         /\
+ *    | sphere    |       /   |
+ *    | center -> +     /     |
+ *    |           |   /       |
+ *     \          | /        /
+ *       \        + <- projection origin
+ *         -      |      -
+ *           '----|----'
+ *                |
+ *                | <- projection axis (negative offsets)
+ *
+ * You can pass INFINITY for `dist', in which case the projection origin
+ * will be centered at +INFINITY, constructing an orthographic projection.
+ * N.B. ATM there is no way to position the projection point at -INFINITY.
+ * If you wish to construct an inverted orthographic projection, simply
+ * flip the `x' coordinate of the projected points. Also, it is illegal
+ * to pass dist == 0.0.
+ */
+fpp_t
+fpp_init(geo_pos2_t center, double rot, double dist)
+{
+	fpp_t fpp;
+
+	VERIFY(dist != 0);
+	fpp.xlate = geo_xlate_init(center, rot);
+	fpp.dist = dist;
+
+	return (fpp);
+}
+
+/*
+ * Constructs an orthographic projection. This is a flat plane projection with
+ * the projection origin at +INFINITY. See `fpp_init' for more information.
+ */
+fpp_t
+ortho_fpp_init(geo_pos2_t center, double rot)
+{
+	return (fpp_init(center, rot, INFINITY));
+}
+
+/*
+ * Constructs a gnomonic projection. This is a flat plane projection with
+ * the origin at the Earth's center. See `fpp_init' for more information.
+ */
+fpp_t
+gnomo_fpp_init(geo_pos2_t center, double rot)
+{
+	return (fpp_init(center, rot, -EARTH_MSL));
+}
+
+/*
+ * Constructs a stereographic projection. This is a projection with
+ * the origin at the intersection of the projection axis and the surface
+ * of the Earth opposite the projection plane's center point.
+ * See `fpp_init' for more information.
+ */
+fpp_t
+stereo_fpp_init(geo_pos2_t center, double rot)
+{
+	return (fpp_init(center, rot, -2 * EARTH_MSL));
+}
+
+/*
+ * Projects a point at `pos' according to the projection `proj' and returns
+ * a 2D vector to the projected point's location on the projection plane.
+ * If the specified point cannot be projected (because its projection falls
+ * outside of the projection plane), NULL_VECT2 is returned instead.
+ */
+vect2_t
+geo2fpp(geo_pos2_t pos, const fpp_t *fpp)
+{
+	vect3_t pos_v;
+	vect2_t res_v;
+
+	pos_v = geo2vect(GEO2_TO_GEO3(geo_xlate(pos, &fpp->xlate), 0));
+	if (isfinite(fpp->dist)) {
+		if (fpp->dist < 0.0 && EARTH_MSL - pos_v.y >= fpp->dist)
+			return (NULL_VECT2);
+		res_v.x = fpp->dist * (pos_v.x / (fpp->dist +
+		    EARTH_MSL - pos_v.y));
+		res_v.y = fpp->dist * (pos_v.z / (fpp->dist +
+		    EARTH_MSL - pos_v.y));
+	} else {
+		res_v = VECT2(pos_v.x, pos_v.z);
+	}
+
+	return (res_v);
+}
+
+/*
+ * Prepares a set of Lambert conformal conic projection parameters.
+ *
+ * @param reflat Reference latitude in degrees.
+ * @param reflon Reference longitude in degrees.
+ * @param stdpar1 First standard parallel in degrees.
+ * @param stdpar2 Second standard parallel in degrees.
+ *
+ * @return The set of lcc parameters to pass to geo2lcc.
+ */
+lcc_t
+lcc_init(double reflat, double reflon, double stdpar1, double stdpar2)
+{
+	double	phi0 = DEG_TO_RAD(reflat);
+	double	phi1 = DEG_TO_RAD(stdpar1);
+	double	phi2 = DEG_TO_RAD(stdpar2);
+	lcc_t	lcc;
+
+	lcc.reflat = DEG_TO_RAD(reflat);
+	lcc.reflon = DEG_TO_RAD(reflon);
+
+	if (stdpar1 == stdpar2)
+		lcc.n = sin(phi1);
+	else
+		lcc.n = log(cos(phi1) * sec(phi2)) / log(tan(M_PI / 4.0 +
+		    phi2 / 2.0) * cot(M_PI / 4.0 + phi1 / 2.0));
+	lcc.F = (cos(phi1) * pow(tan(M_PI / 4.0 * phi1 / 2.0), lcc.n)) /
+	    lcc.n;
+	lcc.rho0 = lcc.F * pow(cot(M_PI / 4.0 + phi0 / 2.0), lcc.n);
+
+	return (lcc);
+}
+
+/*
+ * Projects a point at `pos' using the projection `lcc'.
+ */
+vect2_t
+geo2lcc(geo_pos2_t pos, const lcc_t *lcc)
+{
+	vect2_t		result;
+	double		rho;
+	double		lat = DEG_TO_RAD(pos.lat);
+	double		lon = DEG_TO_RAD(pos.lon);
+
+	rho = lcc->F * pow(cot(M_PI / 4 + lat / 2), lcc->n);
+	result.x = rho * sin(lon - lcc->reflon);
+	result.y = lcc->rho0 - rho * cos(lcc->n * (lat - lcc->reflat));
+
+	return (result);
 }

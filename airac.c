@@ -75,10 +75,6 @@ static const char *navaid_type_name(navaid_type_t t)
 		return "VOR";
 	case NAVAID_TYPE_VORDME:
 		return "VORDME";
-	case NAVAID_TYPE_TVOR:
-		return "TVOR";
-	case NAVAID_TYPE_TVORDME:
-		return "TVORDME";
 	case NAVAID_TYPE_LOC:
 		return "LOC";
 	case NAVAID_TYPE_LOCDME:
@@ -92,11 +88,9 @@ static const char *navaid_type_name(navaid_type_t t)
 	case NAVAID_TYPE_ANY:
 		return "(any)";
 	case NAVAID_TYPE_ANY_VOR:
-		return "(VOR/VORDME/TVOR/TVORDME)";
+		return "(VOR/VORDME)";
 	case NAVAID_TYPE_ANY_LOC:
 		return "(LOC/LOCDME)";
-	case NAVAID_TYPE_ANY_VORDME:
-		return "(VORDME/TVORDME)";
 	default:
 		return "(non-standard combo)";
 	}
@@ -603,7 +597,7 @@ parse_navaid_line(const char *line, navaid_t *navaid)
 {
 	char	line_copy[128];
 	char	*comps[11];
-	int	app, dme;
+	int	dme;
 	double	freq;
 
 	STRLCPY_CHECK_ERROUT(line_copy, line);
@@ -616,18 +610,12 @@ parse_navaid_line(const char *line, navaid_t *navaid)
 	/* ok to truncate the name */
 	(void) strlcpy(navaid->name, comps[1], sizeof (navaid->name));
 	freq = atof(comps[2]);
-	app = atoi(comps[3]);
 	dme = atoi(comps[4]);
 	if (is_valid_ndb_freq(freq)) {
 		navaid->type = NAVAID_TYPE_NDB;
 		navaid->freq = freq * 1000;
 	} else if (is_valid_vor_freq(freq)) {
-		if (dme)
-			navaid->type = app ? NAVAID_TYPE_TVORDME :
-			    NAVAID_TYPE_VORDME;
-		else
-			navaid->type = app ? NAVAID_TYPE_TVOR :
-			    NAVAID_TYPE_VOR;
+		navaid->type = (dme ? NAVAID_TYPE_VORDME : NAVAID_TYPE_VOR);
 		navaid->freq = freq * 1000000;
 	} else if (is_valid_loc_freq(freq)) {
 		navaid->type = dme ? NAVAID_TYPE_LOCDME : NAVAID_TYPE_LOC;
@@ -1085,7 +1073,7 @@ find_nearest(const char *name, geo_pos3_t refpt, const waypoint_db_t *wptdb,
 	if (list == NULL)
 		return (result);
 
-	refpt_v = geo2vect_coords(refpt);
+	refpt_v = geo2vect(refpt);
 	for (void *v = list_head(list); v != NULL; v = list_next(list, v)) {
 		geo_pos3_t	pos;
 		double		dist;
@@ -1100,7 +1088,7 @@ find_nearest(const char *name, geo_pos3_t refpt, const waypoint_db_t *wptdb,
 				continue;
 			pos = navaid->pos;
 		}
-		dist = vect3_abs(vect3_sub(refpt_v, geo2vect_coords(pos)));
+		dist = vect3_abs(vect3_sub(refpt_v, geo2vect(pos)));
 		if (dist < min_dist) {
 			result = GEO3_TO_GEO2(pos);
 			min_dist = dist;
@@ -1116,7 +1104,7 @@ proc_navaid_lookup(const char *name, fix_t *fix, const airport_t *arpt,
 	geo_pos2_t	pos;
 
 	pos = find_nearest(name, arpt->refpt, wptdb, navdb, type);
-	if (IS_NULL_GEO_POS2(pos)) {
+	if (IS_NULL_GEO_POS(pos)) {
 		openfmc_log(OPENFMC_LOG_ERR, "Error looking up fix/navaid "
 		    "\"%s\" for arpt %s procedure: no fix/navaid of type "
 		    "%s found.", name, arpt->icao, navaid_type_name(type));

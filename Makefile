@@ -3,13 +3,14 @@ all : openfmc
 OBJS=openfmc.o airac.o helpers.o geom.o log.o list.o htbl.o route.o
 
 DEPS=$(patsubst %.o, %.d, $(OBJS))
-CFLAGS=$(shell pkg-config --cflags cairo) -W -Wall -Werror -O2 -g
+CFLAGS=$(shell pkg-config --cflags cairo) $(shell pkg-config --cflags libpng) \
+    -W -Wall -Werror -O2 -g
 ifeq ($(debug),no)
 	CFLAGS += -O3
 else
 	CFLAGS += -DDEBUG
 endif
-LDFLAGS=$(shell pkg-config --libs cairo)
+LDFLAGS=$(shell pkg-config --libs cairo) $(shell pkg-config --libs libpng)
 
 openfmc : $(OBJS)
 	$(LINK.c) -o $@ $(OBJS)

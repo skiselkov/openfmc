@@ -81,17 +81,13 @@ char *waypoint_db_dump(const waypoint_db_t *db);
 typedef enum {
 	NAVAID_TYPE_VOR		= 1 << 0,	/* VHF Omni Range (VOR) */
 	NAVAID_TYPE_VORDME	= 1 << 1,	/* VOR w/ DME */
-	NAVAID_TYPE_TVOR	= 1 << 2,	/* Terminal (short-range) VOR */
-	NAVAID_TYPE_TVORDME	= 1 << 3,	/* Terminal VOR w/ DME */
 	NAVAID_TYPE_LOC		= 1 << 4,	/* VHF Localizer (LOC) */
 	NAVAID_TYPE_LOCDME	= 1 << 5,	/* LOC w/ DME */
 	NAVAID_TYPE_NDB		= 1 << 6,	/* Non-Directional Beacon */
 	NAVAID_TYPE_TACAN	= 1 << 7,	/* Military TACAN 133-136 MHz */
 	NAVAID_TYPE_UNKNOWN	= 1 << 8,	/* Known position w/o type */
-	NAVAID_TYPE_ANY_VOR	= NAVAID_TYPE_VOR | NAVAID_TYPE_VORDME |
-	    NAVAID_TYPE_TVOR | NAVAID_TYPE_TVORDME,
+	NAVAID_TYPE_ANY_VOR	= NAVAID_TYPE_VOR | NAVAID_TYPE_VORDME,
 	NAVAID_TYPE_ANY_LOC	= NAVAID_TYPE_LOC | NAVAID_TYPE_LOCDME,
-	NAVAID_TYPE_ANY_VORDME	= NAVAID_TYPE_VORDME | NAVAID_TYPE_TVORDME,
 	NAVAID_TYPE_ANY		= ((NAVAID_TYPE_UNKNOWN << 1) - 1)
 } navaid_type_t;
 
