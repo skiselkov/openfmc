@@ -28,11 +28,81 @@
 #include <string.h>
 #include <unistd.h>
 #include <errno.h>
+#include <cairo.h>
 
 #include <png.h>
 
 #include "helpers.h"
 #include "airac.h"
+
+#define	IMGH		1200
+#define	IMGW		1200
+#define	FONTSZ		16
+#define	REFLON		0
+#define	CHANNELS	4
+#define	BPP		8
+#define	FORMAT		PNG_COLOR_TYPE_RGBA
+#define	SET_PIXEL(x, y, a, r, g, b) \
+	do { \
+		if ((x) >= 0 && (x) < IMGW && (y) >= 0 && (y) < IMGH) { \
+			rows[(y)][CHANNELS * (x) + (CHANNELS - 4)] = (a); \
+			rows[(y)][CHANNELS * (x) + (CHANNELS - 3)] = (r); \
+			rows[(y)][CHANNELS * (x) + (CHANNELS - 2)] = (g); \
+			rows[(y)][CHANNELS * (x) + (CHANNELS - 1)] = (b); \
+		} \
+	} while (0)
+
+static void
+prep_png_img(uint8_t *img, png_bytepp png_rows, size_t w, size_t h)
+{
+	for (size_t r = 0; r < h; r++) {
+		png_rows[r] = &img[(r * w) * CHANNELS];
+		for (size_t c = 0; c < w; c++) {
+			img[(r * w + c) * CHANNELS + 3] = 0xff;
+		}
+	}
+}
+
+static void
+xlate_png_byteorder(uint8_t *imgp, size_t w, size_t h)
+{
+	uint32_t *img = (uint32_t *)imgp;
+
+	for (size_t i = 0; i < w * h; i++) {
+		/* assumes little endian */
+		img[i] = (img[i] & 0xff000000u) |
+		    ((img[i] & 0x00ff0000) >> 16) |
+		    (img[i] & 0x0000ff00) |
+		    ((img[i] & 0x000000ff) << 16);
+	}
+}
+
+static void
+write_png_img(const char *filename, const png_bytepp rows, size_t w, size_t h)
+{
+	png_structp	png_ptr;
+	png_infop	info_ptr;
+	FILE *fp = fopen(filename, "wb");
+
+	VERIFY(fp != NULL);
+	png_ptr = png_create_write_struct(PNG_LIBPNG_VER_STRING,
+	    NULL, NULL, NULL);
+	VERIFY(png_ptr != NULL);
+	info_ptr = png_create_info_struct(png_ptr);
+	VERIFY(info_ptr != NULL);
+
+	VERIFY(setjmp(png_jmpbuf(png_ptr)) == 0);
+	png_init_io(png_ptr, fp);
+	png_set_IHDR(png_ptr, info_ptr, w, h, BPP, PNG_COLOR_TYPE_RGBA,
+	    PNG_INTERLACE_NONE, PNG_COMPRESSION_TYPE_DEFAULT,
+	    PNG_FILTER_TYPE_DEFAULT);
+	png_write_info(png_ptr, info_ptr);
+	png_write_image(png_ptr, rows);
+	png_write_end(png_ptr, NULL);
+	fclose(fp);
+	png_free_data(png_ptr, info_ptr, PNG_FREE_ALL, -1);
+	png_destroy_write_struct(&png_ptr, (png_infopp)NULL);
+}
 
 void
 test_arpts(const char *navdata_dir, const char *dump,
@@ -75,7 +145,6 @@ test_arpts(const char *navdata_dir, const char *dump,
 
 		arpt = airport_open(comps[1], navdata_dir, wptdb, navdb);
 		if (arpt)
-		//	exit(EXIT_FAILURE);
 			airport_close(arpt);
 	}
 	free(arpt_fname);
@@ -123,34 +192,124 @@ test_airac(const char *navdata_dir, const char *dump)
 	navaid_db_close(navdb);
 }
 
+vect2_t
+test_fpp_xy(double lat, double lon, const fpp_t *fpp, double scale)
+{
+	vect2_t pos = geo2fpp(GEO_POS2(lat, lon), fpp);
+	pos.x = pos.x * ((IMGW - 1) / (2.0 * scale)) + IMGW / 2;
+	pos.y = IMGH - (pos.y * ((IMGH - 1) / (2.0 * scale)) + IMGH / 2);
+	return (pos);
+}
+
+void
+test_fpp(void)
+{
+	fpp_t			fpp;
+	png_bytep		rows[IMGH];
+	uint8_t			*img;
+	cairo_surface_t		*surface;
+	cairo_t			*cr;
+	char			text[64];
+	cairo_text_extents_t	ext;
+
+#define	LAT0	0
+#define	LAT1	90
+#define	LATi	5
+#define	LON0	-90
+#define	LON1	90
+#define	LONi	5
+#define	SCALE	1
+
+#define	PROJLAT	45
+#define	PROJLON	45
+#define	PROJROT	45
+
+	fpp = ortho_fpp_init(GEO_POS2(PROJLAT, PROJLON), PROJROT);
+
+	surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, IMGW, IMGH);
+	cr = cairo_create(surface);
+	img = cairo_image_surface_get_data(surface);
+
+	prep_png_img(img, rows, IMGW, IMGH);
+
+	cairo_set_antialias(cr, CAIRO_ANTIALIAS_DEFAULT);
+	cairo_set_source_rgb(cr, 1, 1, 1);
+	cairo_set_line_width(cr, 2);
+	for (int lat = LAT0; lat < LAT1; lat += LATi) {
+		vect2_t p = test_fpp_xy(lat, LON0, &fpp, SCALE * EARTH_MSL);
+		if (IS_NULL_VECT(p))
+			continue;
+		cairo_move_to(cr, p.x, p.y);
+		for (int lon = LON0 + LONi; lon <= LON1; lon += LONi) {
+			p = test_fpp_xy(lat, lon, &fpp, SCALE * EARTH_MSL);
+			if (IS_NULL_VECT(p))
+				continue;
+			cairo_line_to(cr, p.x, p.y);
+		}
+		cairo_stroke(cr);
+	}
+	for (int lon = LON0; lon <= LON1; lon += LONi) {
+		vect2_t p = test_fpp_xy(LAT1, lon, &fpp, SCALE * EARTH_MSL);
+		if (IS_NULL_VECT(p))
+			continue;
+		cairo_move_to(cr, p.x, p.y);
+		for (int lat = LAT1 - LATi; lat >= LAT0; lat -= LATi) {
+			p = test_fpp_xy(lat, lon, &fpp, SCALE * EARTH_MSL);
+			if (IS_NULL_VECT(p))
+				continue;
+			cairo_line_to(cr, p.x, p.y);
+		}
+		cairo_stroke(cr);
+	}
+
+	snprintf(text, sizeof (text), "lat: %d lon: %d rot: %d",
+	    PROJLAT, PROJLON, PROJROT);
+	cairo_set_font_size(cr, FONTSZ);
+
+	cairo_set_source_rgb(cr, 0, 0, 0);
+	cairo_move_to(cr, IMGW / 2 + FONTSZ / 2, IMGH / 2 - FONTSZ / 2);
+	cairo_text_extents(cr, text, &ext);
+	cairo_line_to(cr, IMGW / 2 + 1.5 * FONTSZ + ext.width,
+	    IMGH / 2 - FONTSZ / 2);
+	cairo_line_to(cr, IMGW / 2 + 1.5 * FONTSZ + ext.width,
+	    IMGH / 2 - 1.5 * FONTSZ - ext.height);
+	cairo_line_to(cr, IMGW / 2 + FONTSZ / 2,
+	    IMGH / 2 - 1.5 * FONTSZ - ext.height);
+	cairo_close_path(cr);
+	cairo_fill(cr);
+
+	cairo_set_source_rgb(cr, 1, 0, 0);
+	cairo_move_to(cr, IMGW / 2 + FONTSZ, IMGH / 2 - FONTSZ);
+	cairo_show_text(cr, text);
+
+	cairo_set_antialias(cr, CAIRO_ANTIALIAS_NONE);
+	cairo_set_source_rgb(cr, 1, 0, 0);
+	cairo_set_line_width(cr, 1);
+	cairo_move_to(cr, 0, IMGH / 2);
+	cairo_line_to(cr, IMGW, IMGH / 2);
+	cairo_stroke(cr);
+	cairo_move_to(cr, IMGW / 2, 0);
+	cairo_line_to(cr, IMGW / 2, IMGH);
+	cairo_stroke(cr);
+
+	xlate_png_byteorder(img, IMGW, IMGH);
+	write_png_img("test.png", rows, IMGW, IMGH);
+
+	cairo_destroy(cr);
+}
+
 void
 test_lcc(double reflat, double stdpar1, double stdpar2)
 {
-#define	IMGH		1200
-#define	IMGW		1200
-#define	REFLON		0
-#define	BPP		3
-#define	FILL_POLY(x, y, r, g, b) \
-	do { \
-		if (x < 0 || x >= IMGW || y < 0 || y >= IMGH) \
-			continue; \
-		rows[(y)][BPP * (x)] = r; \
-		rows[(y)][BPP * (x) + 1] = g; \
-		rows[(y)][BPP * (x) + 2] = b; \
-	} while (0)
-
-	FILE		*fp;
-	png_structp	png_ptr;
-	png_infop	info_ptr;
+	uint8_t		*img;
 	png_bytep	rows[IMGH];
 	double		scale_factor, offset;
 
 	lcc_t	lcc = lcc_init(reflat, REFLON, stdpar1, stdpar2);
 	vect2_t	tip;
 
-	for (int i = 0; i < IMGH; i++) {
-		rows[i] = calloc(sizeof (png_byte) * IMGW * 3, 1);
-	}
+	img = calloc(IMGW * IMGH * CHANNELS, 1);
+	prep_png_img(img, rows, IMGW, IMGH);
 
 	{
 		geo_pos2_t	min_lat = {-40, 0};
@@ -191,14 +350,14 @@ test_lcc(double reflat, double stdpar1, double stdpar2)
 			if (lat == reflat || lat + 1 == reflat) {
 				for (int i = -1; i <= 1; i++) {
 					for (int j = -1; j <= 1; j++) {
-						FILL_POLY(x + i, y + j, 255,
-						    0, 0);
+						SET_PIXEL(x + i, y + j, 255,
+						    255, 0, 0);
 					}
 				}
 			} else if (lat == stdpar1 || lat == stdpar2) {
-				FILL_POLY(x, y, 0, 255, 0);
+				SET_PIXEL(x, y, 255, 0, 255, 0);
 			} else {
-				FILL_POLY(x, y, 255, 255, 255);
+				SET_PIXEL(x, y, 255, 255, 255, 255);
 			}
 		}
 		if (lat < 88.0)
@@ -209,28 +368,10 @@ test_lcc(double reflat, double stdpar1, double stdpar2)
 			lat += 0.1;
 	}
 
-	fp = fopen("test.png", "wb");
-	VERIFY(fp != NULL);
-	png_ptr = png_create_write_struct(PNG_LIBPNG_VER_STRING,
-	    NULL, NULL, NULL);
-	VERIFY(png_ptr != NULL);
-	info_ptr = png_create_info_struct(png_ptr);
-	VERIFY(info_ptr != NULL);
+	xlate_png_byteorder(img, IMGW, IMGH);
+	write_png_img("test.png", rows, IMGW, IMGH);
 
-	VERIFY(setjmp(png_jmpbuf(png_ptr)) == 0);
-	png_init_io(png_ptr, fp);
-	png_set_IHDR(png_ptr, info_ptr, IMGW, IMGH, 8, PNG_COLOR_TYPE_RGB,
-	    PNG_INTERLACE_NONE, PNG_COMPRESSION_TYPE_DEFAULT,
-	    PNG_FILTER_TYPE_DEFAULT);
-	png_write_info(png_ptr, info_ptr);
-	png_write_image(png_ptr, rows);
-	png_write_end(png_ptr, NULL);
-	fclose(fp);
-	png_free_data(png_ptr, info_ptr, PNG_FREE_ALL, -1);
-	png_destroy_write_struct(&png_ptr, (png_infopp)NULL);
-
-	for (int i = 0; i < IMGH; i++)
-		free(rows[i]);
+	free(img);
 }
 
 void
@@ -238,6 +379,14 @@ test_gc(void)
 {
 	printf("hdg: %lf\n", gc_point_hdg(GEO_POS2(0, 0), GEO_POS2(45, 90),
 	    80));
+}
+
+void
+test_geo_xlate(void)
+{
+	geo_xlate_t	xlate = geo_xlate_init(GEO_POS2(0, 90), 0);
+	geo_pos2_t	pos = geo_xlate(GEO_POS2(0, 0), &xlate);
+	printf("pos.lat: %lf  pos.lon: %lf\n", pos.lat, pos.lon);
 }
 
 int
@@ -269,8 +418,10 @@ main(int argc, char **argv)
 	}
 
 	test_airac(argv[optind], dump);
+	test_lcc(40, 30, 50);
 */
-	test_gc();
+	test_fpp();
+	test_geo_xlate();
 
 	return (0);
 }

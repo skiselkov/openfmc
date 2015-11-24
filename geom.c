@@ -33,17 +33,54 @@
 
 #if	1
 #include <stdio.h>
-#define	PRINT_VECT(v)	printf(#v "(%f, %f, %f)\n", v.x, v.y, v.z)
+#define	PRINT_VECT2(v)	printf(#v "(%f, %f)\n", v.x, v.y)
+#define	PRINT_VECT3(v)	printf(#v "(%f, %f, %f)\n", v.x, v.y, v.z)
 #define	PRINT_GEO2(p)	printf(#p "(%f, %f)\n", p.lat, p.lon)
 #define	PRINT_GEO3(p)	printf(#p "(%f, %f, %f)\n", p.lat, p.lon, p.elev)
 #define	DEBUG_PRINT(...)	printf(__VA_ARGS__)
 #else
-#define	PRINT_VECT(v)
+#define	PRINT_VECT2(v)
+#define	PRINT_VECT3(v)
 #define	PRINT_GEO2(p)
 #define	PRINT_GEO3(p)
 #define	DEBUG_PRINT(...)
 #endif
+
 #define	POW2(x)	((x) * (x))
+
+/*
+ * Naive implementation of matrix multiplication. We don't use this very
+ * heavily and can thus afford to rely on compiler auto-vectorization to
+ * get this optimized.
+ * Multiplies `x' and `y' and places result in 'z'. `xrows', `ycols' and `sz'
+ * have meanings as explained below:
+ *                sz                     ycols               ycols
+ *            |<------->|             |<------->|         |<------->|
+ *            |         |             |         |         |         |
+ *
+ *       --- ++=       =++         .-++=       =++       ++=       =++ --
+ * xrows ^   || x00 x01 || \/     /  || y00 y01 ||  ---  || z00 z01 ||  ^ xrows
+ *       v   || x10 x11 || /\    /   || y10 y11 ||  ---  || z10 z11 ||  v
+ *       --- ++=       =++      /  .-++=       =++       ++=       =++ --
+ *                           --'  /
+ *                        sz ^   /
+ *                           v  /
+ *                           --'
+ */
+static void
+matrix_mul(const double *x, const double *y, double *z,
+    size_t xrows, size_t ycols, size_t sz)
+{
+	memset(z, 0, sz * ycols * sizeof (double));
+	for (size_t row = 0; row < xrows; row++) {
+		for (size_t col = 0; col < ycols; col++) {
+			for (size_t i = 0; i < sz; i++) {
+				z[row * ycols + col] += x[row * sz + i] *
+				    y[i * ycols + col];
+			}
+		}
+	}
+}
 
 /*
  * Returns the absolute value (length) of a 3-space vector:
@@ -55,6 +92,10 @@ vect3_abs(vect3_t a)
 	return (sqrt(POW2(a.x) + POW2(a.y) + POW2(a.z)));
 }
 
+/*
+ * Sets the absolute value (length) of a vector without changing
+ * its orientation.
+ */
 vect3_t
 vect3_set_abs(vect3_t a, double abs)
 {
@@ -241,8 +282,8 @@ vect_sphere_intersect(vect3_t v, vect3_t o, vect3_t c,
 	o_min_c = vect3_sub(o, c);
 	l_dot_o_min_c = vect3_dotprod(l, o_min_c);
 
-	PRINT_VECT(l);
-	PRINT_VECT(o_min_c);
+	PRINT_VECT3(l);
+	PRINT_VECT3(o_min_c);
 	DEBUG_PRINT("l_dot_o_min_c = %f\n", l_dot_o_min_c);
 
 	/*
@@ -400,20 +441,74 @@ sec(double x)
 geo_xlate_t
 geo_xlate_init(geo_pos2_t displacement, double rotation)
 {
+	// lat - x axis - alpha
+	// lon - z axis - bravo
+	// rotation - norm to xz axis - theta
+	UNUSED(rotation);
 	geo_xlate_t	xlate;
+	double		alpha = DEG_TO_RAD(-displacement.lat);
+	double		bravo = DEG_TO_RAD(displacement.lon);
 	double		theta = DEG_TO_RAD(rotation);
 
-	xlate.d_lat = displacement.lat;
-	xlate.d_lon = displacement.lon;
-	if (rotation != 0) {
-		xlate.sin_theta = sin(theta);
-		xlate.cos_theta = cos(theta);
-	} else {
-		xlate.sin_theta = 0.0;
-		xlate.cos_theta = 1.0;
-	}
+#define	M(m, r, c)	((m)[(r) * 3 + (c)])
+	double		R_a[3 * 3], R_b[3 * 3];
+	double		sin_alpha = sin(alpha), cos_alpha = cos(alpha);
+	double		sin_bravo = sin(bravo), cos_bravo = cos(bravo);
+	double		sin_theta = sin(theta), cos_theta = cos(theta);
+
+	/*
+	 * +-                  -+
+	 * | 1    0        0    |
+	 * | 0  cos(a)  -sin(a) |
+	 * | 0  sin(a)   cos(a) |
+	 * +-                  -+
+	 */
+	memset(R_a, 0, sizeof (R_a));
+	M(R_a, 0, 0) = 1;
+	M(R_a, 1, 1) = cos_alpha;
+	M(R_a, 1, 2) = -sin_alpha;
+	M(R_a, 2, 1) = sin_alpha;
+	M(R_a, 2, 2) = cos_alpha;
+
+	/*
+	 * +-                  -+
+	 * | cos(g)  -sin(g)  0 |
+	 * | sin(g)   cos(g)  0 |
+	 * |   0        0     1 |
+	 * +-                  -+
+	 */
+	memset(R_b, 0, sizeof (R_b));
+	M(R_b, 0, 0) = cos_bravo;
+	M(R_b, 0, 1) = -sin_bravo;
+	M(R_b, 1, 0) = sin_bravo;
+	M(R_b, 1, 1) = cos_bravo;
+	M(R_b, 2, 2) = 1;
+
+	matrix_mul(R_a, R_b, xlate.geo_matrix, 3, 3, 3);
+
+	xlate.rot_matrix[0] = cos_theta;
+	xlate.rot_matrix[1] = -sin_theta;
+	xlate.rot_matrix[2] = sin_theta;
+	xlate.rot_matrix[3] = cos_theta;
 
 	return (xlate);
+}
+
+/*
+ * Translates a point at `pos' using the geo translation specified by `xlate'.
+ */
+static vect3_t
+geo_xlate_impl(geo_pos2_t pos, const geo_xlate_t *xlate)
+{
+	vect3_t	p, q;
+	vect2_t	r, s;
+	p = geo2vect(GEO_POS3(pos.lat, pos.lon, 0));
+	matrix_mul(xlate->geo_matrix, (double *)&p, (double *)&q, 3, 1, 3);
+	r = VECT2(q.x, q.z);
+	matrix_mul(xlate->rot_matrix, (double *)&r, (double *)&s, 2, 1, 2);
+	q.x = s.x;
+	q.z = s.y;
+	return (q);
 }
 
 /*
@@ -422,13 +517,9 @@ geo_xlate_init(geo_pos2_t displacement, double rotation)
 geo_pos2_t
 geo_xlate(geo_pos2_t pos, const geo_xlate_t *xlate)
 {
-	double	lat0, lon0;
-
-	lat0 = pos.lat - xlate->d_lat;
-	lon0 = pos.lon - xlate->d_lon;
-
-	return (GEO_POS2(-lon0 * xlate->sin_theta + lat0 * xlate->cos_theta,
-	    lon0 * xlate->cos_theta + lat0 * xlate->sin_theta));
+	vect3_t		r = geo_xlate_impl(pos, xlate);
+	geo_pos3_t	res = vect2geo(r);
+	return (GEO_POS2(res.lat, res.lon));
 }
 
 /*
@@ -566,9 +657,9 @@ geo2fpp(geo_pos2_t pos, const fpp_t *fpp)
 	vect3_t pos_v;
 	vect2_t res_v;
 
-	pos_v = geo2vect(GEO2_TO_GEO3(geo_xlate(pos, &fpp->xlate), 0));
+	pos_v = geo_xlate_impl(pos, &fpp->xlate);
 	if (isfinite(fpp->dist)) {
-		if (fpp->dist < 0.0 && EARTH_MSL - pos_v.y >= fpp->dist)
+		if (fpp->dist < 0.0 && pos_v.y <= fpp->dist + EARTH_MSL)
 			return (NULL_VECT2);
 		res_v.x = fpp->dist * (pos_v.x / (fpp->dist +
 		    EARTH_MSL - pos_v.y));

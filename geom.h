@@ -109,10 +109,8 @@ bool_t geo_pos3_from_str(const char *lat, const char *lon, const char *elev,
  * Spherical coordinate system translation.
  */
 typedef struct {
-	double	d_lat;
-	double	d_lon;
-	double	sin_theta;
-	double	cos_theta;
+	double	geo_matrix[3 * 3];
+	double	rot_matrix[2 * 2];
 } geo_xlate_t;
 
 geo_xlate_t geo_xlate_init(geo_pos2_t displacement, double rotation);
