@@ -39,6 +39,8 @@ extern "C" {
 #define	ICAO_COUNTRY_CODE_LEN	2
 #define	RWY_ID_LEN		4
 
+/* Forward declarations */
+typedef struct airport_s airport_t;
 
 /* Airway structures */
 
@@ -174,7 +176,7 @@ typedef struct {
 	unsigned	spd1;
 } spd_lim_t;
 
-typedef struct navproc_seg_s {
+typedef struct {
 	navproc_seg_type_t	type;
 
 	/* Segment leg */
@@ -258,6 +260,7 @@ typedef struct navproc_s {
 	char		name[NAV_NAME_LEN];
 	char		rwy_ID[RWY_ID_LEN + 1];
 	char		fix_name[NAV_NAME_LEN];
+	airport_t	*arpt;		/* backref to parent airport_t */
 	unsigned	num_segs;
 	navproc_seg_t	*segs;
 	/* number of main procedure segments, remainder is for go-around */
@@ -270,6 +273,7 @@ typedef struct navproc_s {
 
 typedef struct runway_s {
 	char		ID[RWY_ID_LEN + 1];
+	airport_t	*arpt;		/* backref to parent airport_t */
 	unsigned	hdg;
 	unsigned	length;
 	unsigned	width;
@@ -280,7 +284,7 @@ typedef struct runway_s {
 	double		gp_angle;
 } runway_t;
 
-typedef struct airport_s {
+struct airport_s {
 	char		name[32];
 	char		icao[ICAO_NAME_LEN + 1];
 	geo_pos3_t	refpt;
@@ -294,7 +298,7 @@ typedef struct airport_s {
 	unsigned	num_gates;
 	fix_t		*gates;
 	bool_t		true_hdg;
-} airport_t;
+};
 
 airport_t *airport_open(const char *arpt_icao, const char *navdata_dir,
     const waypoint_db_t *wptdb, const navaid_db_t *navdb);

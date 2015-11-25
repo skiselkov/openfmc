@@ -798,7 +798,7 @@ errout:
 }
 
 static bool_t
-parse_rwy_line(const char *line, runway_t *rwy, const airport_t *arpt)
+parse_rwy_line(const char *line, runway_t *rwy, airport_t *arpt)
 {
 	char	line_copy[128];
 	char	*comps[15];
@@ -832,6 +832,7 @@ parse_rwy_line(const char *line, runway_t *rwy, const airport_t *arpt)
 	rwy->loc_freq = loc_freq * 1000000;
 	rwy->loc_fcrs = atoi(comps[7]);
 	rwy->gp_angle = atof(comps[11]);
+	rwy->arpt = arpt;
 	if (!is_valid_hdg(rwy->hdg) ||
 	    rwy->length == 0 || rwy->length > MAX_RWY_LEN ||
 	    (rwy->loc_avail != 0 && rwy->loc_avail != 1) ||
@@ -1870,7 +1871,7 @@ errout:
 }
 
 static int
-parse_proc(FILE *fp, navproc_t *proc, const airport_t *arpt,
+parse_proc(FILE *fp, navproc_t *proc, airport_t *arpt,
     const waypoint_db_t *wptdb, const navaid_db_t *navdb)
 {
 	size_t		line_cap = 0;
@@ -1937,6 +1938,8 @@ parse_proc(FILE *fp, navproc_t *proc, const airport_t *arpt,
 		    navproc_type_to_str[proc->type], proc->name);
 		goto errout;
 	}
+
+	proc->arpt = arpt;
 
 	free(line);
 
