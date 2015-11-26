@@ -33,9 +33,11 @@
 #include "err.h"
 
 typedef enum {
-	ROUTE_LEG_GROUP_AIRWAY,
-	ROUTE_LEG_GROUP_DIRECT,
-	ROUTE_LEG_GROUP_PROC
+	ROUTE_LEG_GROUP_TYPE_AIRWAY,
+	ROUTE_LEG_GROUP_TYPE_DIRECT,
+	ROUTE_LEG_GROUP_TYPE_PROC,
+	ROUTE_LEG_GROUP_TYPE_DISCO,
+	ROUTE_LEG_GROUP_TYPES
 } route_leg_group_type_t;
 
 /*
@@ -46,9 +48,10 @@ typedef enum {
 typedef struct {
 	route_leg_group_type_t	type;
 	union {
-		airway_t	*awy;
-		navproc_t	*proc;
+		const airway_t	*awy;
+		const navproc_t	*proc;
 	};
+	fix_t			start_fix;
 	fix_t			end_fix;
 	list_t			legs;
 
@@ -57,9 +60,11 @@ typedef struct {
 
 typedef struct {
 	bool_t		disco;
-	navproc_seg_t		seg;
+	navproc_seg_t	seg;
 	alt_lim_t		alt_lim;
 	spd_lim_t		spd_lim;
+
+	route_leg_group_t	*leg_group;
 
 	list_node_t		leg_group_legs_node;
 	list_node_t		route_legs_node;
@@ -127,7 +132,6 @@ typedef struct {
 	 *	3) star: Specific STAR.
 	 *	4) apprtr: Approach transition from STAR to approach proc.
 	 *	5) appr: Approach procedure to specific runway.
-	 *	6) arr_rwy: Target arrival runway.
 	 * Arrival procedures can be selected from either the `arr', `altn1'
 	 * or `altn2' airports.
 	 */
@@ -136,22 +140,71 @@ typedef struct {
 	navproc_t		*star;
 	navproc_t		*apprtr;
 	navproc_t		*appr;
-	runway_t		*arr_rwy;
 
 	list_t			leg_groups;
 	list_t			legs;
 
-	bool_t			dirty;
+	bool_t			segs_dirty;
 	list_t			segs;
 	route_seg_t		*active_seg;
 } route_t;
 
+/* Constructor/destructor */
 route_t *route_create(const fms_navdb_t *navdb);
 void route_destroy(route_t *route);
 
+/*
+ * Updating
+ */
+bool_t route_update(route_t *route);
+bool_t route_update_needed(const route_t *route);
+
+/*
+ * Airport handling
+ */
 err_t route_set_dep_arpt(route_t *route, const char *icao);
 err_t route_set_arr_arpt(route_t *route, const char *icao);
 err_t route_set_altn1_arpt(route_t *route, const char *icao);
 err_t route_set_altn2_arpt(route_t *route, const char *icao);
+const airport_t *route_get_dep_arpt(route_t *route);
+const airport_t *route_get_arr_arpt(route_t *route);
+const airport_t *route_get_altn1_arpt(route_t *route);
+const airport_t *route_get_altn2_arpt(route_t *route);
+
+/*
+ * Procedures
+ */
+void route_set_dep_rwy(route_t *route, const char *rwy_ID);
+void route_set_sid(route_t *route, const char *sid_name);
+void route_set_sidtr(route_t *route, const char *sidtr_name);
+
+void route_set_star(route_t *route, const char *star_name);
+void route_set_startr(route_t *route, const char *startr_name);
+void route_set_appr(route_t *route, const char *appr_name);
+void route_set_apprtr(route_t *route, const char *apprtr_name);
+
+/*
+ * Reading route legs & leg groups.
+ */
+const list_t *route_leg_groups(const route_t *route);
+const list_t *route_legs(const route_t *route);
+
+/*
+ * Editing route leg groups.
+ */
+const route_leg_group_t *route_lg_awy_insert(route_t *route,
+    const char *awyname, const route_leg_group_t *prev_rlg);
+err_t route_lg_awy_set_end_fix(route_t *route, const route_leg_group_t *rlg,
+    const char *fixname);
+const route_leg_group_t *route_lg_direct_insert(route_t *route,
+    const fix_t *fix, const route_leg_group_t *prev_rlg);
+err_t route_lg_delete(route_t *route, const route_leg_group_t *rlg);
+
+/*
+ * Editing legs directly.
+ */
+const route_leg_t *route_l_insert(route_t *route, const fix_t *fix,
+    const route_leg_t *rl);
+void route_l_delete(route_t *route, const route_leg_t *rl);
 
 #endif	/* _OPENFMC_ROUTE_H_ */

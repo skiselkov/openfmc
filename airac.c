@@ -61,6 +61,12 @@
 		} \
 	} while (0)
 
+const fix_t null_fix = {
+	.name = "\000\000\000\000\000\000\000",
+	.icao_country_code = "\000\000",
+	.pos = NULL_GEO_POS2
+};
+
 typedef struct {
 	char	**result;
 	size_t	*result_sz;
@@ -455,6 +461,159 @@ airway_db_dump(const airway_db_t *db, bool_t by_awy_name)
 		append_format(&result, &result_sz, "\n");
 	}
 	return (result);
+}
+
+/*
+ * Performs an airway DB lookup based on 3 lookup and returns an airway
+ * matching:
+ *	1) awyname: Airway name. This argument is mandatory. If the airway
+ *	   doesn't exist, returns NULL.
+ *	2) start_fix_name: Starting section fix name. This is optional.
+ *	   In addition to the airway name matching, this will also check
+ *	   that the airway contains a fix with this name as the starting
+ *	   fix in one of its segments.
+ *	3) end_fix_name: Ending section fix name. This is optional. If
+ *	   not NULL, you must also have provided a start_fix_name. In
+ *	   addition to conditions #1 and #2, also checks that the section
+ *	   start fix is followed by the appropriate airway segment end fix.
+ * Using all three arguments you can choose the direction of bidirectional
+ * airways (which appear in the database as two airway_t's with the same
+ * name but fix order reversed).
+ */
+const void
+airway_db_lookup(const airway_db_t *db, const char *awyname,
+    const char *start_fix_name, const char *end_fix_name,
+    const airway_t **awypp, const fix_t **endfixpp)
+{
+	const list_t *awy_list;
+
+	if ((start_fix_name != NULL && *start_fix_name == 0) ||
+	    (end_fix_name != NULL && *end_fix_name == 0)) {
+		/*
+		 * Empty fix name indicates null_fix was passed, which is
+		 * never on any airway.
+		 */
+		*awypp = NULL;
+		if (endfixpp)
+			*endfixpp = NULL;
+		return;
+	}
+
+	ASSERT(awyname != NULL);
+	awy_list = htbl_lookup_multi(&db->by_awy_name, awyname);
+	for (const void *mv = list_head(awy_list); mv != NULL;
+	    mv = list_next(awy_list, mv)) {
+		const airway_t		*awy = HTBL_VALUE_MULTI(mv);
+		unsigned		i = 0;
+
+		ASSERT(awy != NULL);
+		ASSERT(strcmp(awy->name, awyname) == 0);
+		if (start_fix != NULL) {
+			/* Look for the start fix */
+			for (i = 0; i < awy->num_segs; i++) {
+				if (FIX_EQ(&awy->segs[i].endpt[0], start_fix))
+					break;
+			}
+			if (i == awy->num_segs)
+				continue;
+		}
+		if (end_fix_name != NULL) {
+			/* Continue looking for the end fix */
+			ASSERT(start_fix_name != NULL);
+			for (; i < awy->num_segs; i++) {
+				if (strcmp(awy->segs[i].endpt[1].name,
+				    end_fix_name) == 0)
+					break;
+			}
+			if (i == awy->num_segs)
+				continue;
+		}
+		/* Airway matches and start&end fixes follow each other */
+		*awypp = awy;
+		if (endfixpp)
+			*endfixpp = &awy->segs[i].endpt[1];
+		return;
+	}
+
+	*awypp = NULL;
+	if (endfixpp)
+		*endfixpp = NULL;
+}
+
+/*
+ * Given a 1st airway name, 1st airway section start fix name and a 2nd airway
+ * name, looks for an airway segment end fix following the start fix on airway
+ * #1 that is also an airway segment start fix on airway #2.
+ */
+const fix_t *
+airway_db_lookup_awy_intersection(const airway_db_t *db, const char *awy1_name,
+    const char *awy1_start_fix_name, const char *awy2_name)
+{
+	const list_t *awy1_list;
+
+	if (awy1_start_fix_name != NULL && *awy1_start_fix_name == 0)
+		return (NULL);
+
+	ASSERT(awy1_name != NULL);
+	ASSERT(awy1_start_fix_name != NULL);
+	awy1_list = htbl_lookup_multi(&db->by_awy_name, awy1_name);
+	for (const void *mv1 = list_head(awy1_list); mv1 != NULL;
+	    mv1 = list_next(awy1_list, mv1)) {
+		const airway_t		*awy1 = HTBL_VALUE_MULTI(mv1);
+		unsigned		i = 0;
+
+		ASSERT(awy1 != NULL);
+		ASSERT(strcmp(awy1->name, awy1_name) == 0);
+		/* Look for the start fix */
+		for (i = 0; i < awy1->num_segs; i++) {
+			if (strcmp(awy1->segs[i].endpt[0].name,
+			    awy1_start_fix_name) == 0)
+				break;
+		}
+		if (i == awy1->num_segs)
+			continue;
+
+		/*
+		 * Now try and lookup airways with awy2_name and starting
+		 * at the end fixes of segments following this segment.
+		 */
+		for (; i < awy1->num_segs; i++) {
+			if (airway_db_lookup(db, awy2_name,
+			    awy1->segs[i].endpt[1].name, NULL) != NULL) {
+				return (&awy1->segs[i].endpt[1]);
+			}
+		}
+	}
+
+	return (NULL);
+}
+
+/*
+ * Checks if `fix' is a starting fix on any segment of airway `awy'.
+ */
+bool_t
+airway_db_fix_on_awy(const airway_db_t *db, const fix_t *fix,
+    const char *awyname)
+{
+	const list_t *awy_list;
+
+	ASSERT(fix != NULL);
+	ASSERT(awyname != NULL);
+	awy_list = htbl_lookup_multi(&db->by_fix_name, fix->name);
+	for (const void *mv = list_head(awy_list); mv != NULL;
+	    mv = list_next(awy_list, mv)) {
+		airway_t *awy = HTBL_VALUE_MULTI(mv);
+
+		if (strcmp(awy->name, awyname) != 0)
+			continue;
+		/* look for the exact start fix (incl geo pos) */
+		for (unsigned i = 0; i < awy->num_segs; i++) {
+			if (memcmp(&awy->segs[i].endpt[0], fix, sizeof (*fix))
+			    == 0)
+				return (B_TRUE);
+		}
+	}
+	return (B_FALSE);
 }
 
 static bool_t

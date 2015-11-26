@@ -29,30 +29,52 @@
 
 #include "route.h"
 
+/*
+ * Destroys and frees a route_seg_t.
+ */
 static void
-route_seg_destroy(route_seg_t *seg)
+rs_destroy(route_seg_t *seg)
 {
 	ASSERT(!list_link_active(&seg->route_segs_node));
 	free(seg);
 }
 
+/*
+ * Destroys and frees a route_leg_t.
+ */
 static void
-route_leg_destroy(route_leg_t *rl)
+rl_destroy(route_leg_t *rl)
 {
 	ASSERT(!list_link_active(&rl->leg_group_legs_node));
 	ASSERT(!list_link_active(&rl->route_legs_node));
 	free(rl);
 }
 
+/*
+ * Destroys and frees a route_leg_group_t.
+ */
 static void
-route_leg_group_destroy(route_leg_group_t *rlg)
+rlg_destroy(route_t *route, route_leg_group_t *rlg)
 {
-	ASSERT(list_head(&rlg->legs) == NULL);
-	ASSERT(!list_link_active(&rlg->route_leg_groups_node));
+	for (route_leg_t *rl = list_head(&rlg->legs); rl != NULL;
+	    rl = list_head(&rlg->legs)) {
+		list_remove(&rlg->legs, rl);
+		list_remove(&route->legs, rl);
+		rl_destroy(rl);
+	}
+
+	if (list_link_active(&rlg->route_leg_groups_node))
+		list_remove(&route->leg_groups, rlg);
 	list_destroy(&rlg->legs);
 	free(rlg);
 }
 
+/*
+ * Given an airport pointer, investigates any extraneous links and
+ * references to this airport's structures and removes them from the route.
+ * This involves iterating through all runways and procedures (and their
+ * associated legs) and removing them.
+ */
 static void
 route_remove_arpt_links(route_t *route, const airport_t *arpt)
 {
@@ -61,10 +83,8 @@ route_remove_arpt_links(route_t *route, const airport_t *arpt)
 		if (route->obj != NULL && route->obj->arpt == arpt) \
 			route->obj = NULL; \
 	} while (0)
-	/* First check all runways & procedures */
+	/* First check runways & procedures */
 	REM_BACKREF(dep_rwy);
-	REM_BACKREF(arr_rwy);
-	/* Next check direct procedure links */
 	REM_BACKREF(sid);
 	REM_BACKREF(sidcm);
 	REM_BACKREF(sidtr);
@@ -78,25 +98,268 @@ route_remove_arpt_links(route_t *route, const airport_t *arpt)
 	for (route_leg_group_t *rlg = list_head(&route->leg_groups); rlg;) {
 		route_leg_group_t *rlg_next = list_next(&route->leg_groups,
 		    rlg);
-		if (rlg->type == ROUTE_LEG_GROUP_PROC &&
+		if (rlg->type == ROUTE_LEG_GROUP_TYPE_PROC &&
 		    rlg->proc->arpt == arpt) {
-			for (route_leg_t *rl = list_head(&rlg->legs); rl;) {
-				route_leg_t *rl_next = list_next(&rlg->legs,
-				    rl);
-				list_remove(&rlg->legs, rl);
-				list_remove(&route->legs, rl);
-				route_leg_destroy(rl);
-				rl = rl_next;
-			}
+			rlg_destroy(route, rlg);
 		}
-		list_remove(&route->leg_groups, rlg);
-		route_leg_group_destroy(rlg);
 		rlg = rlg_next;
 	}
 
-	route->dirty = B_TRUE;
+	route->segs_dirty = B_TRUE;
 }
 
+static err_t
+rlg_connect(route_t *route, route_leg_group_t *prev_rlg,
+    route_leg_group_t *next_rlg)
+{
+	ASSERT(prev_rlg != NULL);
+	ASSERT(next_rlg != NULL);
+
+	switch (prev_rlg->type) {
+	case ROUTE_LEG_GROUP_TYPE_AIRWAY:
+		/* AWY -> [something] */
+		switch (next_rlg->type) {
+		case ROUTE_LEG_GROUP_TYPE_AIRWAY: {
+			/* AWY -> AWY */
+			const fix_t *isect;
+
+			if (FIX_EQ(&prev_rlg->end_fix, &next_rlg->start_fix)
+				break;
+
+			/* locate: AWY x AWY */
+			isect = airway_db_lookup_awy_intersection(route->navdb,
+			    prev_rlg->awy->name, prev_rlg->start_fix.name,
+			    next_rlg->awy->name);
+			if (isect == NULL)
+				return (ERR_AWY_AWY_MISMATCH);
+			prev_rlg->end_fix = *isect;
+			next_rlg->start_fix = *isect;
+			update_awy_rlg_legs(route, prev_rlg);
+			update_awy_rlg_legs(route, next_rlg);
+			route->segs_dirty = B_TRUE;
+			break;
+		}
+		case ROUTE_LEG_GROUP_TYPE_DIRECT:
+			/* AWY -> DIRECT */
+			if (!IS_NULL_FIX(&prev_rlg->end_fix) {
+				/*
+				 * If we had an endpoint, then it must not
+				 * have been the same as the next DIRECT,
+				 * otherwise there would have been no disco.
+				 */
+				ASSERT(!FIX_EQ(&prev_rlg->end_fix,
+				    &next_rlg->end_fix));
+				next_rlg->start_fix = prev_rlg->end_fix;
+
+				route->segs_dirty = B_TRUE;
+			} else {
+				/*
+				 * Preceding airway is missing an endpoint,
+				 * so try to locate the next DIRECT on the
+				 * airway and remove the DIRECT leg group.
+				 */
+				const airway_t *newawy;
+
+				airway_db_lookup(route->navdb->awydb,
+				    prev_rlg->awy->name,
+				    prev_rlg->start_fix.name,
+				    next_rlg->end_fix.name, &newawy, NULL);
+				if (newawy == NULL)
+					return (ERR_AWY_WPT_MISMATCH);
+				prev_rlg->awy = newawy;
+				prev_rlg->end_fix = next_rlg->end_fix;
+				update_awy_rlg_legs(route, prev_rlg);
+				rlg_destroy(next_rlg);
+
+				route->segs_dirty = B_TRUE;
+			}
+			break;
+		case ROUTE_LEG_GROUP_TYPE_PROC: {
+			/* AWY -> PROC */
+			const airway_t *newawy;
+
+			ASSERT(!IS_NULL_FIX(&next_rlg->start_fix));
+			/* lack of start_fix means we don't know where to go */
+			if (IS_NULL_FIX(&prev_rlg->start_fix))
+				return (ERR_AWY_WPT_MISMATCH);
+			airway_db_lookup(route->navdb,
+			    prev_rlg->awy->name, prev_rlg->start_fix.name,
+			    next_rlg->start_fix.name, &newawy, NULL);
+			if (nawy == NULL)
+				return (ERR_AWY_PROC_MISMATCH);
+			prev_rlg->awy = nawy;
+			prev_rlg->end_fix = next_rlg->start_fix;
+			update_awy_rlg_legs(route, prev_rlg);
+			route->segs_dirty = B_TRUE;
+			break;
+		}
+		case ROUTE_LEG_GROUP_TYPE_DISCO:
+			/* AWY -> (disco) */
+			break;
+		default:
+			assert(0);
+		}
+		break;
+	case ROUTE_LEG_GROUP_TYPE_DIRECT:
+		/* DIRECT -> [something] */
+		switch (next_rlg->type) {
+		case ROUTE_LEG_GROUP_TYPE_AIRWAY: {
+			/* DIRECT -> AWY */
+			const airway_t *newawy;
+
+			airway_db_lookup(route->navdb, next_rlg->awy->name,
+			    prev_rlg->start_fix.name, next_rlg->end_fix.name,
+			    &newawy, NULL);
+			if (newawy != NULL) {
+				next_rlg->awy = newawy;
+				next_rlg->start_fix = prev_rlg->end_fix;
+				update_awy_rlg(route, next_rlg);
+
+				route->segs_dirty = B_TRUE;
+			} else {
+				return (ERR_AWY_WPT_MISMATCH);
+			}
+			break;
+		}
+		case ROUTE_LEG_GROUP_TYPE_DIRECT:
+			/* DIRECT -> DIRECT */
+			ASSERT(!IS_NULL_FIX(&prev_rlg->end_fix));
+			next_rlg->start_fix = prev_rlg->end_fix;
+			break;
+		case ROUTE_LEG_GROUP_TYPE_PROC:
+			/* DIRECT -> PROC */
+			if (!FIX_EQ(&prev_rlg->end_fix, &next_rlg->start_fix))
+				return (ERR_WPT_PROC_MISMATCH);
+			break;
+		case ROUTE_LEG_GROUP_TYPE_DISCO:
+			/* DIRECT -> (disco) */
+			break;
+		default:
+			assert(0);
+		}
+		break;
+	case ROUTE_LEG_GROUP_TYPE_PROC:
+		/* PROC -> [something] */
+		switch (next_rlg->type) {
+		case ROUTE_LEG_GROUP_TYPE_AIRWAY: {
+			/* PROC -> AWY */
+			const airway_t *newawy;
+
+			airway_db_lookup(route->navdb, next_rlg->awy->name,
+			    prev_rlg->end_fix.name, next_rlg->end_fix.name,
+			    &newawy, NULL);
+			if (newawy != NULL) {
+				next_rlg->awy = newawy;
+				next_rlg->start_fix = prev_rlg->end_fix;
+				update_awy_rlg_legs(route, next_rlg);
+
+				route->segs_dirty = B_TRUE;
+			} else {
+				return (ERR_AWY_WPT_MISMATCH);
+			}
+			break;
+		}
+		case ROUTE_LEG_GROUP_TYPE_DIRECT:
+			/* PROC -> DIRECT */
+			next_rlg->start_fix = prev_rlg->end_fix;
+			break;
+		case ROUTE_LEG_GROUP_TYPE_PROC:
+			/* PROC -> PROC */
+			if (!FIX_EQ(&prev_rlg->end_fix, &next_rlg->start_fix))
+				return (ERR_PROC_PROC_MISMATCH);
+			break;
+		case ROUTE_LEG_GROUP_TYPE_DISCO:
+			/* PROC -> (disco) */
+			break;
+		default:
+			assert(0);
+		}
+		break;
+	case ROUTE_LEG_GROUP_TYPE_DISCO:
+		VERIFY(next_rlg->type != ROUTE_LEG_GROUP_TYPE_DISCO);
+		break;
+	default:
+		assert(0);
+	}
+
+	return (ERR_OK);
+}
+
+/*
+ * Returns B_TRUE iff rlg1 and rlg2 are separated by exactly one disco rlg.
+ * rlg1 MUST precede rlg2.
+ */
+static bool_t
+disco_between(route_t *route, route_leg_group_t *rlg1, route_leg_group_t *rlg2)
+{
+	route_leg_group_t *next_rlg;
+
+	/* Check if next rlg is anything but disco */
+	next_rlg = list_next(&route->leg_groups, rlg1);
+	ASSERT(next_rlg != NULL);
+	if (next_rlg->type != ROUTE_LEG_GROUP_TYPE_DISCO)
+		return (B_FALSE);
+
+	/* Check if next thing after disco is anything but rlg2 */
+	next_rlg = list_next(&route->leg_groups, next_rlg);
+	if (next_rlg != rlg2) {
+		ASSERT(next_rlg != NULL);
+		return (B_FALSE);
+	}
+
+	return (B_TRUE);
+}
+
+static route_leg_group_t *
+rlg_new(route_leg_group_type_t type)
+{
+	route_leg_group_t *rlg = calloc(sizeof (*rlg), 1);
+
+	rlg->type = type;
+	list_create(&rlg->legs, sizeof (route_leg_t),
+	    offsetof(route_leg_t, leg_group_legs_node));
+
+	return (rlg);
+}
+
+static void
+rlg_new_disco(route_t *route, route_leg_group_t *prev_rlg)
+{
+	route_leg_group_t *rlg = rlg_new(ROUTE_LEG_GROUP_TYPE_DISCO);
+
+	/* A disco can't be first or last in the list */
+	ASSERT(prev_rlg != NULL);
+	ASSERT(list_tail(&route->leg_groups) != prev_rlg);
+	list_insert_after(&route->leg_groups, prev_rlg, rlg);
+}
+
+static void
+rlg_connect_force(route_t *route, route_leg_group_t *prev_rlg,
+    route_leg_group_t *next_rlg)
+{
+	if (rlg_connect(route, prev_rlg, next_rlg) != ERR_OK) {
+		route_leg_group_t *rlg;
+
+		/* connection not possible, insert disco */
+		if (disco_between(route, prev_rlg, next_rlg))
+			/* disco already there, no need to change it */
+			return;
+
+		/* discard all rlg's between these two */
+		for (rlg = list_next(&route->leg_groups, prev_rlg);
+		    rlg != next_rlg;
+		    rlg = list_next(&route->leg_groups, prev_rlg)) {
+			ASSERT(rlg != NULL);
+			rlg_destroy(rlg);
+		}
+
+		rlg_new_disco(route, prev_rlg);
+	}
+}
+
+/*
+ * Creates a new route. The route will derive its navigation data from `navdb'.
+ */
 route_t *
 route_create(const fms_navdb_t *navdb)
 {
@@ -114,6 +377,10 @@ route_create(const fms_navdb_t *navdb)
 	return (route);
 }
 
+/*
+ * Destroys and frees all resources used by `route'. Pointers to any resources
+ * internal to the route should be considered invalid after this.
+ */
 void
 route_destroy(route_t *route)
 {
@@ -128,13 +395,16 @@ route_destroy(route_t *route)
 
 	for (route_leg_group_t *rlg = list_head(&route->leg_groups); rlg;
 	    rlg = list_head(&route->leg_groups))
-		route_leg_group_destroy(rlg);
-	for (route_leg_t *rl = list_head(&route->legs); rl;
-	    rl = list_head(&route->legs))
-		route_leg_destroy(rl);
-	for (route_seg_t *rs = list_head(&route->segs); rs;
+		rlg_destroy(rlg);
+	/*
+	 * Should be empty now because a rlg_destroy takes the
+	 * legs with it.
+	 */
+	ASSERT(list_head(&route->legs) == NULL);
+
+	for (route_seg_t *rs = list_head(&route->segs); rs != NULL;
 	    rs = list_head(&route->segs))
-		route_seg_destroy(rs);
+		rs_destroy(rs);
 
 	list_destroy(&route->leg_groups);
 	list_destroy(&route->legs);
@@ -143,8 +413,21 @@ route_destroy(route_t *route)
 	free(route);
 }
 
+bool_t
+route_update_needed(const route_t *route)
+{
+	return (route->segs_dirty);
+}
+
+/*
+ * Generic airport setter for a route. Takes a route, a pointer to an airport
+ * POINTER (i.e. the field in the route_t which is the airport pointer which
+ * should be set) and an airport icao code to set in the airport pointer.
+ * This function closes the old airport (removing any outstanding references
+ * to it from the route) and replaces it with a newly opened one.
+ */
 static err_t
-route_set_arpt_impl(route_t *route, airport_t **arptp, const char *icao)
+route_set_arpt(route_t *route, airport_t **arptp, const char *icao)
 {
 	airport_t *narpt;
 
@@ -164,29 +447,179 @@ route_set_arpt_impl(route_t *route, airport_t **arptp, const char *icao)
 		airport_close(*arptp);
 	}
 	*arptp = narpt;
+	route->segs_dirty = B_TRUE;
 	return (ERR_OK);
 }
 
+/*
+ * Sets the departure airport of the route. See route_set_arpt for more info.
+ */
 err_t
 route_set_dep_arpt(route_t *route, const char *icao)
 {
-	return (route_set_arpt_impl(route, &route->dep, icao));
+	return (route_set_arpt(route, &route->dep, icao));
 }
 
+/*
+ * Sets the arrival airport of the route. See route_set_arpt for more info.
+ */
 err_t
 route_set_arr_arpt(route_t *route, const char *icao)
 {
-	return (route_set_arpt_impl(route, &route->arr, icao));
+	return (route_set_arpt(route, &route->arr, icao));
 }
 
+/*
+ * Sets the 1st alternate airport of the route.
+ */
 err_t
 route_set_altn1_arpt(route_t *route, const char *icao)
 {
-	return (route_set_arpt_impl(route, &route->altn1, icao));
+	return (route_set_arpt(route, &route->altn1, icao));
 }
 
+/*
+ * Sets the 2nd alternate airport of the route.
+ */
 err_t
 route_set_altn2_arpt(route_t *route, const char *icao)
 {
-	return (route_set_arpt_impl(route, &route->altn2, icao));
+	return (route_set_arpt(route, &route->altn2, icao));
+}
+
+/*
+ * Returns the departure airport for the route (or NULL if not set).
+ */
+const airport_t *
+route_get_dep_arpt(route_t *route)
+{
+	return (route->dep);
+}
+
+/*
+ * Returns the arrival airport for the route (or NULL if not set).
+ */
+const airport_t *
+route_get_arr_arpt(route_t *route)
+{
+	return (route->arr);
+}
+
+/*
+ * Returns the 1st alternate airport for the route (or NULL if not set).
+ */
+const airport_t *
+route_get_altn1_arpt(route_t *route)
+{
+	return (route->altn1);
+}
+
+/*
+ * Returns the 2nd alternate airport for the route (or NULL if not set).
+ */
+const airport_t *
+route_get_altn2_arpt(route_t *route)
+{
+	return (route->altn2);
+}
+
+/*
+ * Returns the leg groups which constitute the route. This is a read-only
+ * list. To edit the route, use the route editing functions.
+ */
+const list_t *
+route_leg_groups(const route_t *route)
+{
+	return (&route->leg_groups);
+}
+
+/*
+ * Returns the individual legs which constitute the route. This is a
+ * read-only list. To edit the route, use the route editing functions.
+ */
+const list_t *
+route_legs(const route_t *route)
+{
+	return (&route->legs);
+}
+
+const route_leg_group_t *route_lg_awy_insert(route_t *route,
+    const char *awyname, const route_leg_group_t *prev_rlg)
+{
+	route_leg_group_t *rlg;
+
+	rlg = calloc(sizeof (*rlg), 1);
+	if (prev_rlg != NULL) {
+		route_leg_group_t *next_rlg = list_next(&route->leg_groups,
+		    prev_rlg);
+
+		switch (prev_rlg->type) {
+		case ROUTE_LEG_GROUP_TYPE_AIRWAY:
+			break;
+		case ROUTE_LEG_GROUP_TYPE_DIRECT:
+		case ROUTE_LEG_GROUP_TYPE_PROC:
+			break;
+		case ROUTE_LEG_GROUP_TYPE_DISCO:
+			break;
+		}
+	}
+}
+
+err_t
+route_lg_awy_set_end_fix(route_t *route, const route_leg_group_t *rlg_const,
+    const char *fixname)
+{
+	route_leg_group_t *rlg = (route_leg_group_t *)rlg_const;
+	const airway_t *newawy;
+	const fix_t *end_fix;
+	route_leg_group_t *next_rlg;
+
+	ASSERT(rlg->type == ROUTE_LEG_GROUP_TYPE_AIRWAY);
+	if (IS_NULL_FIX(rlg->start_fix))
+		return (ERR_AWY_WPT_MISMATCH);
+
+	airway_db_lookup(route->navdb->awydb, rlg->awy->name, &rlg->start_fix,
+	    fixname, &newawy, &end_fix);
+	if (newawy == NULL)
+		return (ERR_AWY_WPT_MISMATCH);
+
+	rlg->awy = newawy;
+	rlg->end_fix = *end_fix;
+	update_awy_rlg_legs(route, rlg);
+
+	next_rlg = list_next(&route->leg_groups, rlg);
+	if (next_rlg != NULL)
+		rlg_connect_force(route, rlg, next_rlg);
+
+	route->segs_dirty = B_TRUE;
+}
+
+err_t
+route_lg_delete(route_t *route, const route_leg_group_t *rlg)
+{
+	const route_leg_group_t *prev_rlg = list_prev(&route->leg_groups, rlg);
+	const route_leg_group_t *next_rlg = list_next(&route->leg_groups, rlg);
+	err_t err;
+
+	/*
+	 * Procedures can't be deleted this way, use the appropriate
+	 * procedure manipulation functions.
+	 */
+	if (rlg->type == ROUTE_LEG_GROUP_TYPE_PROC)
+		return (ERR_INVALID_DELETE);
+
+	/*
+	 * Try to remove the disco - only valid if the prev leg group
+	 * has an end_fix set.
+	 */
+	switch (rlg->type) {
+	case ROUTE_LEG_GROUP_TYPE_DISCO:
+		err = route_lg_delete_disco(route, rlg, prev_rlg, next_rlg);
+		break;
+	}
+	if (err != ERR_OK)
+		return (err);
+
+	list_remove(&route->leg_groups, rlg);
+	rlg_destroy(rlg);
 }

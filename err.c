@@ -29,7 +29,12 @@
 /* Order must correspond to err_t */
 static const char *err_name_tbl[NUM_ERRS] = {
 	"OK",
-	"ARPT NOT FOUND"
+	"ARPT NOT FOUND",
+	"INVALID DELETE",
+	"AWY/AWY MISMATCH",
+	"AWY/WPT MISMATCH",
+	"AWY/PROC MISMATCH",
+	"WPT/PROC MISMATCH"
 };
 
 const char *
