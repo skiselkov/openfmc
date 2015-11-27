@@ -52,6 +52,9 @@ typedef struct {
 const fix_t null_fix;
 #define	FIX_EQ(f1, f2)	\
 	(memcmp((f1), (f2), sizeof (fix_t)) == 0 && !IS_NULL_FIX((f1)))
+#define	FIX_EQ_POS(f1, f2) \
+	(!IS_NULL_FIX((f1)) && (f1)->pos.lat == (f2)->pos.lat && \
+	(f1)->pos.lon == (f2)->pos.lon)
 #define	IS_NULL_FIX(f)	(memcmp((f), &null_fix, sizeof (fix_t)) == 0)
 
 typedef struct {
@@ -248,9 +251,9 @@ typedef struct {
 		} radial;
 		struct {			/* FD, CD */
 			fix_t		navaid;
-			double	dist;
+			double		dist;
 		} dme;
-		double		dist;		/* FC */
+		double			dist;	/* FC */
 	} term_cond;
 
 	/* Generic segment constraints */

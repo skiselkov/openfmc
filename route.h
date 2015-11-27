@@ -59,12 +59,12 @@ typedef struct {
 } route_leg_group_t;
 
 typedef struct {
-	bool_t		disco;
-	navproc_seg_t	seg;
+	bool_t			disco;
+	navproc_seg_t		seg;
 	alt_lim_t		alt_lim;
 	spd_lim_t		spd_lim;
 
-	route_leg_group_t	*leg_group;
+	route_leg_group_t	*parent;
 
 	list_node_t		leg_group_legs_node;
 	list_node_t		route_legs_node;
@@ -204,9 +204,9 @@ err_t route_lg_delete(route_t *route, const route_leg_group_t *rlg);
  * Editing legs directly.
  */
 err_t route_l_insert(route_t *route, const fix_t *fix,
-    const route_leg_t *prev_rl, const route_leg_t **new_rlpp);
-err_t route_l_force_connect(route_t *route, const fix_t *fix,
-    const route_leg_t *prev_rl, const route_leg_t *next_rl);
+    const route_leg_t *x_prev_rl, const route_leg_t **new_rlpp);
+err_t route_l_force_connect(route_t *route, const route_leg_t *x_prev_rl,
+    const route_leg_t *x_next_rl);
 void route_l_delete(route_t *route, const route_leg_t *rl);
 
 #endif	/* _OPENFMC_ROUTE_H_ */
