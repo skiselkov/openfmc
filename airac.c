@@ -480,23 +480,18 @@ airway_db_dump(const airway_db_t *db, bool_t by_awy_name)
  * airways (which appear in the database as two airway_t's with the same
  * name but fix order reversed).
  */
-const void
+const airway_t *
 airway_db_lookup(const airway_db_t *db, const char *awyname,
-    const char *start_fix_name, const char *end_fix_name,
-    const airway_t **awypp, const fix_t **endfixpp)
+    const fix_t *start_fix, const char *end_fix_name, const fix_t **endfixpp)
 {
 	const list_t *awy_list;
 
-	if ((start_fix_name != NULL && *start_fix_name == 0) ||
+	/* null fixes will never match anything, so don't even bother */
+	if ((start_fix && IS_NULL_FIX(start_fix)) ||
 	    (end_fix_name != NULL && *end_fix_name == 0)) {
-		/*
-		 * Empty fix name indicates null_fix was passed, which is
-		 * never on any airway.
-		 */
-		*awypp = NULL;
-		if (endfixpp)
+		if (endfixpp != NULL)
 			*endfixpp = NULL;
-		return;
+		return (NULL);
 	}
 
 	ASSERT(awyname != NULL);
@@ -519,7 +514,7 @@ airway_db_lookup(const airway_db_t *db, const char *awyname,
 		}
 		if (end_fix_name != NULL) {
 			/* Continue looking for the end fix */
-			ASSERT(start_fix_name != NULL);
+			ASSERT(start_fix != NULL);
 			for (; i < awy->num_segs; i++) {
 				if (strcmp(awy->segs[i].endpt[1].name,
 				    end_fix_name) == 0)
@@ -527,17 +522,18 @@ airway_db_lookup(const airway_db_t *db, const char *awyname,
 			}
 			if (i == awy->num_segs)
 				continue;
+			if (endfixpp)
+				*endfixpp = &awy->segs[i].endpt[1];
+		} else if (endfixpp) {
+			*endfixpp = NULL;
 		}
 		/* Airway matches and start&end fixes follow each other */
-		*awypp = awy;
-		if (endfixpp)
-			*endfixpp = &awy->segs[i].endpt[1];
-		return;
+		return (awy);
 	}
-
-	*awypp = NULL;
-	if (endfixpp)
+	if (endfixpp != NULL)
 		*endfixpp = NULL;
+
+	return (NULL);
 }
 
 /*
@@ -579,7 +575,7 @@ airway_db_lookup_awy_intersection(const airway_db_t *db, const char *awy1_name,
 		 */
 		for (; i < awy1->num_segs; i++) {
 			if (airway_db_lookup(db, awy2_name,
-			    awy1->segs[i].endpt[1].name, NULL) != NULL) {
+			    &awy1->segs[i].endpt[1], NULL, NULL) != NULL) {
 				return (&awy1->segs[i].endpt[1]);
 			}
 		}

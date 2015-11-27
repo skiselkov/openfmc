@@ -34,7 +34,8 @@ static const char *err_name_tbl[NUM_ERRS] = {
 	"AWY/AWY MISMATCH",
 	"AWY/WPT MISMATCH",
 	"AWY/PROC MISMATCH",
-	"WPT/PROC MISMATCH"
+	"WPT/PROC MISMATCH",
+	"AWY NOT FOUND"
 };
 
 const char *

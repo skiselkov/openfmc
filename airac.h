@@ -52,7 +52,7 @@ typedef struct {
 const fix_t null_fix;
 #define	FIX_EQ(f1, f2)	\
 	(memcmp((f1), (f2), sizeof (fix_t)) == 0 && !IS_NULL_FIX((f1)))
-#define	IS_NULL_FIX(f)	(memcmp((f), &null_fix, sizeof (fix)) == 0)
+#define	IS_NULL_FIX(f)	(memcmp((f), &null_fix, sizeof (fix_t)) == 0)
 
 typedef struct {
 	fix_t		endpt[2];
@@ -78,9 +78,8 @@ void airway_db_close(airway_db_t *db);
 char *airway_db_dump(const airway_db_t *db, bool_t by_awy_name);
 
 /* Airway lookup */
-const void airway_db_lookup(const airway_db_t *db, const char *awyname,
-    const fix_t *start_fix, const char *end_fix_name, const airway_t **awypp,
-    const fix_t **endfixpp);
+const airway_t *airway_db_lookup(const airway_db_t *db, const char *awyname,
+    const fix_t *start_fix, const char *end_fix_name, const fix_t **endfixpp);
 const fix_t *airway_db_lookup_awy_intersection(const airway_db_t *db,
     const char *awy1_name, const char *awy1_start_fix_name,
     const char *awy2_name);
