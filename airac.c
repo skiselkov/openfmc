@@ -468,14 +468,14 @@ airway_db_dump(const airway_db_t *db, bool_t by_awy_name)
  * matching:
  *	1) awyname: Airway name. This argument is mandatory. If the airway
  *	   doesn't exist, returns NULL.
- *	2) start_fix_name: Starting section fix name. This is optional.
+ *	2) start_fix: Starting section fix. This is optional.
  *	   In addition to the airway name matching, this will also check
- *	   that the airway contains a fix with this name as the starting
+ *	   that the airway contains this exact fix as the starting
  *	   fix in one of its segments.
- *	3) end_fix_name: Ending section fix name. This is optional. If
- *	   not NULL, you must also have provided a start_fix_name. In
- *	   addition to conditions #1 and #2, also checks that the section
- *	   start fix is followed by the appropriate airway segment end fix.
+ *	3) end_fix_name: Ending section fix name. This is optional. In
+ *	   addition to conditions #1 and #2 (if not NULL), also checks that
+ *	   the section start fix is followed by the appropriate airway
+ *	   segment end fix.
  * Using all three arguments you can choose the direction of bidirectional
  * airways (which appear in the database as two airway_t's with the same
  * name but fix order reversed).
@@ -505,7 +505,7 @@ airway_db_lookup(const airway_db_t *db, const char *awyname,
 		ASSERT(strcmp(awy->name, awyname) == 0);
 		if (start_fix != NULL) {
 			/* Look for the start fix */
-			for (i = 0; i < awy->num_segs; i++) {
+			for (; i < awy->num_segs; i++) {
 				if (FIX_EQ(&awy->segs[i].endpt[0], start_fix))
 					break;
 			}
@@ -513,8 +513,7 @@ airway_db_lookup(const airway_db_t *db, const char *awyname,
 				continue;
 		}
 		if (end_fix_name != NULL) {
-			/* Continue looking for the end fix */
-			ASSERT(start_fix != NULL);
+			/* Look for the end fix */
 			for (; i < awy->num_segs; i++) {
 				if (strcmp(awy->segs[i].endpt[1].name,
 				    end_fix_name) == 0)

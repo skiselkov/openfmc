@@ -207,6 +207,6 @@ err_t route_l_insert(route_t *route, const fix_t *fix,
     const route_leg_t *x_prev_rl, const route_leg_t **new_rlpp);
 err_t route_l_force_connect(route_t *route, const route_leg_t *x_prev_rl,
     const route_leg_t *x_next_rl);
-void route_l_delete(route_t *route, const route_leg_t *rl);
+void route_l_delete(route_t *route, const route_leg_t *x_rl);
 
 #endif	/* _OPENFMC_ROUTE_H_ */
