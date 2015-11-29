@@ -40,6 +40,7 @@ extern "C" {
 #define	RWY_ID_LEN		4
 
 /* Forward declarations */
+typedef struct runway_s runway_t;
 typedef struct airport_s airport_t;
 
 /* Airway structures */
@@ -274,9 +275,9 @@ typedef enum {
 typedef struct navproc_s {
 	navproc_type_t	type;
 	char		name[NAV_NAME_LEN];
-	char		rwy_ID[RWY_ID_LEN + 1];
-	char		fix_name[NAV_NAME_LEN];
 	airport_t	*arpt;		/* backref to parent airport_t */
+	fix_t		fix;
+	const runway_t	*rwy;
 	unsigned	num_segs;
 	navproc_seg_t	*segs;
 	/* number of main procedure segments, remainder is for go-around */
@@ -284,10 +285,16 @@ typedef struct navproc_s {
 	navproc_final_t	final_type;
 } navproc_t;
 
+const fix_t *navproc_seg_get_start_fix(const navproc_seg_t *seg);
+const fix_t *navproc_seg_get_end_fix(const navproc_seg_t *seg);
+void navproc_seg_set_end_fix(navproc_seg_t *seg, const fix_t *fix);
+
+fix_t navproc_get_start_fix(const navproc_t *proc);
+const fix_t *navproc_get_end_fix(const navproc_t *proc);
 
 /* Airport structures */
 
-typedef struct runway_s {
+struct runway_s {
 	char		ID[RWY_ID_LEN + 1];
 	airport_t	*arpt;		/* backref to parent airport_t */
 	unsigned	hdg;
@@ -298,7 +305,7 @@ typedef struct runway_s {
 	unsigned	loc_fcrs;
 	geo_pos3_t	thr_pos;
 	double		gp_angle;
-} runway_t;
+};
 
 struct airport_s {
 	char		name[32];

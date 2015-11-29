@@ -108,29 +108,7 @@ rlg_new_disco(route_t *route, route_leg_group_t *prev_rlg)
 static const fix_t *
 leg_get_end_fix(route_leg_t *leg)
 {
-	if (leg->disco)
-		return (&null_fix);
-
-	switch (leg->seg.type) {
-	case NAVPROC_SEG_TYPE_ARC_TO_FIX:
-	case NAVPROC_SEG_TYPE_CRS_TO_FIX:
-	case NAVPROC_SEG_TYPE_DIR_TO_FIX:
-	case NAVPROC_SEG_TYPE_RADIUS_ARC_TO_FIX:
-	case NAVPROC_SEG_TYPE_TRK_TO_FIX:
-	case NAVPROC_SEG_TYPE_HDG_TO_INTCP:
-		ASSERT(!IS_NULL_FIX(&leg->seg.term_cond.fix));
-		return (&leg->seg.term_cond.fix);
-	case NAVPROC_SEG_TYPE_INIT_FIX:
-		ASSERT(!IS_NULL_FIX(&leg->seg.leg_cmd.fix));
-		return (&leg->seg.leg_cmd.fix);
-	case NAVPROC_SEG_TYPE_HOLD_TO_ALT:
-	case NAVPROC_SEG_TYPE_HOLD_TO_FIX:
-	case NAVPROC_SEG_TYPE_HOLD_TO_MANUAL:
-		ASSERT(!IS_NULL_FIX(&leg->seg.leg_cmd.hold.fix));
-		return (&leg->seg.leg_cmd.hold.fix);
-	default:
-		return (&null_fix);
-	}
+	return (!leg->disco ? navproc_seg_get_end_fix(&leg->seg) : &null_fix);
 }
 
 /*
@@ -140,23 +118,7 @@ leg_get_end_fix(route_leg_t *leg)
 static void
 leg_set_end_fix(route_leg_t *leg, const fix_t *fix)
 {
-	switch (leg->seg.type) {
-	case NAVPROC_SEG_TYPE_ARC_TO_FIX:
-	case NAVPROC_SEG_TYPE_CRS_TO_FIX:
-	case NAVPROC_SEG_TYPE_DIR_TO_FIX:
-	case NAVPROC_SEG_TYPE_RADIUS_ARC_TO_FIX:
-	case NAVPROC_SEG_TYPE_TRK_TO_FIX:
-	case NAVPROC_SEG_TYPE_HDG_TO_INTCP:
-		leg->seg.term_cond.fix = *fix;
-	case NAVPROC_SEG_TYPE_INIT_FIX:
-		leg->seg.leg_cmd.fix = *fix;
-	case NAVPROC_SEG_TYPE_HOLD_TO_ALT:
-	case NAVPROC_SEG_TYPE_HOLD_TO_FIX:
-	case NAVPROC_SEG_TYPE_HOLD_TO_MANUAL:
-		leg->seg.leg_cmd.hold.fix = *fix;
-	default:
-		assert(0);
-	}
+	navproc_seg_set_end_fix(&leg->seg, fix);
 }
 
 static bool_t
@@ -826,6 +788,553 @@ route_get_altn2_arpt(route_t *route)
 }
 
 /*
+ * Sets the departure runway of the route. Before setting this you must
+ * set the route's departure airport. Please note that setting the departure
+ * runway also deletes any previously defined departure procedures.
+ */
+err_t
+route_set_dep_rwy(route_t *route, const char *rwy_ID)
+{
+	char rwy_ID_long[RWY_ID_LEN + 1];
+	unsigned rwy_val;
+	runway_t *rwy = NULL;
+
+	if (route->dep == NULL)
+		return (ERR_ARPT_NOT_FOUND);
+
+	if (rwy_ID == NULL) {
+		route_set_sid(route, NULL);
+		route->dep_rwy = NULL;
+		return (ERR_OK);
+	}
+
+	rwy_val = atoi(rwy_ID);
+	if (strlen(rwy_ID) > RWY_ID_LEN)
+		return (ERR_INVALID_RWY);
+	if (rwy_val < 10 && rwy_ID[0] != '0') {
+		/* Prepend a '0' to make it a standard rwy_ID */
+		(void) strlcpy(&rwy_ID_long[1], rwy_ID,
+		    sizeof (rwy_ID_long) - 1);
+		rwy_ID_long[0] = '0';
+	} else {
+		(void) strlcpy(rwy_ID_long, rwy_ID, sizeof (rwy_ID_long));
+	}
+	if (!is_valid_rwy_ID(rwy_ID_long))
+		return (ERR_INVALID_RWY);
+
+	for (unsigned i = 0; i < route->dep->num_rwys; i++) {
+		if (strcmp(route->dep->rwys[i].ID, rwy_ID_long) == 0) {
+			rwy = &route->dep->rwys[i];
+			break;
+		}
+	}
+	if (rwy == NULL)
+		return (ERR_INVALID_RWY);
+	if (route->dep_rwy != rwy) {
+		if (route->sid != NULL)
+			route_set_sid(route, NULL);
+		route->dep_rwy = rwy;
+	}
+
+	return (ERR_OK);
+}
+
+/*
+ * Looks through the route leg groups and locates the first procedure route
+ * leg group with a navproc of type `type' and returns it. If no such rlg
+ * exists, returns NULL instead.
+ */
+static route_leg_group_t *
+route_find_proc_rlg(route_t *route, navproc_type_t type)
+{
+	for (route_leg_group_t *rlg = list_head(&route->leg_groups); rlg;
+	    rlg = list_next(&route->leg_groups, rlg)) {
+		if (rlg->type == ROUTE_LEG_GROUP_TYPE_PROC &&
+		    rlg->proc->type == type) {
+			/* SIDs must be first in the leg group sequence */
+			ASSERT(type != NAVPROC_TYPE_SID ||
+			    list_head(&route->leg_groups) == rlg);
+			/* FINALs must be last in the leg group sequence */
+			ASSERT(type != NAVPROC_TYPE_FINAL ||
+			    list_tail(&route->leg_groups) == rlg);
+			return (rlg);
+		}
+	}
+	return (NULL);
+}
+
+/*
+ * Given a navproc procedure type, will locate the route leg group that
+ * links to it and removes it. If the rlg doesn't exist, this function
+ * does nothing. If `reconnect' is true, if the removed rlg had neighbors
+ * to either side, they are force_connect'ed after removal of the rlg.
+ */
+static void
+route_delete_proc_rlg(route_t *route, navproc_type_t type, bool_t reconnect)
+{
+	route_leg_group_t *rlg = route_find_proc_rlg(route, type);
+
+	if (rlg != NULL) {
+		if (reconnect) {
+			route_leg_group_t *prev_rlg, *next_rlg;
+			prev_rlg = list_prev(&route->leg_groups, rlg);
+			next_rlg = list_next(&route->leg_groups, rlg);
+			rlg_destroy(route, rlg);
+			if (prev_rlg != NULL && next_rlg != NULL)
+				rlg_force_connect(route, prev_rlg, next_rlg);
+		} else {
+			rlg_destroy(route, rlg);
+		}
+	}
+}
+
+/*
+ * Given a navproc, constructs the corresponding route leg group and its
+ * legs and inserts the rlg after `prev_rlg' (or the start of the route
+ * if `prev_rlg' is NULL). This also inserts all of the rlg's legs. The
+ * function doesn't attempt connecting the rlg to its neighbors.
+ */
+static route_leg_group_t *
+route_insert_proc_rlg(route_t *route, const navproc_t *proc,
+    route_leg_group_t *prev_rlg)
+{
+	route_leg_group_t *rlg = rlg_new(ROUTE_LEG_GROUP_TYPE_PROC);
+	route_leg_t *prev_rl;
+
+	rlg->proc = proc;
+	list_insert_after(&route->leg_groups, rlg, prev_rlg);
+	prev_rl = last_leg_before_rlg(route, rlg);
+
+	/* Start inserting individual procedure legs */
+	for (unsigned i = 0; i < proc->num_segs; i++) {
+		route_leg_t *rl = calloc(sizeof (*rl), 1);
+		rl->seg = proc->segs[i];
+		rl->parent = rlg;
+		list_insert_tail(&rlg->legs, rl);
+		list_insert_after(&route->legs, prev_rl, rl);
+		prev_rl = rl;
+	}
+	ASSERT(!list_is_empty(&rlg->legs));
+	rlg->start_fix = navproc_get_start_fix(proc);
+	rlg->end_fix = *leg_get_end_fix(list_tail(&rlg->legs));
+
+	return (rlg);
+}
+
+/*
+ * Sets the standard departure procedure of the route and inserts the
+ * appropriate legs. If the route had a departure transition procedure
+ * set, it will be deleted. Before calling this function you must set
+ * the departure airport and departure runway.
+ */
+err_t
+route_set_sid(route_t *route, const char *sid_name)
+{
+	navproc_t		*sid = NULL, *sidcm = NULL;
+	route_leg_group_t	*sid_rlg = NULL, *sidcm_rlg = NULL, *rlg;
+	airport_t		*dep = route->dep;
+	runway_t		*dep_rwy = route->dep_rwy;
+
+	if (dep_rwy == NULL)
+		return (ERR_INVALID_INSERT);
+	ASSERT(dep != NULL);
+
+	if (sid_name == NULL) {
+		/*
+		 * No need to reconnect rlg's, because departure procedures
+		 * always come first.
+		 */
+		route_delete_proc_rlg(route, NAVPROC_TYPE_SID, B_FALSE);
+		route_delete_proc_rlg(route, NAVPROC_TYPE_SID_COMMON, B_FALSE);
+		route_delete_proc_rlg(route, NAVPROC_TYPE_SID_TRANS, B_FALSE);
+		route->sidtr = NULL;
+		route->sidcm = NULL;
+		route->sid = NULL;
+		return (ERR_OK);
+	}
+
+	/* Look for the SID */
+	for (unsigned i = 0; i < dep->num_procs; i++) {
+		if (dep->procs[i].type == NAVPROC_TYPE_SID &&
+		    strcmp(dep->procs[i].name, sid_name) == 0 &&
+		    strcmp(dep_rwy->ID, dep->procs[i].rwy->ID) == 0) {
+			sid = &dep->procs[i];
+			break;
+		}
+	}
+	/* Look for a matching SID_COMMON */
+	for (unsigned i = 0; i < dep->num_procs; i++) {
+		if (dep->procs[i].type == NAVPROC_TYPE_SID_COMMON &&
+		    strcmp(dep->procs[i].name, sid_name) == 0) {
+			sidcm = &dep->procs[i];
+			break;
+		}
+	}
+	/* We need at least one */
+	if (sid == NULL && sidcm == NULL)
+		return (ERR_INVALID_SID);
+
+	route_delete_proc_rlg(route, NAVPROC_TYPE_SID, B_FALSE);
+	route_delete_proc_rlg(route, NAVPROC_TYPE_SID_COMMON, B_FALSE);
+	route_delete_proc_rlg(route, NAVPROC_TYPE_SID_TRANS, B_FALSE);
+
+	if (sid != NULL) {
+		/* SID ~ RLG */
+		sid_rlg = route_insert_proc_rlg(route, sid, NULL);
+	}
+	if (sidcm != NULL) {
+		/* SID ~ SIDCM ~ RLG */
+		sidcm_rlg = route_insert_proc_rlg(route, sidcm, sid_rlg);
+		rlg = list_next(&route->leg_groups, sidcm_rlg);
+		if (rlg)
+			/* SID ~ SIDCM /click/ RLG */
+			rlg_force_connect(route, sidcm_rlg, rlg);
+	}
+	if (sid != NULL) {
+		rlg = list_next(&route->leg_groups, sid_rlg);
+		if (rlg != NULL)
+			/* SID /click/ SIDCM=RLG */
+			rlg_force_connect(route, sid_rlg, rlg);
+	}
+	/* SID=SIDCM=RLG */
+
+	route->sid = sid;
+	route->sidcm = sidcm;
+	route->sidtr = NULL;
+
+	return (ERR_OK);
+}
+
+/*
+ * Sets the standard departure transition procedure of the route and inserts
+ * the appropriate legs. If the route has no standard departure procedure
+ * yet set, this function will return with an INVALID INSERT error.
+ */
+err_t
+route_set_sidtr(route_t *route, const char *tr_name)
+{
+	navproc_t		*sidtr = NULL;
+	route_leg_group_t	*sidtr_rlg, *rlg, *prev_rlg = NULL;
+	airport_t		*dep = route->dep;
+	const char		*sid_name;
+
+	if (route->sid == NULL && route->sidcm == NULL)
+		return (ERR_INVALID_INSERT);
+	ASSERT(route->dep != NULL);
+	ASSERT(route->dep_rwy != NULL);
+
+	if (tr_name == NULL) {
+		route_delete_proc_rlg(route, NAVPROC_TYPE_SID_TRANS, B_TRUE);
+		route->sidtr = NULL;
+		return (ERR_OK);
+	}
+	sid_name = (route->sid ? route->sid->name : route->sidcm->name);
+
+	/* Try looking for the rlg's of the SID/SIDCM */
+	if (route->sidcm != NULL)
+		prev_rlg = route_find_proc_rlg(route, NAVPROC_TYPE_SID_COMMON);
+	if (route->sid != NULL && prev_rlg == NULL)
+		prev_rlg = route_find_proc_rlg(route, NAVPROC_TYPE_SID);
+
+	/* Look for the SIDTR */
+	for (unsigned i = 0; i < dep->num_procs; i++) {
+		if (dep->procs[i].type == NAVPROC_TYPE_SID_TRANS &&
+		    strcmp(dep->procs[i].name, sid_name) == 0 &&
+		    strcmp(tr_name, dep->procs[i].fix.name) == 0) {
+			sidtr = &dep->procs[i];
+			break;
+		}
+	}
+	if (sidtr == NULL)
+		return (ERR_INVALID_SID);
+
+	route_delete_proc_rlg(route, NAVPROC_TYPE_SID_TRANS, B_FALSE);
+
+	sidtr_rlg = route_insert_proc_rlg(route, sidtr, prev_rlg);
+	/* SID=SIDCM ~ SIDTR ~ RLG */
+	if (prev_rlg)
+		/* SID=SIDCM (click) SIDTR ~ RLG */
+		rlg_force_connect(route, prev_rlg, sidtr_rlg);
+	rlg = list_next(&route->leg_groups, sidtr_rlg);
+	if (rlg)
+		/* SID=SIDCM=SIDTR (click) RLG */
+		rlg_force_connect(route, sidtr_rlg, rlg);
+	/* SID=SIDCM=SIDTR=RLG */
+
+	route->sidtr = sidtr;
+
+	return (ERR_OK);
+}
+
+/*
+ * Sets the standard arrival procedure of the route and inserts the
+ * appropriate legs. If the route had an arrival transition procedure
+ * set, it will be deleted.
+ */
+err_t
+route_set_star(route_t *route, const char *star_name)
+{
+	navproc_t		*star = NULL, *starcm = NULL;
+	route_leg_group_t	*star_rlg, *starcm_rlg, *rlg, *next_rlg = NULL;
+	airport_t		*arr = route->arr;
+
+	if (arr == NULL)
+		return (ERR_ARPT_NOT_FOUND);
+
+	if (star_name == NULL) {
+		route_delete_proc_rlg(route, NAVPROC_TYPE_STAR_TRANS, B_FALSE);
+		route_delete_proc_rlg(route, NAVPROC_TYPE_STAR_COMMON, B_FALSE);
+		route_delete_proc_rlg(route, NAVPROC_TYPE_STAR, B_TRUE);
+		route->startr = NULL;
+		route->starcm = NULL;
+		route->star = NULL;
+		return (ERR_OK);
+	}
+
+	/* Look for a STAR_COMMON */
+	for (unsigned i = 0; i < arr->num_procs; i++) {
+		if (arr->procs[i].type == NAVPROC_TYPE_STAR_COMMON &&
+		    strcmp(arr->procs[i].name, star_name) == 0) {
+			starcm = &arr->procs[i];
+			break;
+		}
+	}
+	/* Look for the matching STAR */
+	for (unsigned i = 0; i < arr->num_procs; i++) {
+		if (arr->procs[i].type == NAVPROC_TYPE_STAR &&
+		    strcmp(arr->procs[i].name, star_name) == 0) {
+			star = &arr->procs[i];
+			break;
+		}
+	}
+	/* We need at least one */
+	if (starcm == NULL && star == NULL)
+		return (ERR_INVALID_STAR);
+
+	route_delete_proc_rlg(route, NAVPROC_TYPE_STAR_TRANS, B_FALSE);
+	route_delete_proc_rlg(route, NAVPROC_TYPE_STAR_COMMON, B_FALSE);
+	route_delete_proc_rlg(route, NAVPROC_TYPE_STAR, B_FALSE);
+
+	next_rlg = route_find_proc_rlg(route, NAVPROC_TYPE_FINAL_TRANS);
+	if (next_rlg == NULL)
+		next_rlg = route_find_proc_rlg(route, NAVPROC_TYPE_FINAL);
+
+	if (starcm != NULL) {
+		route_leg_group_t *prev_rlg =
+		    (next_rlg ? list_prev(&route->leg_groups, next_rlg) :
+		    list_tail(&route->leg_groups));
+
+		/* RLG=RLG ~ STARCM ~ FINALTR=FINAL */
+		starcm_rlg = route_insert_proc_rlg(route, starcm, prev_rlg);
+	}
+	if (star != NULL) {
+		route_leg_group_t *prev_rlg =
+		    (next_rlg ? list_prev(&route->leg_groups, next_rlg) :
+		    list_tail(&route->leg_groups));
+
+		/* RLG=RLG ~ STARCM ~ STAR ~ FINALTR=FINAL */
+		star_rlg = route_insert_proc_rlg(route, star, prev_rlg);
+		if (prev_rlg)
+			/* RLG=RLG ~ STARCM (click) STAR ~ FINALTR=FINAL */
+			rlg_force_connect(route, prev_rlg, star_rlg);
+		if (next_rlg)
+			/* RLG=RLG ~ STARCM=STAR (click) FINALTR=FINAL */
+			rlg_force_connect(route, star_rlg, next_rlg);
+	}
+	if (starcm != NULL) {
+		rlg = list_prev(&route->leg_groups, starcm_rlg);
+		if (rlg != NULL)
+			/* RLG=RLG (click) STARCM=STAR=FINALTR=FINAL */
+			rlg_force_connect(route, rlg, starcm_rlg);
+		/* RLG=RLG=STARCM=STAR=FINALTR=FINAL */
+	}
+
+	route->star = star;
+	route->starcm = starcm;
+	route->startr = NULL;
+
+	return (ERR_OK);
+}
+
+/*
+ * Sets the standard arrival transition procedure of the route and inserts the
+ * appropriate legs. If the route has no standard arrival procedure yet set,
+ * this function will return with an INVALID INSERT error.
+ */
+err_t
+route_set_startr(route_t *route, const char *tr_name)
+{
+	navproc_t		*startr = NULL;
+	route_leg_group_t	*startr_rlg, *next_rlg, *prev_rlg;
+	airport_t		*arr = route->arr;
+	const char		*star_name;
+
+	if (route->star == NULL)
+		return (ERR_INVALID_INSERT);
+	ASSERT(route->arr != NULL);
+
+	if (tr_name == NULL) {
+		route_delete_proc_rlg(route, NAVPROC_TYPE_STAR_TRANS, B_TRUE);
+		route->startr = NULL;
+		return (ERR_OK);
+	}
+	star_name = route->star->name;
+
+	/* Try looking for the rlg's of the STARCM/STAR/FINALTR/FINAL */
+	next_rlg = NULL;
+	if (route->starcm != NULL)
+		next_rlg = route_find_proc_rlg(route, NAVPROC_TYPE_STAR_COMMON);
+	if (route->star != NULL && next_rlg == NULL)
+		next_rlg = route_find_proc_rlg(route, NAVPROC_TYPE_STAR);
+	if (route->apprtr != NULL && next_rlg == NULL)
+		next_rlg = route_find_proc_rlg(route, NAVPROC_TYPE_FINAL_TRANS);
+	if (route->appr != NULL && next_rlg == NULL)
+		next_rlg = route_find_proc_rlg(route, NAVPROC_TYPE_FINAL);
+
+	/* Look for the STARTR */
+	for (unsigned i = 0; i < arr->num_procs; i++) {
+		if (arr->procs[i].type == NAVPROC_TYPE_STAR_TRANS &&
+		    strcmp(arr->procs[i].name, star_name) == 0 &&
+		    strcmp(tr_name, arr->procs[i].fix.name) == 0) {
+			startr = &arr->procs[i];
+			break;
+		}
+	}
+	if (startr == NULL)
+		return (ERR_INVALID_STAR);
+
+	route_delete_proc_rlg(route, NAVPROC_TYPE_STAR_TRANS, B_FALSE);
+
+	prev_rlg = (next_rlg ? list_prev(&route->leg_groups, next_rlg) : NULL);
+	startr_rlg = route_insert_proc_rlg(route, startr, prev_rlg);
+	/* RLG ~ STARTR ~ STARCM=STAR=FINALTR=FINAL */
+	if (prev_rlg)
+		/* RLG (click) STARTR ~ STARCM=STAR=FINALTR=FINAL */
+		rlg_force_connect(route, prev_rlg, startr_rlg);
+	if (next_rlg)
+		/* RLG=STARTR (click) STARCM=STAR=FINALTR=FINAL */
+		rlg_force_connect(route, startr_rlg, next_rlg);
+	/* RLG=STARTR=STARCM=STAR=FINALTR=FINAL */
+
+	route->startr = startr;
+
+	return (ERR_OK);
+}
+
+/*
+ * Sets the final approach procedure of the route and inserts the appropriate
+ * legs. If the route had an approach transition procedure set, it will be
+ * deleted.
+ */
+err_t
+route_set_appr(route_t *route, const char *appr_name)
+{
+	navproc_t		*appr = NULL;
+	route_leg_group_t	*appr_rlg, *prev_rlg;
+	airport_t		*arr = route->arr;
+
+	if (arr == NULL)
+		return (ERR_ARPT_NOT_FOUND);
+
+	if (appr_name == NULL) {
+		route_delete_proc_rlg(route, NAVPROC_TYPE_FINAL_TRANS, B_FALSE);
+		route_delete_proc_rlg(route, NAVPROC_TYPE_FINAL, B_FALSE);
+		route->apprtr = NULL;
+		route->appr = NULL;
+		return (ERR_OK);
+	}
+
+	/* Look for a FINAL */
+	for (unsigned i = 0; i < arr->num_procs; i++) {
+		if (arr->procs[i].type == NAVPROC_TYPE_FINAL &&
+		    strcmp(arr->procs[i].name, appr_name) == 0) {
+			appr = &arr->procs[i];
+			break;
+		}
+	}
+	/* We need at least one */
+	if (appr == NULL)
+		return (ERR_INVALID_FINAL);
+
+	route_delete_proc_rlg(route, NAVPROC_TYPE_FINAL_TRANS, B_FALSE);
+	route_delete_proc_rlg(route, NAVPROC_TYPE_FINAL, B_FALSE);
+
+	prev_rlg = list_tail(&route->leg_groups);
+
+	/* RLG=RLG=STARTR=STARCM=STAR ~ FINAL */
+	appr_rlg = route_insert_proc_rlg(route, appr, prev_rlg);
+	if (prev_rlg)
+		/* RLG=RLG=STARTR=STARCM=STAR (click) FINAL */
+		rlg_force_connect(route, prev_rlg, appr_rlg);
+	/* RLG=RLG=STARTR=STARCM=STAR=FINAL */
+
+	route->appr = appr;
+	route->apprtr = NULL;
+
+	return (ERR_OK);
+}
+
+/*
+ * Sets the final approach transition procedure of the route and inserts the
+ * appropriate legs. If the route has no final approach procedure yet set,
+ * this function will return with an INVALID INSERT error.
+ */
+err_t
+route_set_apprtr(route_t *route, const char *tr_name)
+{
+	navproc_t		*apprtr = NULL;
+	route_leg_group_t	*apprtr_rlg, *next_rlg, *prev_rlg;
+	airport_t		*arr = route->arr;
+	const char		*appr_name;
+
+	if (route->appr == NULL)
+		return (ERR_INVALID_INSERT);
+	ASSERT(route->arr != NULL);
+
+	if (tr_name == NULL) {
+		route_delete_proc_rlg(route, NAVPROC_TYPE_FINAL_TRANS, B_TRUE);
+		route->apprtr = NULL;
+		return (ERR_OK);
+	}
+	appr_name = route->appr->name;
+
+	/* Try looking for the rlg's of the FINAL */
+	next_rlg = NULL;
+	if (route->starcm != NULL)
+		next_rlg = route_find_proc_rlg(route, NAVPROC_TYPE_FINAL);
+	prev_rlg = (next_rlg ? list_prev(&route->leg_groups, next_rlg) : NULL);
+
+	/* Look for the FINALTR */
+	for (unsigned i = 0; i < arr->num_procs; i++) {
+		if (arr->procs[i].type == NAVPROC_TYPE_FINAL_TRANS &&
+		    strcmp(arr->procs[i].name, appr_name) == 0 &&
+		    strcmp(tr_name, arr->procs[i].fix.name) == 0) {
+			apprtr = &arr->procs[i];
+			break;
+		}
+	}
+	if (apprtr == NULL)
+		return (ERR_INVALID_FINAL);
+
+	route_delete_proc_rlg(route, NAVPROC_TYPE_FINAL_TRANS, B_FALSE);
+
+	prev_rlg = (next_rlg ? list_prev(&route->leg_groups, next_rlg) : NULL);
+	apprtr_rlg = route_insert_proc_rlg(route, apprtr, prev_rlg);
+	/* RLG=STARTR=STARCM=STAR ~ FINALTR ~ FINAL */
+	if (prev_rlg)
+		/* RLG=STARTR=STARCM=STAR (click) FINALTR ~ FINAL */
+		rlg_force_connect(route, prev_rlg, apprtr_rlg);
+	if (next_rlg)
+		/* RLG=STARTR=STARCM=STAR=FINALTR (click) FINAL */
+		rlg_force_connect(route, apprtr_rlg, next_rlg);
+	/* RLG=STARTR=STARCM=STAR=FINALTR=FINAL */
+
+	route->apprtr = apprtr;
+
+	return (ERR_OK);
+}
+
+/*
  * Returns the leg groups which constitute the route. This is a read-only
  * list. To edit the route, use the route editing functions.
  */
@@ -867,7 +1376,7 @@ route_lg_awy_insert(route_t *route, const char *awyname,
 
 	awy = airway_db_lookup(route->navdb->awydb, awyname, NULL, NULL, NULL);
 	if (!awy)
-		return (ERR_AWY_NOT_FOUND);
+		return (ERR_INVALID_AWY);
 	rlg = rlg_new(ROUTE_LEG_GROUP_TYPE_AIRWAY);
 	rlg->awy = awy;
 

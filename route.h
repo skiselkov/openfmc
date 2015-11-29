@@ -174,14 +174,15 @@ const airport_t *route_get_altn2_arpt(route_t *route);
 /*
  * Procedures
  */
-void route_set_dep_rwy(route_t *route, const char *rwy_ID);
-void route_set_sid(route_t *route, const char *sid_name);
-void route_set_sidtr(route_t *route, const char *sidtr_name);
+err_t route_set_dep_rwy(route_t *route, const char *rwy_ID);
+err_t route_set_sid(route_t *route, const char *sid_name);
+err_t route_set_sidtr(route_t *route, const char *tr_name);
 
-void route_set_star(route_t *route, const char *star_name);
-void route_set_startr(route_t *route, const char *startr_name);
-void route_set_appr(route_t *route, const char *appr_name);
-void route_set_apprtr(route_t *route, const char *apprtr_name);
+err_t route_set_star(route_t *route, const char *star_name);
+err_t route_set_startr(route_t *route, const char *tr_name);
+
+err_t route_set_appr(route_t *route, const char *appr_name);
+err_t route_set_apprtr(route_t *route, const char *apprtr_name);
 
 /*
  * Reading route legs & leg groups.
