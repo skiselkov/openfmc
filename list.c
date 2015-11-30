@@ -181,6 +181,7 @@ list_next(const list_t *list, const void *object)
 {
 	list_node_t *node = list_d2l(list, object);
 
+	ASSERT(list_link_active(node));
 	if (node->list_next != &list->list_head)
 		return (list_object(list, node->list_next));
 
@@ -192,6 +193,7 @@ list_prev(const list_t *list, const void *object)
 {
 	list_node_t *node = list_d2l(list, object);
 
+	ASSERT(list_link_active(node));
 	if (node->list_prev != &list->list_head)
 		return (list_object(list, node->list_prev));
 

@@ -52,7 +52,9 @@ typedef struct {
 } fix_t;
 const fix_t null_fix;
 #define	FIX_EQ(f1, f2)	\
-	(memcmp((f1), (f2), sizeof (fix_t)) == 0 && !IS_NULL_FIX((f1)))
+	(memcmp((f1)->name, (f2)->name, sizeof ((f1)->name)) == 0 && \
+	(f1)->pos.lat == (f2)->pos.lat && (f1)->pos.lon == (f2)->pos.lon && \
+	!IS_NULL_FIX((f1)))
 #define	FIX_EQ_POS(f1, f2) \
 	(!IS_NULL_FIX((f1)) && (f1)->pos.lat == (f2)->pos.lat && \
 	(f1)->pos.lon == (f2)->pos.lon)
@@ -276,7 +278,7 @@ typedef struct navproc_s {
 	navproc_type_t	type;
 	char		name[NAV_NAME_LEN];
 	airport_t	*arpt;		/* backref to parent airport_t */
-	fix_t		fix;
+	char		tr_name[NAV_NAME_LEN];
 	const runway_t	*rwy;
 	unsigned	num_segs;
 	navproc_seg_t	*segs;
@@ -288,6 +290,7 @@ typedef struct navproc_s {
 const fix_t *navproc_seg_get_start_fix(const navproc_seg_t *seg);
 const fix_t *navproc_seg_get_end_fix(const navproc_seg_t *seg);
 void navproc_seg_set_end_fix(navproc_seg_t *seg, const fix_t *fix);
+char *navproc_seg_get_descr(const navproc_seg_t *seg);
 
 fix_t navproc_get_start_fix(const navproc_t *proc);
 const fix_t *navproc_get_end_fix(const navproc_t *proc);

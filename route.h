@@ -118,10 +118,10 @@ typedef struct {
 	 *	4) sidtr: SID transition from SID/SID common segment to the
 	 *	   enroute structure.
 	 */
-	runway_t		*dep_rwy;
-	navproc_t		*sid;
-	navproc_t		*sidcm;
-	navproc_t		*sidtr;
+	const runway_t		*dep_rwy;
+	const navproc_t		*sid;
+	const navproc_t		*sidcm;
+	const navproc_t		*sidtr;
 
 	/*
 	 * Arrival procedure related info (in reverse order to departure):
@@ -135,11 +135,11 @@ typedef struct {
 	 * Arrival procedures can be selected from either the `arr', `altn1'
 	 * or `altn2' airports.
 	 */
-	navproc_t		*startr;
-	navproc_t		*starcm;
-	navproc_t		*star;
-	navproc_t		*apprtr;
-	navproc_t		*appr;
+	const navproc_t		*startr;
+	const navproc_t		*starcm;
+	const navproc_t		*star;
+	const navproc_t		*apprtr;
+	const navproc_t		*appr;
 
 	list_t			leg_groups;
 	list_t			legs;
@@ -184,11 +184,21 @@ err_t route_set_startr(route_t *route, const char *tr_name);
 err_t route_set_appr(route_t *route, const char *appr_name);
 err_t route_set_apprtr(route_t *route, const char *apprtr_name);
 
+const runway_t *route_get_dep_rwy(const route_t *route);
+const navproc_t *route_get_sid(const route_t *route);
+const navproc_t *route_get_sidtr(const route_t *route);
+
+const navproc_t *route_get_star(const route_t *route);
+const navproc_t *route_get_startr(const route_t *route);
+
+const navproc_t *route_get_appr(const route_t *route);
+const navproc_t *route_get_apprtr(const route_t *route);
+
 /*
  * Reading route legs & leg groups.
  */
-const list_t *route_leg_groups(const route_t *route);
-const list_t *route_legs(const route_t *route);
+const list_t *route_get_leg_groups(const route_t *route);
+const list_t *route_get_legs(const route_t *route);
 
 /*
  * Editing route leg groups.

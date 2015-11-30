@@ -976,34 +976,34 @@ static bool_t
 proc_navaid_lookup(const char *name, fix_t *fix, const airport_t *arpt,
     const waypoint_db_t *wptdb, const navaid_db_t *navdb, navaid_type_t type)
 {
-	geo_pos2_t	pos_fix = NULL_GEO_POS2, pos_navaid = NULL_GEO_POS2;
+	geo_pos2_t	fix_pos = NULL_GEO_POS2, navaid_pos = NULL_GEO_POS2;
 	geo_pos2_t	pos;
 
 	if (wptdb != NULL)
-		pos_fix = find_nearest(name, arpt->refpt, wptdb, NULL, type);
-	if (navdb)
-		pos_navaid = find_nearest(name, arpt->refpt, NULL, navdb, type);
+		fix_pos = find_nearest(name, arpt->refpt, wptdb, NULL, type);
+	if (navdb != NULL)
+		navaid_pos = find_nearest(name, arpt->refpt, NULL, navdb, type);
 
-	if (IS_NULL_GEO_POS(pos_fix) && IS_NULL_GEO_POS(pos_navaid)) {
+	if (IS_NULL_GEO_POS(fix_pos) && IS_NULL_GEO_POS(navaid_pos)) {
 		openfmc_log(OPENFMC_LOG_ERR, "Error looking up fix/navaid "
 		    "\"%s\" for arpt %s procedure: no fix/navaid of type %s "
 		    "found.", name, arpt->icao, navaid_type_name(type));
 		return (B_FALSE);
-	} else if (!IS_NULL_GEO_POS(pos_fix) && IS_NULL_GEO_POS(pos_navaid)) {
-		pos = pos_fix;
-	} else if (IS_NULL_GEO_POS(pos_fix) && !IS_NULL_GEO_POS(pos_navaid)) {
-		pos = pos_navaid;
+	} else if (!IS_NULL_GEO_POS(fix_pos) && IS_NULL_GEO_POS(navaid_pos)) {
+		pos = fix_pos;
+	} else if (IS_NULL_GEO_POS(fix_pos) && !IS_NULL_GEO_POS(navaid_pos)) {
+		pos = navaid_pos;
 	} else {
 		/* Found both, resolve conflict, pick the closest one */
 		vect3_t refpt_v = geo2vect(arpt->refpt);
-		vect3_t fix_v = geo2vect(GEO2_TO_GEO3(pos_fix, 0));
-		vect3_t navaid_v = geo2vect(GEO2_TO_GEO3(pos_navaid, 0));
+		vect3_t fix_v = geo2vect(GEO2_TO_GEO3(fix_pos, 0));
+		vect3_t navaid_v = geo2vect(GEO2_TO_GEO3(navaid_pos, 0));
 		vect3_t r2f = vect3_sub(refpt_v, fix_v);
 		vect3_t r2n = vect3_sub(refpt_v, navaid_v);
 		if (vect3_abs(r2f) < vect3_abs(r2n))
-			pos = pos_fix;
+			pos = fix_pos;
 		else
-			pos = pos_navaid;
+			pos = navaid_pos;
 	}
 
 	memset(fix, 0, sizeof (*fix));
@@ -1108,19 +1108,15 @@ errout:
 }
 
 static bool_t
-parse_sid_proc_line(const waypoint_db_t *wptdb, const navaid_db_t *navaiddb,
-    const airport_t *arpt, char **comps, size_t num_comps, navproc_t *proc)
+parse_sid_proc_line(const airport_t *arpt, char **comps, size_t num_comps,
+    navproc_t *proc)
 {
 	if (num_comps != 4) {
 		openfmc_log(OPENFMC_LOG_ERR, "Error parsing SID line: "
 		    "incorrect number of columns.");
 		return (B_FALSE);
 	}
-	if (!STRLCPY_CHECK(proc->name, comps[1])) {
-		openfmc_log(OPENFMC_LOG_ERR, "Error parsing SID line: "
-		    "procedure name too long.");
-		return (B_FALSE);
-	}
+	STRLCPY_CHECK_ERROUT(proc->name, comps[1]);
 	if (is_valid_rwy_ID(comps[2])) {
 		proc->type = NAVPROC_TYPE_SID;
 		proc->rwy = airport_find_rwy_by_ID(arpt, comps[2]);
@@ -1134,27 +1130,23 @@ parse_sid_proc_line(const waypoint_db_t *wptdb, const navaid_db_t *navaiddb,
 		proc->type = NAVPROC_TYPE_SID_COMMON;
 	} else {
 		proc->type = NAVPROC_TYPE_SID_TRANS;
-		if (!proc_navaid_lookup(comps[2], &proc->fix, arpt,
-		    wptdb, navaiddb, NAVAID_TYPE_ANY))
-			return (B_FALSE);
+		STRLCPY_CHECK_ERROUT(proc->tr_name, comps[2]);
 	}
 	return (B_TRUE);
+errout:
+	return (B_FALSE);
 }
 
 static bool_t
-parse_star_proc_line(const waypoint_db_t *wptdb, const navaid_db_t *navaiddb,
-    const airport_t *arpt, char **comps, size_t num_comps, navproc_t *proc)
+parse_star_proc_line(const airport_t *arpt, char **comps, size_t num_comps,
+    navproc_t *proc)
 {
 	if (num_comps != 4) {
 		openfmc_log(OPENFMC_LOG_ERR, "Error parsing STAR line: "
 		    "incorrect number of columns.");
 		return (B_FALSE);
 	}
-	if (!STRLCPY_CHECK(proc->name, comps[1])) {
-		openfmc_log(OPENFMC_LOG_ERR, "Error parsing STAR line: "
-		    "procedure name too long.");
-		return (B_FALSE);
-	}
+	STRLCPY_CHECK_ERROUT(proc->name, comps[1]);
 	if (is_valid_rwy_ID(comps[2])) {
 		proc->type = NAVPROC_TYPE_STAR;
 		proc->rwy = airport_find_rwy_by_ID(arpt, comps[2]);
@@ -1168,16 +1160,16 @@ parse_star_proc_line(const waypoint_db_t *wptdb, const navaid_db_t *navaiddb,
 		proc->type = NAVPROC_TYPE_STAR_COMMON;
 	} else {
 		proc->type = NAVPROC_TYPE_STAR_TRANS;
-		if (!proc_navaid_lookup(comps[2], &proc->fix, arpt,
-		    wptdb, navaiddb, NAVAID_TYPE_ANY))
-			return (B_FALSE);
+		STRLCPY_CHECK_ERROUT(proc->tr_name, comps[2]);
 	}
 	return (B_TRUE);
+errout:
+	return (B_FALSE);
 }
 
 static bool_t
-parse_apptr_proc_line(const waypoint_db_t *wptdb, const navaid_db_t *navaiddb,
-    const airport_t *arpt, char **comps, size_t num_comps, navproc_t *proc)
+parse_apptr_proc_line(const airport_t *arpt, char **comps, size_t num_comps,
+    navproc_t *proc)
 {
 	if (num_comps != 4) {
 		openfmc_log(OPENFMC_LOG_ERR, "Error parsing APPTR line: "
@@ -1193,9 +1185,7 @@ parse_apptr_proc_line(const waypoint_db_t *wptdb, const navaid_db_t *navaiddb,
 		    comps[2]);
 		return (B_FALSE);
 	}
-	if (!proc_navaid_lookup(comps[3], &proc->fix, arpt, wptdb, navaiddb,
-	    NAVAID_TYPE_ANY))
-		return (B_FALSE);
+	STRLCPY_CHECK_ERROUT(proc->tr_name, comps[3]);
 	return (B_TRUE);
 errout:	/* needed for STRLCPY_CHECK_ERROUT */
 	return (B_FALSE);
@@ -2160,15 +2150,34 @@ navproc_seg_set_end_fix(navproc_seg_t *seg, const fix_t *fix)
 	case NAVPROC_SEG_TYPE_TRK_TO_FIX:
 	case NAVPROC_SEG_TYPE_HDG_TO_INTCP:
 		seg->term_cond.fix = *fix;
+		break;
 	case NAVPROC_SEG_TYPE_INIT_FIX:
 		seg->leg_cmd.fix = *fix;
+		break;
 	case NAVPROC_SEG_TYPE_HOLD_TO_ALT:
 	case NAVPROC_SEG_TYPE_HOLD_TO_FIX:
 	case NAVPROC_SEG_TYPE_HOLD_TO_MANUAL:
 		seg->leg_cmd.hold.fix = *fix;
+		break;
 	default:
 		assert(0);
 	}
+}
+
+/*
+ * Returns a malloc'd string describing the specified navproc. The caller
+ * is responsible for freeing the string.
+ */
+char *
+navproc_seg_get_descr(const navproc_seg_t *seg)
+{
+	char *result = NULL;
+	size_t result_sz = 0;
+
+	ASSERT(seg->type < NAVPROC_SEG_TYPES);
+	navproc_seg_dump_funcs[seg->type](&result, &result_sz, seg);
+
+	return (result);
 }
 
 /*
@@ -2228,16 +2237,13 @@ parse_proc(FILE *fp, navproc_t *proc, airport_t *arpt,
 	ASSERT(num_comps != 0);
 
 	if (strcmp(comps[0], "SID") == 0) {
-		if (!parse_sid_proc_line(wptdb, navdb, arpt, comps,
-		    num_comps, proc))
+		if (!parse_sid_proc_line(arpt, comps, num_comps, proc))
 			goto errout;
 	} else if (strcmp(comps[0], "STAR") == 0) {
-		if (!parse_star_proc_line(wptdb, navdb, arpt, comps,
-		    num_comps, proc))
+		if (!parse_star_proc_line(arpt, comps, num_comps, proc))
 			goto errout;
 	} else if (strcmp(comps[0], "APPTR") == 0) {
-		if (!parse_apptr_proc_line(wptdb, navdb, arpt, comps,
-		    num_comps, proc))
+		if (!parse_apptr_proc_line(arpt, comps, num_comps, proc))
 			goto errout;
 	} else if (strcmp(comps[0], "FINAL") == 0) {
 		if (!parse_final_proc_line(arpt, comps, num_comps, proc))
@@ -2263,13 +2269,6 @@ parse_proc(FILE *fp, navproc_t *proc, airport_t *arpt,
 	    IS_NULL_FIX(navproc_seg_get_start_fix(&proc->segs[0]))) {
 		openfmc_log(OPENFMC_LOG_ERR, "Error parsing %s procedure "
 		    "\"%s\": procedure doesn't start with appropriate leg.",
-		    navproc_type_to_str[proc->type], proc->name);
-		goto errout;
-	}
-	if (IS_NULL_FIX(navproc_seg_get_end_fix(
-	    &proc->segs[proc->num_segs - 1]))) {
-		openfmc_log(OPENFMC_LOG_ERR, "Error parsing %s procedure "
-		    "\"%s\": procedure doesn't end on a fix.",
 		    navproc_type_to_str[proc->type], proc->name);
 		goto errout;
 	}
@@ -2466,7 +2465,7 @@ airport_dump(const airport_t *arpt)
 		    "    %-7s %6s%7s%s %s\n"
 		    "      Segments (%u/%u):\n",
 		    navproc_type_to_str[proc->type], proc->name, final_type,
-		    proc->rwy->ID, proc->fix.name,
+		    proc->rwy->ID, proc->tr_name,
 		    proc->num_segs, proc->num_main_segs);
 		for (unsigned j = 0; j < proc->num_segs; j++)
 			navproc_seg_dump_funcs[proc->segs[j].type](&result,

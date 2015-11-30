@@ -29,11 +29,14 @@
 #include <unistd.h>
 #include <errno.h>
 #include <cairo.h>
+#include <ctype.h>
 
 #include <png.h>
 
 #include "helpers.h"
 #include "airac.h"
+#include "route.h"
+#include "htbl.h"
 
 #define	IMGH		1200
 #define	IMGW		1200
@@ -389,12 +392,365 @@ test_geo_xlate(void)
 	printf("pos.lat: %lf  pos.lon: %lf\n", pos.lat, pos.lon);
 }
 
+static void
+dump_route(route_t *route)
+{
+	const airport_t *dep, *arr, *altn1, *altn2;
+	const runway_t *dep_rwy;
+	const navproc_t *sid, *sidtr, *star, *startr, *appr, *apprtr;
+
+	dep = route_get_dep_arpt(route);
+	arr = route_get_arr_arpt(route);
+	altn1 = route_get_altn1_arpt(route);
+	altn2 = route_get_altn2_arpt(route);
+
+	dep_rwy = route_get_dep_rwy(route);
+	sid = route_get_sid(route);
+	sidtr = route_get_sidtr(route);
+
+	star = route_get_star(route);
+	startr = route_get_startr(route);
+
+	appr = route_get_appr(route);
+	apprtr = route_get_apprtr(route);
+
+	printf(
+	    " ORIGIN                  DEST\n"
+	    "%4s                   %4s\n"
+	    " ALTN1                  ALTN2\n"
+	    "%4s                   %4s\n"
+	    " RUNWAY\n"
+	    "%s\n",
+	    dep ? dep->icao : "", arr ? arr->icao : "",
+	    altn1 ? altn1->icao : "", altn2 ? altn2->icao : "",
+	    dep_rwy ? dep_rwy->ID : "");
+
+	printf(
+	    " SID: %-6s   TRANS: %-6s\n"
+	    "STAR: %-6s   TRANS: %-6s\n"
+	    "APPR: %-6s   TRANS: %-6s\n",
+	    sid ? sid->name : "", sidtr ? sidtr->tr_name : "",
+	    star ? star->name : "", startr ? startr->tr_name : "",
+	    appr ? appr->name : "", apprtr ? apprtr->tr_name : "");
+}
+
+static void
+strtolower(char *str)
+{
+	while (*str) {
+		*str = tolower(*str);
+		str++;
+	}
+}
+
+void
+dump_route_leg_group(const route_leg_group_t *rlg, int idx)
+{
+#define	END_FIX_NAME(f) \
+	(*(f)->name != 0 ? (f)->name : "VECTORS")
+	switch (rlg->type) {
+	case ROUTE_LEG_GROUP_TYPE_AIRWAY:
+		printf("%3d %s\t\t%7s\n", idx,
+		    rlg->awy->name, !IS_NULL_FIX(&rlg->end_fix) ?
+		    rlg->end_fix.name : "");
+		break;
+	case ROUTE_LEG_GROUP_TYPE_DIRECT:
+		printf("%3d DIRECT\t\t%7s\n", idx,
+		    rlg->end_fix.name);
+		break;
+	case ROUTE_LEG_GROUP_TYPE_PROC:
+		switch (rlg->proc->type) {
+		case NAVPROC_TYPE_SID:
+			printf("%3d %s.%s\t\t%7s\n", idx,
+			    rlg->proc->rwy->ID, rlg->proc->name,
+			    END_FIX_NAME(&rlg->end_fix));
+			break;
+		case NAVPROC_TYPE_STAR:
+			printf("%3d %s\t\t%7s\n", idx,
+			    rlg->proc->name, END_FIX_NAME(&rlg->end_fix));
+			break;
+		case NAVPROC_TYPE_FINAL:
+			printf("%3d %s  \t\t%7s\n", idx,
+			    rlg->proc->name, END_FIX_NAME(&rlg->end_fix));
+			break;
+		case NAVPROC_TYPE_SID_COMMON:
+			printf("%3d %s.ALL\t\t%7s\n", idx,
+			    rlg->proc->name, END_FIX_NAME(&rlg->end_fix));
+			break;
+		case NAVPROC_TYPE_STAR_COMMON:
+			printf("%3d ALL.%s\t\t%7s\n", idx,
+			    rlg->proc->name, END_FIX_NAME(&rlg->end_fix));
+			break;
+		case NAVPROC_TYPE_SID_TRANS:
+			printf("%3d %s.%s\t\t%7s\n", idx,
+			    rlg->proc->name, rlg->proc->tr_name,
+			    END_FIX_NAME(&rlg->end_fix));
+			break;
+		case NAVPROC_TYPE_STAR_TRANS:
+			printf("%3d %s.%s\t%7s\n", idx,
+			    rlg->proc->tr_name, rlg->proc->name,
+			    END_FIX_NAME(&rlg->end_fix));
+			break;
+		case NAVPROC_TYPE_FINAL_TRANS:
+			printf("%3d %s.%s\t\t%7s\n", idx,
+			    rlg->proc->tr_name, rlg->proc->name,
+			    END_FIX_NAME(&rlg->end_fix));
+			break;
+		default:
+			assert(0);
+		}
+		break;
+	case ROUTE_LEG_GROUP_TYPE_DISCO:
+		printf("%3d --- ROUTE DISCONTINUITY ---\n", idx);
+		break;
+	default:
+		break;
+	}
+}
+
+static void
+dump_route_leg_groups(const route_t *route)
+{
+	const list_t *leg_groups = route_get_leg_groups(route);
+	int i = 0;
+
+	printf("### VIA\t\t\t%7s\n", "TO");
+	for (const route_leg_group_t *rlg = list_head(leg_groups); rlg;
+	    rlg = list_next(leg_groups, rlg)) {
+		dump_route_leg_group(rlg, i);
+		i++;
+	}
+}
+
+static void
+dump_route_legs(const route_t *route)
+{
+	int i = 0;
+	const list_t *leg_groups = route_get_leg_groups(route);
+
+	for (const route_leg_group_t *rlg = list_head(leg_groups); rlg != NULL;
+	    rlg = list_next(leg_groups, rlg)) {
+		dump_route_leg_group(rlg, -1);
+		for (const route_leg_t *rl = list_head(&rlg->legs); rl;
+		    rl = list_next(&rlg->legs, rl)) {
+			if (!rl->disco) {
+				char *desc = navproc_seg_get_descr(&rl->seg);
+				printf("%3d%s\n", i, desc);
+				free(desc);
+			} else {
+				printf("%3d    [###################]\n", i);
+			}
+			i++;
+		}
+	}
+}
+
+const route_leg_group_t *
+find_rlg(route_t *route, int idx)
+{
+	const list_t *leg_groups = route_get_leg_groups(route);
+	int i = 0;
+	const route_leg_group_t *res = NULL;
+
+	for (res = list_head(leg_groups); res;
+	    res = list_next(leg_groups, res)) {
+		if (i >= idx)
+			break;
+		i++;
+	}
+	return (res);
+}
+
+const route_leg_t *
+find_rl(route_t *route, int idx)
+{
+	const list_t *legs = route_get_legs(route);
+	int i = 0;
+	const route_leg_t *res = NULL;
+
+	for (res = list_head(legs); res; res = list_next(legs, res)) {
+		if (i >= idx)
+			break;
+		i++;
+	}
+	return (res);
+}
+
+fix_t
+find_fix(const char fix_name[NAV_NAME_LEN], waypoint_db_t *wptdb,
+    navaid_db_t *navaiddb)
+{
+	fix_t res;
+	const list_t *list;
+
+	memset(&res, 0, sizeof (res));
+	list = htbl_lookup_multi(&wptdb->by_name, fix_name);
+	if (list != NULL) {
+		res = *(fix_t *)HTBL_VALUE_MULTI(list_head(list));
+	} else {
+		list = htbl_lookup_multi(&navaiddb->by_id, fix_name);
+		if (list != NULL) {
+			const navaid_t *navaid =
+			    HTBL_VALUE_MULTI(list_head(list));
+			strlcpy(res.name, fix_name, sizeof (res.name));
+			res.pos = GEO3_TO_GEO2(navaid->pos);
+		}
+	}
+	return (res);
+}
+
+void
+test_route(char *navdata_dir)
+{
+	airway_db_t	*awydb;
+	waypoint_db_t	*wptdb;
+	navaid_db_t	*navaiddb;
+	char		cmd[64];
+	route_t		*route = NULL;
+	fms_navdb_t	navdb;
+
+	memset(cmd, 0, sizeof (cmd));
+	navaiddb = navaid_db_open(navdata_dir);
+	wptdb = waypoint_db_open(navdata_dir);
+	if (!wptdb || !navaiddb)
+		exit(EXIT_FAILURE);
+	awydb = airway_db_open(navdata_dir, htbl_count(&wptdb->by_name));
+	if (!awydb)
+		exit(EXIT_FAILURE);
+
+	navdb.navdata_dir = navdata_dir;
+	navdb.awydb = awydb;
+	navdb.wptdb = wptdb;
+	navdb.navaiddb = navaiddb;
+	route = route_create(&navdb);
+
+	while (!feof(stdin)) {
+		err_t err = ERR_OK;
+
+		if (scanf("%63s", cmd) != 1)
+			continue;
+		strtolower(cmd);
+		if (strcmp(cmd, "exit") == 0) {
+			break;
+		}
+#define	SET_RTE_PARAM_CMD(cmdname, func) \
+	do { \
+		if (strcmp(cmd, cmdname) == 0) { \
+			char	param[8]; \
+			if (scanf("%7s", param) != 1) \
+				continue; \
+			if (strcmp(param, "NULL") == 0) \
+				err = func(route, NULL); \
+			else \
+				err = func(route, param); \
+		} \
+	} while (0)
+		SET_RTE_PARAM_CMD("origin", route_set_dep_arpt);
+		SET_RTE_PARAM_CMD("dest", route_set_arr_arpt);
+		SET_RTE_PARAM_CMD("altn1", route_set_altn1_arpt);
+		SET_RTE_PARAM_CMD("altn2", route_set_altn2_arpt);
+		SET_RTE_PARAM_CMD("runway", route_set_dep_rwy);
+		SET_RTE_PARAM_CMD("sid", route_set_sid);
+		SET_RTE_PARAM_CMD("sidtr", route_set_sidtr);
+		SET_RTE_PARAM_CMD("star", route_set_star);
+		SET_RTE_PARAM_CMD("startr", route_set_startr);
+		SET_RTE_PARAM_CMD("appr", route_set_appr);
+		SET_RTE_PARAM_CMD("apprtr", route_set_apprtr);
+
+		if (strcmp(cmd, "p") == 0) {
+			dump_route(route);
+		} else if (strcmp(cmd, "via") == 0) {
+			char idx_str[8];
+			char awy_name[NAV_NAME_LEN];
+			const route_leg_group_t *prev_rlg;
+
+			memset(awy_name, 0, sizeof (awy_name));
+			if (scanf("%7s %7s", idx_str, awy_name) != 2)
+				continue;
+			prev_rlg = find_rlg(route, atoi(idx_str) - 1);
+			err = route_lg_awy_insert(route, awy_name, prev_rlg,
+			    NULL);
+		} else if (strcmp(cmd, "to") == 0) {
+			char idx_str[8];
+			char fix_name[NAV_NAME_LEN];
+			const route_leg_group_t *rlg;
+
+			memset(fix_name, 0, sizeof (fix_name));
+			if (scanf("%7s %31s", idx_str, fix_name) != 2)
+				continue;
+			rlg = find_rlg(route, atoi(idx_str));
+			err = route_lg_awy_set_end_fix(route, rlg, fix_name);
+		} else if (strcmp(cmd, "dir") == 0) {
+			char idx_str[8];
+			char fix_name[NAV_NAME_LEN];
+			const route_leg_group_t *prev_rlg;
+			fix_t fix;
+
+			memset(fix_name, 0, sizeof (fix_name));
+			if (scanf("%7s %7s", idx_str, fix_name) != 2)
+				continue;
+			fix = find_fix(fix_name, wptdb, navaiddb);
+			if (IS_NULL_FIX(&fix)) {
+				fprintf(stderr, "%s NOT FOUND\n", fix_name);
+				continue;
+			}
+			prev_rlg = find_rlg(route, atoi(idx_str) - 1);
+			route_lg_direct_insert(route, &fix, prev_rlg, NULL);
+		} else if (strcmp(cmd, "ldir") == 0) {
+			char idx_str[8];
+			char fix_name[NAV_NAME_LEN];
+			const route_leg_t *prev_rl;
+			fix_t fix;
+
+			memset(fix_name, 0, sizeof (fix_name));
+			if (scanf("%7s %7s", idx_str, fix_name) != 2)
+				continue;
+			fix = find_fix(fix_name, wptdb, navaiddb);
+			if (IS_NULL_FIX(&fix)) {
+				fprintf(stderr, "%s NOT FOUND\n", fix_name);
+				continue;
+			}
+			prev_rl = find_rl(route, atoi(idx_str) - 1);
+			err = route_l_insert(route, &fix, prev_rl, NULL);
+		} else if (strcmp(cmd, "rm") == 0) {
+			char idx_str[8];
+			const route_leg_group_t *rlg;
+			if (scanf("%7s", idx_str) != 1)
+				continue;
+			rlg = find_rlg(route, atoi(idx_str));
+			err = route_lg_delete(route, rlg);
+		} else if (strcmp(cmd, "lrm") == 0) {
+			char idx_str[8];
+			const route_leg_t *rl;
+			if (scanf("%7s", idx_str) != 1)
+				continue;
+			rl = find_rl(route, atoi(idx_str));
+			route_l_delete(route, rl);
+		} else if (strcmp(cmd, "r") == 0) {
+			dump_route_leg_groups(route);
+		} else if (strcmp(cmd, "l") == 0) {
+			dump_route_legs(route);
+		}
+
+		if (err != ERR_OK) {
+			fprintf(stderr, "%s\n", err2str(err));
+			continue;
+		}
+
+	}
+
+	route_destroy(route);
+	airway_db_close(awydb);
+	waypoint_db_close(wptdb);
+	navaid_db_close(navaiddb);
+}
+
 int
 main(int argc, char **argv)
 {
 	UNUSED(argc);
 	UNUSED(argv);
-/*
+
 	char opt;
 	const char *dump = "";
 
@@ -413,15 +769,17 @@ main(int argc, char **argv)
 	}
 
 	if (argc - optind != 1) {
-		fprintf(stderr, "Missing navdata argument\n");
+		fprintf(stderr, "Missing navdata_dir argument\n");
 		return (1);
 	}
 
+/*
 	test_airac(argv[optind], dump);
 	test_lcc(40, 30, 50);
-*/
 	test_fpp();
 	test_geo_xlate();
+*/
+	test_route(argv[optind]);
 
 	return (0);
 }

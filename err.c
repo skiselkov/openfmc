@@ -41,7 +41,8 @@ static const char *err_name_tbl[NUM_ERRS] = {
 	"INVALID RWY",
 	"INVALID SID",
 	"INVALID STAR",
-	"INVALID FINAL"
+	"INVALID FINAL",
+	"INVALID TRANS"
 };
 
 const char *
