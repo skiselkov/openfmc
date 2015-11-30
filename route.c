@@ -30,9 +30,9 @@
 #include "route.h"
 
 static void rlg_connect(route_t *route, route_leg_group_t *prev_rlg,
-    route_leg_group_t *next_rlg, bool_t allow_mod);
+    route_leg_group_t *next_rlg, bool_t allow_mod, bool_t allow_add_legs);
 static void rlg_bypass(route_t *route, route_leg_group_t *rlg,
-    bool_t allow_mod);
+    bool_t allow_mod, bool_t allow_add_legs);
 static route_leg_t * last_leg_before_rlg(route_t *route,
     route_leg_group_t *rlg);
 static bool_t is_intc_leg(const route_leg_t *rl);
@@ -453,7 +453,7 @@ route_remove_arpt_links(route_t *route, const airport_t *arpt)
 		route_leg_group_t *rlg_next = rlg_next_ndisc(route, rlg);
 		if (rlg->type == ROUTE_LEG_GROUP_TYPE_PROC &&
 		    rlg->proc->arpt == arpt) {
-			rlg_bypass(route, rlg, B_FALSE);
+			rlg_bypass(route, rlg, B_FALSE, B_FALSE);
 		}
 		rlg = rlg_next;
 	}
@@ -522,7 +522,7 @@ is_intc_leg(const route_leg_t *rl)
  */
 static err_t
 rlg_try_connect(route_t *route, route_leg_group_t *prev_rlg,
-    route_leg_group_t **next_rlgpp, bool_t allow_mod)
+    route_leg_group_t **next_rlgpp, bool_t allow_mod, bool_t allow_add_legs)
 {
 	route_leg_group_t *next_rlg = *next_rlgpp;
 
@@ -549,7 +549,7 @@ rlg_try_connect(route_t *route, route_leg_group_t *prev_rlg,
 			if (FIX_EQ(&prev_rlg->end_fix, &next_rlg->start_fix))
 				break;
 
-			if (!allow_mod)
+			if (!allow_mod || !allow_add_legs)
 				return (ERR_AWY_AWY_MISMATCH);
 
 			/* locate: AWY x AWY */
@@ -573,7 +573,8 @@ rlg_try_connect(route_t *route, route_leg_group_t *prev_rlg,
 			rlg_update_awy_legs(route, next_rlg, B_TRUE);
 			if (awy_end_overlap) {
 				rlg_connect(route, next_rlg,
-				    rlg_next_ndisc(route, next_rlg), allow_mod);
+				    rlg_next_ndisc(route, next_rlg), allow_mod,
+				    allow_add_legs);
 			}
 			route->segs_dirty = B_TRUE;
 			break;
@@ -691,7 +692,8 @@ rlg_try_connect(route_t *route, route_leg_group_t *prev_rlg,
 					    rlg_next_ndisc(route, next_rlg);
 					rlg_destroy(route, next_rlg);
 					rlg_connect(route, prev_rlg,
-					    new_next_rlg, B_TRUE);
+					    new_next_rlg, B_TRUE,
+					    allow_add_legs);
 					*next_rlgpp = NULL;
 					break;
 				} else {
@@ -800,7 +802,7 @@ rlg_bring_together(route_t *route, route_leg_group_t *prev_rlg,
  */
 static void
 rlg_connect(route_t *route, route_leg_group_t *prev_rlg,
-    route_leg_group_t *next_rlg, bool_t allow_mod)
+    route_leg_group_t *next_rlg, bool_t allow_mod, bool_t allow_add_legs)
 {
 	/*
 	 * If both pointers are NULL, the route leg group list must be empty,
@@ -847,8 +849,8 @@ rlg_connect(route_t *route, route_leg_group_t *prev_rlg,
 		/* Kill one disco and we're done */
 		rlg_bring_together(route, prev_rlg, next_rlg);
 		rlg_destroy(route, next_rlg);
-	} else if (rlg_try_connect(route, prev_rlg, &next_rlg, allow_mod) ==
-	    ERR_OK) {
+	} else if (rlg_try_connect(route, prev_rlg, &next_rlg, allow_mod,
+	    allow_add_legs) == ERR_OK) {
 		/* Need to recheck that the next leg wasn't deleted as dup */
 		if (next_rlg != NULL) {
 			/* Connection succeeded, delete any intervening legs */
@@ -866,10 +868,13 @@ rlg_connect(route_t *route, route_leg_group_t *prev_rlg,
  * Given a route leg group, attempts to reconnect it to its non-DISCO neighbors.
  */
 void
-rlg_connect_neigh(route_t *route, route_leg_group_t *rlg, bool_t allow_mod)
+rlg_connect_neigh(route_t *route, route_leg_group_t *rlg, bool_t allow_mod,
+    bool_t allow_add_legs)
 {
-	rlg_connect(route, rlg_prev_ndisc(route, rlg), rlg, allow_mod);
-	rlg_connect(route, rlg, rlg_next_ndisc(route, rlg), allow_mod);
+	rlg_connect(route, rlg_prev_ndisc(route, rlg), rlg, allow_mod,
+	    allow_add_legs);
+	rlg_connect(route, rlg, rlg_next_ndisc(route, rlg), allow_mod,
+	    allow_add_legs);
 }
 
 /*
@@ -878,13 +883,14 @@ rlg_connect_neigh(route_t *route, route_leg_group_t *rlg, bool_t allow_mod)
  * route leg group.
  */
 static void
-rlg_bypass(route_t *route, route_leg_group_t *rlg, bool_t allow_mod)
+rlg_bypass(route_t *route, route_leg_group_t *rlg, bool_t allow_mod,
+    bool_t allow_add_legs)
 {
 	route_leg_group_t *prev_rlg = rlg_prev_ndisc(route, rlg);
 	route_leg_group_t *next_rlg = rlg_next_ndisc(route, rlg);
 
 	rlg_destroy(route, rlg);
-	rlg_connect(route, prev_rlg, next_rlg, allow_mod);
+	rlg_connect(route, prev_rlg, next_rlg, allow_mod, allow_add_legs);
 }
 
 /*
@@ -912,7 +918,7 @@ rlg_shorten_proc(route_t *route, route_leg_t *lim_rl, bool_t left)
 	else
 		rlg->end_fix = rlg_find_end_fix(rlg, rlg_next_ndisc(route,
 		    rlg));
-	rlg_connect_neigh(route, rlg, B_FALSE);
+	rlg_connect_neigh(route, rlg, B_FALSE, B_FALSE);
 }
 
 /*
@@ -1179,7 +1185,7 @@ route_delete_proc_rlg(route_t *route, navproc_type_t type)
 		route_leg_group_t *prev_rlg, *next_rlg;
 		prev_rlg = rlg_prev_ndisc(route, rlg);
 		next_rlg = rlg_next_ndisc(route, rlg);
-		rlg_bypass(route, rlg, B_FALSE);
+		rlg_bypass(route, rlg, B_FALSE, B_FALSE);
 	}
 }
 
@@ -1302,11 +1308,11 @@ route_set_sid(route_t *route, const char *sid_name)
 
 	if (sid != NULL) {
 		sid_rlg = route_insert_proc_rlg(route, sid, NULL);
-		rlg_connect_neigh(route, sid_rlg, B_TRUE);
+		rlg_connect_neigh(route, sid_rlg, B_TRUE, B_FALSE);
 	}
 	if (sidcm != NULL) {
 		sidcm_rlg = route_insert_proc_rlg(route, sidcm, sid_rlg);
-		rlg_connect_neigh(route, sidcm_rlg, B_TRUE);
+		rlg_connect_neigh(route, sidcm_rlg, B_TRUE, B_FALSE);
 	}
 
 	route->sid = sid;
@@ -1353,7 +1359,7 @@ route_set_sidtr(route_t *route, const char *tr_name)
 	route_delete_proc_rlg(route, NAVPROC_TYPE_SID_TRANS);
 
 	sidtr_rlg = route_insert_proc_rlg(route, sidtr, sid_rlg);
-	rlg_connect_neigh(route, sidtr_rlg, B_TRUE);
+	rlg_connect_neigh(route, sidtr_rlg, B_TRUE, B_FALSE);
 
 	route->sidtr = sidtr;
 
@@ -1406,14 +1412,14 @@ route_set_star(route_t *route, const char *star_name)
 		    rlg_prev_ndisc(route, appr_rlg) : rlg_tail_ndisc(route));
 
 		starcm_rlg = route_insert_proc_rlg(route, starcm, prev_rlg);
-		rlg_connect_neigh(route, starcm_rlg, B_TRUE);
+		rlg_connect_neigh(route, starcm_rlg, B_TRUE, B_FALSE);
 	}
 	if (star != NULL) {
 		route_leg_group_t *prev_rlg = (appr_rlg != NULL ?
 		    rlg_prev_ndisc(route, appr_rlg) : rlg_tail_ndisc(route));
 
 		star_rlg = route_insert_proc_rlg(route, star, prev_rlg);
-		rlg_connect_neigh(route, star_rlg, B_TRUE);
+		rlg_connect_neigh(route, star_rlg, B_TRUE, B_FALSE);
 	}
 
 	route->star = star;
@@ -1466,7 +1472,7 @@ route_set_startr(route_t *route, const char *tr_name)
 	prev_rlg = (next_rlg ? rlg_prev_ndisc(route, next_rlg) :
 	    rlg_tail_ndisc(route));
 	startr_rlg = route_insert_proc_rlg(route, startr, prev_rlg);
-	rlg_connect_neigh(route, startr_rlg, B_TRUE);
+	rlg_connect_neigh(route, startr_rlg, B_TRUE, B_FALSE);
 
 	route->startr = startr;
 
@@ -1508,7 +1514,7 @@ route_set_appr(route_t *route, const char *appr_name)
 	prev_rlg = rlg_tail_ndisc(route);
 
 	appr_rlg = route_insert_proc_rlg(route, appr, prev_rlg);
-	rlg_connect_neigh(route, appr_rlg, B_TRUE);
+	rlg_connect_neigh(route, appr_rlg, B_TRUE, B_FALSE);
 
 	route->appr = appr;
 	route->apprtr = NULL;
@@ -1578,7 +1584,7 @@ route_set_apprtr(route_t *route, const char *tr_name)
 	    rlg_tail_ndisc(route));
 
 	apprtr_rlg = route_insert_proc_rlg(route, apprtr, prev_rlg);
-	rlg_connect_neigh(route, apprtr_rlg, B_TRUE);
+	rlg_connect_neigh(route, apprtr_rlg, B_TRUE, B_FALSE);
 
 	route->apprtr = apprtr;
 
@@ -1705,7 +1711,7 @@ route_lg_awy_insert(route_t *route, const char *awyname,
 	list_insert_after(&route->leg_groups, prev_rlg, rlg);
 
 	rlg_update_awy_legs(route, rlg, B_FALSE);
-	rlg_connect_neigh(route, rlg, B_TRUE);
+	rlg_connect_neigh(route, rlg, B_TRUE, B_TRUE);
 
 	route->segs_dirty = B_TRUE;
 	if (new_rlgpp)
@@ -1746,7 +1752,7 @@ route_lg_awy_set_end_fix(route_t *route, const route_leg_group_t *x_rlg,
 	rlg->awy = newawy;
 	rlg->end_fix = *end_fix;
 
-	rlg_connect_neigh(route, rlg, B_FALSE);
+	rlg_connect_neigh(route, rlg, B_FALSE, B_FALSE);
 
 	rlg_update_awy_legs(route, rlg, B_FALSE);
 	route->segs_dirty = B_TRUE;
@@ -1778,7 +1784,7 @@ route_lg_direct_insert(route_t *route, const fix_t *fix,
 
 	list_insert_after(&route->leg_groups, prev_rlg, rlg);
 	rlg_update_direct_leg(route, rlg);
-	rlg_connect_neigh(route, rlg, B_TRUE);
+	rlg_connect_neigh(route, rlg, B_TRUE, B_FALSE);
 
 	route->segs_dirty = B_TRUE;
 	if (new_rlgpp)
@@ -1806,7 +1812,7 @@ route_lg_delete(route_t *route, const route_leg_group_t *x_rlg)
 		return (ERR_INVALID_DELETE);
 
 	rlg_destroy(route, rlg);
-	rlg_connect(route, prev_rlg, next_rlg, allow_mod);
+	rlg_connect(route, prev_rlg, next_rlg, allow_mod, B_FALSE);
 
 	return (ERR_OK);
 }
@@ -1848,7 +1854,7 @@ rlg_append_direct(route_t *route, route_leg_group_t *rlg, const fix_t *fix,
 	    rlg->type == ROUTE_LEG_GROUP_TYPE_PROC);
 	rlg->end_fix = *fix;
 	rlg_update_awy_legs(route, rlg, B_TRUE);
-	rlg_connect_neigh(route, rlg, B_FALSE);
+	rlg_connect_neigh(route, rlg, B_FALSE, B_FALSE);
 	if (rlpp)
 		*rlpp = list_tail(&rlg->legs);
 }
@@ -1883,16 +1889,26 @@ is_terminal_procedure(navproc_type_t type)
  * and `rl2' are adjacent.
  */
 static void
-awy_split(route_t *route, route_leg_t *rl1, route_leg_t *rl2, bool_t join)
+awy_split(route_t *route, route_leg_group_t *awy1, route_leg_t *rl1,
+    route_leg_t *rl2, bool_t join)
 {
-	route_leg_group_t	*awy1 = rl1->parent;
-	route_leg_group_t	*awy2;
-	fix_t			awy1_end_fix = *leg_get_end_fix(rl1);
-	fix_t			awy2_end_fix = awy1->end_fix;
-	fix_t			awy2_start_fix = *leg_get_end_fix(rl2);
+	route_leg_group_t	*dir, *awy2;
+	fix_t			awy1_start_fix, awy1_end_fix;
+	fix_t			awy2_end_fix, awy2_start_fix;
 
-	ASSERT(rl1->parent == rl2->parent);
-	ASSERT(rl1 != rl2);
+	awy1_start_fix = awy1->start_fix;
+	if (rl1 != NULL) {
+		awy1_end_fix = *leg_get_end_fix(rl1);
+	} else {
+		awy1_end_fix = awy1->start_fix;
+	}
+	if (rl2 != NULL) {
+		route_leg_t *prev_rl = list_prev(&awy1->legs, rl2);
+		awy2_start_fix = *leg_get_end_fix(prev_rl);
+	} else {
+		awy2_start_fix = awy1->end_fix;
+	}
+	awy2_end_fix = awy1->end_fix;
 
 	if (!FIX_EQ(&awy2_start_fix, &awy2_end_fix)) {
 		awy2 = rlg_new(ROUTE_LEG_GROUP_TYPE_AIRWAY);
@@ -1901,23 +1917,39 @@ awy_split(route_t *route, route_leg_t *rl1, route_leg_t *rl2, bool_t join)
 		awy2->end_fix = awy2_end_fix;
 		list_insert_after(&route->leg_groups, awy1, awy2);
 		rlg_update_awy_legs(route, awy2, B_FALSE);
+	} else {
+		awy2 = NULL;
 	}
-
-	awy1->end_fix = awy1_end_fix;
-	rlg_update_awy_legs(route, awy1, B_FALSE);
 
 	if (!FIX_EQ(&awy1_end_fix, &awy2_start_fix)) {
 		if (join) {
-			route_leg_group_t *dir =
-			    rlg_new(ROUTE_LEG_GROUP_TYPE_DIRECT);
+			dir = rlg_new(ROUTE_LEG_GROUP_TYPE_DIRECT);
 			dir->start_fix = awy1_end_fix;
 			dir->end_fix = awy2_start_fix;
 			list_insert_after(&route->leg_groups, awy1, dir);
 			rlg_update_direct_leg(route, dir);
 		} else {
-			rlg_new_disco(route, awy1);
+			dir = NULL;
 		}
+	} else {
+		dir = NULL;
 	}
+
+	if (!FIX_EQ(&awy1_start_fix, &awy1_end_fix)) {
+		awy1->end_fix = awy1_end_fix;
+		rlg_update_awy_legs(route, awy1, B_FALSE);
+	} else {
+		rlg_bypass(route, awy1, B_TRUE, B_FALSE);
+		awy1 = NULL;
+	}
+
+	if (awy1 != NULL)
+		rlg_connect_neigh(route, awy1, B_TRUE, B_FALSE);
+	if (dir != NULL)
+		rlg_connect_neigh(route, dir, B_TRUE, B_FALSE);
+	if (awy2 != NULL)
+		rlg_connect_neigh(route, awy2, B_TRUE, B_FALSE);
+
 	route->segs_dirty = B_TRUE;
 }
 
@@ -2012,7 +2044,8 @@ route_l_insert(route_t *route, const fix_t *fix, const route_leg_t *x_prev_rl,
 			if (prev_rlg->type == ROUTE_LEG_GROUP_TYPE_AIRWAY) {
 				/* Airways need to be split */
 				const route_leg_group_t *rlg;
-				awy_split(route, prev_rl, next_rl, B_FALSE);
+				awy_split(route, prev_rl->parent, prev_rl,
+				    next_rl, B_FALSE);
 				route_lg_direct_insert(route, fix, prev_rlg,
 				    &rlg);
 				if (rlpp != NULL)
@@ -2115,33 +2148,32 @@ route_l_move(route_t *route, const route_leg_t *x_target_rl,
 		if (prev_rl != NULL) {
 			switch(prev_rlg->type) {
 			case ROUTE_LEG_GROUP_TYPE_AIRWAY:
-				prev_rlg->end_fix = *leg_get_end_fix(prev_rl);
-				rlg_update_awy_legs(route, prev_rlg, B_FALSE);
-				rlg_connect_neigh(route, prev_rlg, B_FALSE);
+				awy_split(route, prev_rlg, prev_rl, NULL,
+				    B_FALSE);
 				break;
 			case ROUTE_LEG_GROUP_TYPE_PROC:
 				rlg_shorten_proc(route, prev_rl, B_FALSE);
 				break;
+			case ROUTE_LEG_GROUP_TYPE_DIRECT:
+				rlg_connect_neigh(route, next_rl->parent,
+				    B_TRUE, B_FALSE);
+				break;
 			default:
+				
 				break;
 			}
 		}
 		switch(next_rlg->type) {
 		case ROUTE_LEG_GROUP_TYPE_AIRWAY:
-			if (list_prev(&next_rlg->legs, next_rl) != NULL) {
-				route_leg_group_t *dir;
-				dir = rlg_new(ROUTE_LEG_GROUP_TYPE_DIRECT);
-				next_rlg->start_fix = *leg_get_end_fix(next_rl);
-				rlg_update_awy_legs(route, next_rlg, B_FALSE);
-				dir->end_fix = next_rlg->start_fix;
-				list_insert_before(&route->leg_groups, next_rlg,
-				    dir);
-				rlg_update_direct_leg(route, dir);
-			}
-			rlg_connect_neigh(route, next_rlg, B_FALSE);
+			awy_split(route, next_rlg, NULL,
+			    list_next(&next_rlg->legs, next_rl), B_TRUE);
 			break;
 		case ROUTE_LEG_GROUP_TYPE_PROC:
 			rlg_shorten_proc(route, next_rl, B_TRUE);
+			break;
+		case ROUTE_LEG_GROUP_TYPE_DIRECT:
+			rlg_connect_neigh(route, next_rl->parent, B_TRUE,
+			    B_FALSE);
 			break;
 		default:
 			break;
@@ -2152,7 +2184,8 @@ route_l_move(route_t *route, const route_leg_t *x_target_rl,
 		    prev_rlg->type != ROUTE_LEG_GROUP_TYPE_DIRECT);
 
 		if (prev_rlg->type == ROUTE_LEG_GROUP_TYPE_AIRWAY) {
-			awy_split(route, prev_rl, next_rl, B_TRUE);
+			awy_split(route, prev_rl->parent, prev_rl,
+			    list_next(&next_rlg->legs, next_rl), B_TRUE);
 		} else {
 			/*
 			 * Procedures legs are simply removed. The segment
@@ -2160,8 +2193,10 @@ route_l_move(route_t *route, const route_leg_t *x_target_rl,
 			 * throw at it and the pilot is responsible for
 			 * checking the sanity of the result.
 			 */
-			for (route_leg_t *rl = list_next(&route->legs, prev_rl); rl;
-			    rl = list_next(&route->legs, prev_rl)) {
+			for (route_leg_t *rl = list_next(&route->legs, prev_rl);
+			    rl != next_rl; rl = list_next(&route->legs,
+			    prev_rl)) {
+				ASSERT(rl != NULL);
 				list_remove(&route->legs, rl);
 				list_remove(&prev_rlg->legs, rl);
 				free(rl);
@@ -2191,28 +2226,29 @@ route_l_delete(route_t *route, const route_leg_t *x_rl)
 	case ROUTE_LEG_GROUP_TYPE_AIRWAY:
 		if (prev_rl != NULL && next_rl != NULL) {
 			/* Split the airway and insert a disco */
-			awy_split(route, prev_rl, next_rl, B_FALSE);
+			awy_split(route, prev_rl->parent, prev_rl, next_rl,
+			    B_FALSE);
 		} else if (prev_rl != NULL && next_rl == NULL) {
 			/* Shorten the airway from the right */
 			rlg->end_fix = *leg_get_end_fix(prev_rl);
 			rlg_update_awy_legs(route, rlg, B_FALSE);
 			rlg2 = rlg_next_ndisc(route, rlg);
-			rlg_connect(route, rlg, rlg2, B_FALSE);
+			rlg_connect(route, rlg, rlg2, B_FALSE, B_FALSE);
 		} else if (prev_rl == NULL && next_rl != NULL) {
 			/* Shorten the airway from the left */
 			rlg->start_fix = *leg_get_end_fix(rl);
 			rlg_update_awy_legs(route, rlg, B_FALSE);
 			rlg2 = rlg_prev_ndisc(route, rlg);
-			rlg_connect(route, rlg2, rlg, B_FALSE);
+			rlg_connect(route, rlg2, rlg, B_FALSE, B_FALSE);
 		} else {
 			/* Get rid of the whole thing */
-			rlg_bypass(route, rl->parent, B_FALSE);
+			rlg_bypass(route, rl->parent, B_FALSE, B_FALSE);
 		}
 		break;
 	case ROUTE_LEG_GROUP_TYPE_PROC:
 		/* We're the last one */
 		if (prev_rl == NULL && next_rl == NULL) {
-			rlg_bypass(route, rl->parent, B_FALSE);
+			rlg_bypass(route, rl->parent, B_FALSE, B_FALSE);
 		} else if (prev_rl == NULL) {
 			/* First leg, check if we can adjust start_fix. */
 			fix_t end_fix = *leg_get_end_fix(rl);
@@ -2222,7 +2258,7 @@ route_l_delete(route_t *route, const route_leg_t *x_rl)
 			if (!IS_NULL_FIX(&end_fix)) {
 				rlg->start_fix = end_fix;
 				rlg_connect(route, rlg_prev_ndisc(route, rlg),
-				    rlg, B_FALSE);
+				    rlg, B_FALSE, B_FALSE);
 			}
 		} else if (next_rl == NULL) {
 			/* Last leg, check if we can adjust end_fix. */
@@ -2235,7 +2271,7 @@ route_l_delete(route_t *route, const route_leg_t *x_rl)
 			if (!IS_NULL_FIX(&end_fix)) {
 				rlg->end_fix = end_fix;
 				rlg_connect(route, rlg, rlg_next_ndisc(route,
-				    rlg), B_FALSE);
+				    rlg), B_FALSE, B_FALSE);
 			}
 		} else {
 			/* Internal delete, just remove it */
@@ -2245,12 +2281,12 @@ route_l_delete(route_t *route, const route_leg_t *x_rl)
 		}
 		break;
 	case ROUTE_LEG_GROUP_TYPE_DIRECT:
-		rlg_bypass(route, rl->parent, B_FALSE);
+		rlg_bypass(route, rl->parent, B_FALSE, B_FALSE);
 		break;
 	case ROUTE_LEG_GROUP_TYPE_DISCO:
 		ASSERT(list_prev(&route->legs, rl) != NULL &&
 		    list_next(&route->legs, rl) != NULL);
-		rlg_bypass(route, rl->parent, B_TRUE);
+		rlg_bypass(route, rl->parent, B_TRUE, B_FALSE);
 		break;
 	default:
 		assert(0);
