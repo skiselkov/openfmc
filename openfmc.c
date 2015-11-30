@@ -482,7 +482,7 @@ dump_route_leg_group(const route_leg_group_t *rlg, int idx)
 			    rlg->proc->name, END_FIX_NAME(&rlg->end_fix));
 			break;
 		case NAVPROC_TYPE_SID_TRANS:
-			printf("%3d %s.%s\t\t%7s\n", idx,
+			printf("%3d %s.%s\t%7s\n", idx,
 			    rlg->proc->name, rlg->proc->tr_name,
 			    END_FIX_NAME(&rlg->end_fix));
 			break;
@@ -552,12 +552,11 @@ find_rlg(route_t *route, int idx)
 	int i = 0;
 	const route_leg_group_t *res = NULL;
 
-	for (res = list_head(leg_groups); res;
-	    res = list_next(leg_groups, res)) {
-		if (i >= idx)
-			break;
-		i++;
-	}
+	if (idx < 0)
+		return (NULL);
+	for (res = list_head(leg_groups), i = 0; res && i < idx;
+	    res = list_next(leg_groups, res), i++)
+		;
 	return (res);
 }
 
@@ -568,11 +567,11 @@ find_rl(route_t *route, int idx)
 	int i = 0;
 	const route_leg_t *res = NULL;
 
-	for (res = list_head(legs); res; res = list_next(legs, res)) {
-		if (i >= idx)
-			break;
-		i++;
-	}
+	if (idx < 0)
+		return (NULL);
+	for (res = list_head(legs), i = 0; res && i < idx;
+	    res = list_next(legs, res), i++)
+		;
 	return (res);
 }
 
@@ -580,23 +579,49 @@ fix_t
 find_fix(const char fix_name[NAV_NAME_LEN], waypoint_db_t *wptdb,
     navaid_db_t *navaiddb)
 {
-	fix_t res;
+	fix_t res[32];
+	int nres = 0;
 	const list_t *list;
 
 	memset(&res, 0, sizeof (res));
 	list = htbl_lookup_multi(&wptdb->by_name, fix_name);
 	if (list != NULL) {
-		res = *(fix_t *)HTBL_VALUE_MULTI(list_head(list));
-	} else {
-		list = htbl_lookup_multi(&navaiddb->by_id, fix_name);
-		if (list != NULL) {
-			const navaid_t *navaid =
-			    HTBL_VALUE_MULTI(list_head(list));
-			strlcpy(res.name, fix_name, sizeof (res.name));
-			res.pos = GEO3_TO_GEO2(navaid->pos);
+		const void *mv;
+		for (mv = list_head(list); mv; mv = list_next(list, mv)) {
+			ASSERT(nres < 32);
+			res[nres++] = *(fix_t *)HTBL_VALUE_MULTI(mv);
 		}
 	}
-	return (res);
+	list = htbl_lookup_multi(&navaiddb->by_id, fix_name);
+	if (list != NULL) {
+		const void *mv;
+		for (mv = list_head(list); mv; mv = list_next(list, mv)) {
+			ASSERT(nres < 32);
+			const navaid_t *navaid = HTBL_VALUE_MULTI(mv);
+
+			strlcpy(res[nres].name, fix_name,
+			    sizeof (res[nres].name));
+			res[nres].pos = GEO3_TO_GEO2(navaid->pos);
+			nres++;
+		}
+	}
+
+	if (nres > 1) {
+		char idx_str[8];
+		int idx;
+		printf("  %s is ambiguous, choose one:\n", fix_name);
+		for (int i = 0; i < nres; i++)
+			printf("   %d: %s  %lf  %lf\n", i, res[i].name,
+			    res[i].pos.lat, res[i].pos.lon);
+		scanf("%7s", idx_str);
+		idx = atoi(idx_str);
+		if (idx > 0) {
+			ASSERT(idx < 32);
+			res[0] = res[idx];
+		}
+	}
+
+	return (res[0]);
 }
 
 void
@@ -718,6 +743,8 @@ test_route(char *navdata_dir)
 			if (scanf("%7s", idx_str) != 1)
 				continue;
 			rlg = find_rlg(route, atoi(idx_str));
+			if (!rlg)
+				continue;
 			err = route_lg_delete(route, rlg);
 		} else if (strcmp(cmd, "lrm") == 0) {
 			char idx_str[8];
@@ -725,6 +752,8 @@ test_route(char *navdata_dir)
 			if (scanf("%7s", idx_str) != 1)
 				continue;
 			rl = find_rl(route, atoi(idx_str));
+			if (!rl)
+				continue;
 			route_l_delete(route, rl);
 		} else if (strcmp(cmd, "r") == 0) {
 			dump_route_leg_groups(route);

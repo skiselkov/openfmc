@@ -496,6 +496,11 @@ airway_db_lookup(const airway_db_t *db, const char *awyname,
 
 	ASSERT(awyname != NULL);
 	awy_list = htbl_lookup_multi(&db->by_awy_name, awyname);
+	if (awy_list == NULL) {
+		if (endfixpp != NULL)
+			*endfixpp = NULL;
+		return (NULL);
+	}
 	for (const void *mv = list_head(awy_list); mv != NULL;
 	    mv = list_next(awy_list, mv)) {
 		const airway_t		*awy = HTBL_VALUE_MULTI(mv);
@@ -552,6 +557,8 @@ airway_db_lookup_awy_intersection(const airway_db_t *db, const char *awy1_name,
 	ASSERT(awy1_name != NULL);
 	ASSERT(awy1_start_fix_name != NULL);
 	awy1_list = htbl_lookup_multi(&db->by_awy_name, awy1_name);
+	if (awy1_list == NULL)
+		return (NULL);
 	for (const void *mv1 = list_head(awy1_list); mv1 != NULL;
 	    mv1 = list_next(awy1_list, mv1)) {
 		const airway_t		*awy1 = HTBL_VALUE_MULTI(mv1);
@@ -595,6 +602,8 @@ airway_db_fix_on_awy(const airway_db_t *db, const fix_t *fix,
 	ASSERT(fix != NULL);
 	ASSERT(awyname != NULL);
 	awy_list = htbl_lookup_multi(&db->by_fix_name, fix->name);
+	if (awy_list == NULL)
+		return (B_FALSE);
 	for (const void *mv = list_head(awy_list); mv != NULL;
 	    mv = list_next(awy_list, mv)) {
 		airway_t *awy = HTBL_VALUE_MULTI(mv);
