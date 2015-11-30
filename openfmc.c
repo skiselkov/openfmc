@@ -535,7 +535,7 @@ dump_route_legs(const route_t *route)
 		    rl = list_next(&rlg->legs, rl)) {
 			if (!rl->disco) {
 				char *desc = navproc_seg_get_descr(&rl->seg);
-				printf("%3d%s\n", i, desc);
+				printf("%3d%s", i, desc);
 				free(desc);
 			} else {
 				printf("%3d    [###################]\n", i);
@@ -685,76 +685,88 @@ test_route(char *navdata_dir)
 		if (strcmp(cmd, "p") == 0) {
 			dump_route(route);
 		} else if (strcmp(cmd, "via") == 0) {
-			char idx_str[8];
+			int idx;
 			char awy_name[NAV_NAME_LEN];
 			const route_leg_group_t *prev_rlg;
 
 			memset(awy_name, 0, sizeof (awy_name));
-			if (scanf("%7s %7s", idx_str, awy_name) != 2)
+			if (scanf("%7d %7s", &idx, awy_name) != 2)
 				continue;
-			prev_rlg = find_rlg(route, atoi(idx_str) - 1);
+			prev_rlg = find_rlg(route, idx - 1);
 			err = route_lg_awy_insert(route, awy_name, prev_rlg,
 			    NULL);
 		} else if (strcmp(cmd, "to") == 0) {
-			char idx_str[8];
+			int idx;
 			char fix_name[NAV_NAME_LEN];
 			const route_leg_group_t *rlg;
 
 			memset(fix_name, 0, sizeof (fix_name));
-			if (scanf("%7s %31s", idx_str, fix_name) != 2)
+			if (scanf("%7d %31s", &idx, fix_name) != 2)
 				continue;
-			rlg = find_rlg(route, atoi(idx_str));
+			rlg = find_rlg(route, idx);
 			err = route_lg_awy_set_end_fix(route, rlg, fix_name);
 		} else if (strcmp(cmd, "dir") == 0) {
-			char idx_str[8];
+			int idx;
 			char fix_name[NAV_NAME_LEN];
 			const route_leg_group_t *prev_rlg;
 			fix_t fix;
 
 			memset(fix_name, 0, sizeof (fix_name));
-			if (scanf("%7s %7s", idx_str, fix_name) != 2)
+			if (scanf("%7d %7s", &idx, fix_name) != 2)
 				continue;
 			fix = find_fix(fix_name, wptdb, navaiddb);
 			if (IS_NULL_FIX(&fix)) {
 				fprintf(stderr, "%s NOT FOUND\n", fix_name);
 				continue;
 			}
-			prev_rlg = find_rlg(route, atoi(idx_str) - 1);
+			prev_rlg = find_rlg(route, idx - 1);
 			route_lg_direct_insert(route, &fix, prev_rlg, NULL);
 		} else if (strcmp(cmd, "ldir") == 0) {
-			char idx_str[8];
+			int idx;
 			char fix_name[NAV_NAME_LEN];
 			const route_leg_t *prev_rl;
 			fix_t fix;
 
 			memset(fix_name, 0, sizeof (fix_name));
-			if (scanf("%7s %7s", idx_str, fix_name) != 2)
+			if (scanf("%7d %7s", &idx, fix_name) != 2)
 				continue;
 			fix = find_fix(fix_name, wptdb, navaiddb);
 			if (IS_NULL_FIX(&fix)) {
 				fprintf(stderr, "%s NOT FOUND\n", fix_name);
 				continue;
 			}
-			prev_rl = find_rl(route, atoi(idx_str) - 1);
+			prev_rl = find_rl(route, idx - 1);
 			err = route_l_insert(route, &fix, prev_rl, NULL);
 		} else if (strcmp(cmd, "rm") == 0) {
-			char idx_str[8];
+			int idx;
 			const route_leg_group_t *rlg;
-			if (scanf("%7s", idx_str) != 1)
+			if (scanf("%7d", &idx) != 1)
 				continue;
-			rlg = find_rlg(route, atoi(idx_str));
+			rlg = find_rlg(route, idx);
 			if (!rlg)
 				continue;
 			err = route_lg_delete(route, rlg);
 		} else if (strcmp(cmd, "lrm") == 0) {
-			char idx_str[8];
+			int idx;
 			const route_leg_t *rl;
-			if (scanf("%7s", idx_str) != 1)
+			if (scanf("%7d", &idx) != 1)
 				continue;
-			rl = find_rl(route, atoi(idx_str));
+			rl = find_rl(route, idx);
 			if (!rl)
 				continue;
 			route_l_delete(route, rl);
+		} else if (strcmp(cmd, "lmv") == 0) {
+			int idx1, idx2;
+			const route_leg_t *rl1, *rl2;
+			if (scanf("%7d %7d", &idx1, &idx2) != 2)
+				continue;
+			rl1 = find_rl(route, idx1);
+			rl2 = find_rl(route, idx2);
+			if (!rl1 || !rl2) {
+				fprintf(stderr, "idx out of rng\n");
+				continue;
+			}
+			route_l_move(route, rl1, rl2);
 		} else if (strcmp(cmd, "r") == 0) {
 			dump_route_leg_groups(route);
 		} else if (strcmp(cmd, "l") == 0) {

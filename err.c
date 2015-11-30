@@ -37,7 +37,7 @@ static const char *err_name_tbl[NUM_ERRS] = {
 	"WPT/PROC MISMATCH",
 	"INVALID AWY",
 	"DUPLICATE LEG",
-	"INVALID INSERT",
+	"INVALID ENTRY",
 	"INVALID RWY",
 	"INVALID SID",
 	"INVALID STAR",

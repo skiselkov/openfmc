@@ -35,6 +35,7 @@ static void rlg_bypass(route_t *route, route_leg_group_t *rlg,
     bool_t allow_mod);
 static route_leg_t * last_leg_before_rlg(route_t *route,
     route_leg_group_t *rlg);
+static bool_t is_intc_leg(const route_leg_t *rl);
 
 /*
  * Destroys and frees a route_seg_t.
@@ -318,11 +319,15 @@ rlg_update_direct_leg(route_t *route, route_leg_group_t *rlg)
 }
 
 /*
- * Returns the first non-DISCO route leg group following `ref'.
+ * Returns the first non-DISCO route leg group following `ref'. If `ref'
+ * is NULL, returns the first leg group (which is never a DISCO).
  */
 static route_leg_group_t *
 rlg_next_ndisc(route_t *route, route_leg_group_t *ref)
 {
+	if (ref == NULL)
+		return (list_head(&route->leg_groups));
+
 	for (route_leg_group_t *rlg = list_next(&route->leg_groups, ref); rlg;
 	    rlg = list_next(&route->leg_groups, rlg)) {
 		if (rlg->type != ROUTE_LEG_GROUP_TYPE_DISCO)
@@ -332,15 +337,33 @@ rlg_next_ndisc(route_t *route, route_leg_group_t *ref)
 }
 
 /*
- * Returns the first non-DISCO route leg group preceding `ref'.
+ * Returns the first non-DISCO route leg group preceding `ref'. If `ref'
+ * is NULL, returns the last leg group (which is never a DISCO).
  */
 static route_leg_group_t *
 rlg_prev_ndisc(route_t *route, route_leg_group_t *ref)
 {
+	if (ref == NULL)
+		return (list_tail(&route->leg_groups));
+
 	for (route_leg_group_t *rlg = list_prev(&route->leg_groups, ref); rlg;
 	    rlg = list_prev(&route->leg_groups, rlg)) {
 		if (rlg->type != ROUTE_LEG_GROUP_TYPE_DISCO)
 			return (rlg);
+	}
+	return (NULL);
+}
+
+/*
+ * Returns the first non-DISCO route leg preceding `ref'.
+ */
+static route_leg_t *
+rl_prev_ndisc(route_t *route, route_leg_t *ref)
+{
+	for (route_leg_t *rl = list_prev(&route->legs, ref); rl;
+	    rl = list_prev(&route->legs, rl)) {
+		if (!rl->disco)
+			return (rl);
 	}
 	return (NULL);
 }
@@ -354,6 +377,50 @@ rlg_tail_ndisc(route_t *route)
 	route_leg_group_t *rlg = list_tail(&route->leg_groups);
 	ASSERT(rlg == NULL || rlg->type != ROUTE_LEG_GROUP_TYPE_DISCO);
 	return (rlg);
+}
+
+static fix_t
+rlg_find_start_fix(route_leg_group_t *rlg, route_leg_group_t *prev_rlg)
+{
+	if (rlg->type == ROUTE_LEG_GROUP_TYPE_PROC)
+		return (navproc_get_start_fix(rlg->proc));
+	else if (prev_rlg != NULL)
+		return (prev_rlg->end_fix);
+	else
+		return (null_fix);
+}
+
+static bool_t
+navprocs_related(const navproc_t *nv1, const navproc_t *nv2)
+{
+	return (nv1->arpt == nv2->arpt &&
+	    ((nv1->type <= NAVPROC_TYPE_SID_TRANS &&
+	    nv2->type <= NAVPROC_TYPE_SID_TRANS) ||
+	    (nv1->type >= NAVPROC_TYPE_STAR &&
+	    nv2->type >= NAVPROC_TYPE_STAR)));
+}
+
+static fix_t
+rlg_find_end_fix(route_leg_group_t *rlg, route_leg_group_t *next_rlg)
+{
+	if (rlg->type == ROUTE_LEG_GROUP_TYPE_PROC) {
+		route_leg_t *rl = list_tail(&rlg->legs);
+		fix_t fix;
+
+		ASSERT(rl != NULL);
+		fix = *leg_get_end_fix(rl);
+		if (!IS_NULL_FIX(&fix))
+			return (fix);
+		if (next_rlg != NULL && is_intc_leg(rl) &&
+		    navprocs_related(rlg->proc, next_rlg->proc)) {
+			return (next_rlg->start_fix);
+		}
+		return (null_fix);
+	} else if (next_rlg != NULL) {
+		return (next_rlg->start_fix);
+	} else {
+		return (null_fix);
+	}
 }
 
 /*
@@ -383,8 +450,7 @@ route_remove_arpt_links(route_t *route, const airport_t *arpt)
 #undef	REM_BACKREF
 	/* Now check leg groups for offending procedures & route legs */
 	for (route_leg_group_t *rlg = list_head(&route->leg_groups); rlg;) {
-		route_leg_group_t *rlg_next = list_next(&route->leg_groups,
-		    rlg);
+		route_leg_group_t *rlg_next = rlg_next_ndisc(route, rlg);
 		if (rlg->type == ROUTE_LEG_GROUP_TYPE_PROC &&
 		    rlg->proc->arpt == arpt) {
 			rlg_bypass(route, rlg, B_FALSE);
@@ -402,6 +468,7 @@ is_intc_leg(const route_leg_t *rl)
 	switch (rl->seg.type) {
 	case NAVPROC_SEG_TYPE_CRS_TO_INTCP:
 	case NAVPROC_SEG_TYPE_HDG_TO_INTCP:
+	case NAVPROC_SEG_TYPE_PROC_TURN:
 		return (B_TRUE);
 	default:
 		return (B_FALSE);
@@ -640,16 +707,26 @@ rlg_try_connect(route_t *route, route_leg_group_t *prev_rlg,
 			/* If the fixes are equal, we're done */
 			if (FIX_EQ(&prev_rlg->end_fix, &next_rlg->start_fix))
 				break;
+			if (prev_rlg->type == ROUTE_LEG_GROUP_TYPE_DIRECT) {
+				/* DIRECT -> PROC cannot intercept */
+				return (ERR_WPT_PROC_MISMATCH);
+			}
 			/*
 			 * As a special case, we always consider sequenced
-			 * procedures to continuous PROVIDED they end in a
+			 * procedures to be continuous PROVIDED they end in a
 			 * suitable (INTC) leg.
 			 */
-			if (((prev_rlg->proc->type <= NAVPROC_TYPE_SID_TRANS &&
-			    next_rlg->proc->type <= NAVPROC_TYPE_SID_TRANS) ||
-			    (prev_rlg->proc->type >= NAVPROC_TYPE_STAR &&
-			    next_rlg->proc->type >= NAVPROC_TYPE_STAR)) &&
-			    is_intc_leg(list_tail(&prev_rlg->legs))) {
+			if (navprocs_related(prev_rlg->proc, next_rlg->proc)) {
+				fix_t new_end = rlg_find_end_fix(prev_rlg,
+				    next_rlg);
+				if (!IS_NULL_FIX(&new_end)) {
+					/*
+					 * This is just for display convenience.
+					 * The segment generation algorithm
+					 * ignores start_fix/end_fix.
+					 */
+					prev_rlg->end_fix = new_end;
+				}
 				break;
 			}
 			return (ERR_WPT_PROC_MISMATCH);
@@ -808,6 +885,34 @@ rlg_bypass(route_t *route, route_leg_group_t *rlg, bool_t allow_mod)
 
 	rlg_destroy(route, rlg);
 	rlg_connect(route, prev_rlg, next_rlg, allow_mod);
+}
+
+/*
+ * Given a route leg `lim_rl' of a procedure, shortens the procedure either
+ * from the left or right up to (but not including) `lim_rl' and attempts to
+ * reconnect it with its neighbors.
+ */
+static void
+rlg_shorten_proc(route_t *route, route_leg_t *lim_rl, bool_t left)
+{
+	route_leg_group_t *rlg = lim_rl->parent;
+
+	ASSERT(rlg->type == ROUTE_LEG_GROUP_TYPE_PROC);
+	for (route_leg_t *rl = left ? list_head(&rlg->legs) :
+	    list_next(&rlg->legs, lim_rl); rl != NULL && rl != lim_rl;
+	    rl = left ? list_head(&rlg->legs) :
+	    list_next(&rlg->legs, lim_rl)) {
+		list_remove(&route->legs, rl);
+		list_remove(&rlg->legs, rl);
+		free(rl);
+	}
+	if (left)
+		rlg->start_fix = rlg_find_start_fix(rlg, rlg_prev_ndisc(route,
+		    rlg));
+	else
+		rlg->end_fix = rlg_find_end_fix(rlg, rlg_next_ndisc(route,
+		    rlg));
+	rlg_connect_neigh(route, rlg, B_FALSE);
 }
 
 /*
@@ -1106,20 +1211,40 @@ route_insert_proc_rlg(route_t *route, const navproc_t *proc,
 	}
 	ASSERT(!list_is_empty(&rlg->legs));
 	rlg->start_fix = navproc_get_start_fix(proc);
-	rlg->end_fix = *leg_get_end_fix(list_tail(&rlg->legs));
+	rlg->end_fix = rlg_find_end_fix(rlg, rlg_next_ndisc(route, rlg));
 
 	return (rlg);
 }
 
+/*
+ * Locates a navproc matching in name and parameters.
+ *
+ * @param arpt The airport where to look for the navproc.
+ * @param type Navproc type to look for.
+ * @param name Name of the navproc. Mandatory.
+ * @param tr_or_rwy Optional selection criterion. This depends on the type:
+ *	NAVPROC_TYPE_SID_COMMON | NAVPROC_TYPE_STAR_COMMON | NAVPROC_TYPE_FINAL
+ *		For these procedures, this argument is ignored, procedures
+ *		are only selected based on name.
+ *	NAVPROC_TYPE_STAR
+ *		For STARs, this argument is optional. If provided, it denotes
+ *		runway discriminator on the procedure. If omitted, the first
+ *		STAR matching the name is returned.
+ *	NAVPROC_TYPE_SID | NAVPROC_TYPE_STAR_TRANS | NAVPROC_TYPE_FINAL_TRANS
+ *		For these procedures, this argument is mandatory. For the
+ *		*SID procedure, it defines departing runway discriminator. For
+ *		*STAR_TRANS and *FINAL_TRANS is defines the transition name.
+ */
 static const navproc_t *
-find_navproc(const airport_t *arpt, navproc_type_t type, const char *procname,
+find_navproc(const airport_t *arpt, navproc_type_t type, const char *name,
     const char *tr_or_rwy)
 {
 	ASSERT(tr_or_rwy != NULL || type == NAVPROC_TYPE_SID_COMMON ||
-	    type == NAVPROC_TYPE_STAR_COMMON || type == NAVPROC_TYPE_FINAL);
+	    type == NAVPROC_TYPE_STAR_COMMON || type == NAVPROC_TYPE_STAR ||
+	    type == NAVPROC_TYPE_FINAL);
 	for (unsigned i = 0; i < arpt->num_procs; i++) {
 		if (arpt->procs[i].type != type ||
-		    strcmp(arpt->procs[i].name, procname) != 0)
+		    strcmp(arpt->procs[i].name, name) != 0)
 			continue;
 		if ((type == NAVPROC_TYPE_SID_TRANS ||
 		    type == NAVPROC_TYPE_STAR_TRANS ||
@@ -1128,6 +1253,7 @@ find_navproc(const airport_t *arpt, navproc_type_t type, const char *procname,
 			continue;
 		} else if ((type == NAVPROC_TYPE_SID ||
 		    type == NAVPROC_TYPE_STAR) &&
+		    tr_or_rwy != NULL &&
 		    strcmp(tr_or_rwy, arpt->procs[i].rwy->ID) != 0) {
 			continue;
 		}
@@ -1151,7 +1277,7 @@ route_set_sid(route_t *route, const char *sid_name)
 	const runway_t		*dep_rwy = route->dep_rwy;
 
 	if (dep_rwy == NULL)
-		return (ERR_INVALID_INSERT);
+		return (ERR_INVALID_ENTRY);
 	ASSERT(dep != NULL);
 
 	if (sid_name == NULL) {
@@ -1204,7 +1330,7 @@ route_set_sidtr(route_t *route, const char *tr_name)
 	const char		*sid_name;
 
 	if (route->sid == NULL && route->sidcm == NULL)
-		return (ERR_INVALID_INSERT);
+		return (ERR_INVALID_ENTRY);
 	ASSERT(route->dep != NULL);
 	ASSERT(route->dep_rwy != NULL);
 
@@ -1260,10 +1386,8 @@ route_set_star(route_t *route, const char *star_name)
 	}
 
 	starcm = find_navproc(arr, NAVPROC_TYPE_STAR_COMMON, star_name, NULL);
-	if (route->appr != NULL) {
-		star = find_navproc(arr, NAVPROC_TYPE_STAR, star_name,
-		    route->appr->rwy->ID);
-	}
+	star = find_navproc(arr, NAVPROC_TYPE_STAR, star_name,
+	    route->appr != NULL ? route->appr->rwy->ID : NULL);
 	/* We need at least one */
 	if (starcm == NULL && star == NULL)
 		return (ERR_INVALID_STAR);
@@ -1313,7 +1437,7 @@ route_set_startr(route_t *route, const char *tr_name)
 	const char		*star_name;
 
 	if (route->star == NULL && route->starcm == NULL)
-		return (ERR_INVALID_INSERT);
+		return (ERR_INVALID_ENTRY);
 	ASSERT(route->arr != NULL);
 
 	if (tr_name == NULL) {
@@ -1431,7 +1555,7 @@ route_set_apprtr(route_t *route, const char *tr_name)
 	const char		*appr_name;
 
 	if (route->appr == NULL)
-		return (ERR_INVALID_INSERT);
+		return (ERR_INVALID_ENTRY);
 	ASSERT(route->arr != NULL);
 
 	if (tr_name == NULL) {
@@ -1561,12 +1685,16 @@ route_lg_awy_insert(route_t *route, const char *awyname,
     const route_leg_group_t *x_prev_rlg, const route_leg_group_t **new_rlgpp)
 {
 	route_leg_group_t *prev_rlg = (route_leg_group_t *)x_prev_rlg;
+	route_leg_group_t *next_rlg = rlg_next_ndisc(route, prev_rlg);
 	route_leg_group_t *rlg;
 	const airway_t *awy;
 
 	awy = airway_db_lookup(route->navdb->awydb, awyname, NULL, NULL, NULL);
 	if (!awy)
 		return (ERR_INVALID_AWY);
+	if (next_rlg != NULL && next_rlg->type == ROUTE_LEG_GROUP_TYPE_PROC &&
+	    next_rlg->proc->type <= NAVPROC_TYPE_SID_TRANS)
+		return (ERR_INVALID_ENTRY);
 	rlg = rlg_new(ROUTE_LEG_GROUP_TYPE_AIRWAY);
 	rlg->awy = awy;
 
@@ -1759,31 +1887,31 @@ awy_split(route_t *route, route_leg_t *rl1, route_leg_t *rl2, bool_t join)
 {
 	route_leg_group_t	*awy1 = rl1->parent;
 	route_leg_group_t	*awy2;
-	route_leg_t		*rl_last = list_prev(&awy1->legs, rl2);
 	fix_t			awy1_end_fix = *leg_get_end_fix(rl1);
-	fix_t			awy2_end_fix = *leg_get_end_fix(rl2);
-	fix_t			awy2_start_fix = *leg_get_end_fix(rl_last);
+	fix_t			awy2_end_fix = awy1->end_fix;
+	fix_t			awy2_start_fix = *leg_get_end_fix(rl2);
 
 	ASSERT(rl1->parent == rl2->parent);
 	ASSERT(rl1 != rl2);
 
-	awy2 = rlg_new(ROUTE_LEG_GROUP_TYPE_AIRWAY);
-	awy2->awy = awy1->awy;
-	awy2->start_fix = awy2_start_fix;
-	awy2->end_fix = awy2_end_fix;
+	if (!FIX_EQ(&awy2_start_fix, &awy2_end_fix)) {
+		awy2 = rlg_new(ROUTE_LEG_GROUP_TYPE_AIRWAY);
+		awy2->awy = awy1->awy;
+		awy2->start_fix = awy2_start_fix;
+		awy2->end_fix = awy2_end_fix;
+		list_insert_after(&route->leg_groups, awy1, awy2);
+		rlg_update_awy_legs(route, awy2, B_FALSE);
+	}
 
 	awy1->end_fix = awy1_end_fix;
-
-	list_insert_after(&route->leg_groups, awy1, awy2);
 	rlg_update_awy_legs(route, awy1, B_FALSE);
-	rlg_update_awy_legs(route, awy2, B_FALSE);
 
 	if (!FIX_EQ(&awy1_end_fix, &awy2_start_fix)) {
 		if (join) {
 			route_leg_group_t *dir =
 			    rlg_new(ROUTE_LEG_GROUP_TYPE_DIRECT);
-			dir->start_fix = awy1->end_fix;
-			dir->end_fix = awy2->start_fix;
+			dir->start_fix = awy1_end_fix;
+			dir->end_fix = awy2_start_fix;
 			list_insert_after(&route->leg_groups, awy1, dir);
 			rlg_update_direct_leg(route, dir);
 		} else {
@@ -1932,7 +2060,7 @@ route_l_insert(route_t *route, const fix_t *fix, const route_leg_t *x_prev_rl,
 		/* Don't allow modifying the first departure procedure. */
 		} else if (next_rlg->type == ROUTE_LEG_GROUP_TYPE_PROC &&
 		    is_departure_procedure(next_rlg->proc->type)) {
-			return (ERR_INVALID_INSERT);
+			return (ERR_INVALID_ENTRY);
 		}
 		/* last resort: new direct leg group */
 		route_lg_direct_insert(route, fix, NULL, &rlg);
@@ -1966,20 +2094,11 @@ route_l_move(route_t *route, const route_leg_t *x_target_rl,
 	ASSERT(x_target_rl != NULL);
 	ASSERT(x_source_rl != NULL);
 
-	prev_rl = list_prev(&route->legs, x_target_rl);
+	prev_rl = rl_prev_ndisc(route, (route_leg_t *)x_target_rl);
 	next_rl = (route_leg_t *)x_source_rl;
 
 	prev_rlg = (prev_rl != NULL ? prev_rl->parent : NULL);
 	next_rlg = next_rl->parent;
-
-	/*
-	 * Airways can simply get shortened, but procedures can contain
-	 * non-fixed legs, so refuse to terminate on those.
-	 */
-	if ((prev_rl != NULL && IS_NULL_FIX(leg_get_end_fix(prev_rl)) &&
-	    !prev_rl->disco) ||
-	    (IS_NULL_FIX(leg_get_end_fix(next_rl)) && !next_rl->disco))
-		return (ERR_INVALID_DELETE);
 
 #define	NEXT_OR_HEAD(list, elem) \
 	((elem) != NULL ? list_next((list), (elem)) : list_head((list)))
@@ -1994,48 +2113,38 @@ route_l_move(route_t *route, const route_leg_t *x_target_rl,
 			rlg_destroy(route, rlg);
 		}
 		if (prev_rl != NULL) {
-			ASSERT(prev_rlg->type != ROUTE_LEG_GROUP_TYPE_DISCO ||
-			    list_next(&prev_rlg->legs, prev_rl) == NULL);
-			/*
-			 * Shorten airways and procedures. We already know
-			 * we'll be terminating on a fix.
-			 */
-			if (prev_rlg->type == ROUTE_LEG_GROUP_TYPE_AIRWAY ||
-			    prev_rlg->type == ROUTE_LEG_GROUP_TYPE_PROC) {
+			switch(prev_rlg->type) {
+			case ROUTE_LEG_GROUP_TYPE_AIRWAY:
 				prev_rlg->end_fix = *leg_get_end_fix(prev_rl);
-				for (route_leg_t *rl =
-				    list_next(&prev_rlg->legs, prev_rl); rl;
-				    rl = list_next(&prev_rlg->legs, prev_rl)) {
-					list_remove(&route->legs, rl);
-					list_remove(&prev_rlg->legs, rl);
-					free(rl);
-				}
+				rlg_update_awy_legs(route, prev_rlg, B_FALSE);
+				rlg_connect_neigh(route, prev_rlg, B_FALSE);
+				break;
+			case ROUTE_LEG_GROUP_TYPE_PROC:
+				rlg_shorten_proc(route, prev_rl, B_FALSE);
+				break;
+			default:
+				break;
 			}
 		}
-		/*
-		 * If both sides are disco, kill one and we're done.
-		 * This also prevents discos at the start of the route.
-		 */
-		if ((prev_rl == NULL ||
-		    prev_rlg->type == ROUTE_LEG_GROUP_TYPE_DISCO) &&
-		    next_rlg->type == ROUTE_LEG_GROUP_TYPE_DISCO) {
-			rlg_destroy(route, next_rlg);
-		}
-		if (next_rlg->type == ROUTE_LEG_GROUP_TYPE_AIRWAY ||
-		    next_rlg->type == ROUTE_LEG_GROUP_TYPE_DIRECT ||
-		    next_rlg->type == ROUTE_LEG_GROUP_TYPE_PROC) {
-			for (route_leg_t *rl = list_head(&next_rlg->legs);
-			    rl != next_rl; rl = list_head(&prev_rlg->legs)) {
-				ASSERT(rl != NULL);
-				list_remove(&route->legs, rl);
-				list_remove(&next_rlg->legs, rl);
-				free(rl);
+		switch(next_rlg->type) {
+		case ROUTE_LEG_GROUP_TYPE_AIRWAY:
+			if (list_prev(&next_rlg->legs, next_rl) != NULL) {
+				route_leg_group_t *dir;
+				dir = rlg_new(ROUTE_LEG_GROUP_TYPE_DIRECT);
+				next_rlg->start_fix = *leg_get_end_fix(next_rl);
+				rlg_update_awy_legs(route, next_rlg, B_FALSE);
+				dir->end_fix = next_rlg->start_fix;
+				list_insert_before(&route->leg_groups, next_rlg,
+				    dir);
+				rlg_update_direct_leg(route, dir);
 			}
-			if (prev_rl != NULL)
-				/* can be null_fix if prev_rl is a disco */
-				next_rlg->start_fix = *leg_get_end_fix(prev_rl);
-			else
-				next_rlg->start_fix = null_fix;
+			rlg_connect_neigh(route, next_rlg, B_FALSE);
+			break;
+		case ROUTE_LEG_GROUP_TYPE_PROC:
+			rlg_shorten_proc(route, next_rl, B_TRUE);
+			break;
+		default:
+			break;
 		}
 	} else {
 		/* None of these can contain more than one leg */
@@ -2045,7 +2154,12 @@ route_l_move(route_t *route, const route_leg_t *x_target_rl,
 		if (prev_rlg->type == ROUTE_LEG_GROUP_TYPE_AIRWAY) {
 			awy_split(route, prev_rl, next_rl, B_TRUE);
 		} else {
-			/* Procedures are simply shortened */
+			/*
+			 * Procedures legs are simply removed. The segment
+			 * generator will be able to deal with any BS we
+			 * throw at it and the pilot is responsible for
+			 * checking the sanity of the result.
+			 */
 			for (route_leg_t *rl = list_next(&route->legs, prev_rl); rl;
 			    rl = list_next(&route->legs, prev_rl)) {
 				list_remove(&route->legs, rl);
