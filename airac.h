@@ -202,7 +202,7 @@ typedef struct {
 	union {
 		double		hdg;		/* VA, VD, VI, VM, VR */
 		double		crs;		/* CA, CD, CI, CR */
-		struct {			/* FC, FD, FM */
+		struct {			/* FA, FC, FD, FM */
 			fix_t	fix;
 			double	crs;
 		} fix_crs;
@@ -226,7 +226,7 @@ typedef struct {
 			double		radius;
 			bool_t		cw;	/* clockwise or counter-CW */
 		} radius_arc;
-		fix_t			fix;	/* FA, IF */
+		fix_t			fix;	/* IF */
 		struct {			/* HA, HF, HM */
 			fix_t		fix;
 			double		inbd_crs;

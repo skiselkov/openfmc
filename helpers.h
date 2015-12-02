@@ -168,6 +168,10 @@ void append_format(char **str, size_t *sz, const char *format, ...)
  * return x rounded up to the nearest power-of-2.
  */
 #define	P2ROUNDUP(x)	(-(-(x) & -(1 << highbit64(x))))
+#if	!defined(MIN) && !defined(MAX)
+#define	MIN(x, y)	((x) < (y) ? (x) : (y))
+#define	MAX(x, y)	((x) > (y) ? (x) : (y))
+#endif	/* MIN or MAX */
 
 #ifdef	__cplusplus
 }

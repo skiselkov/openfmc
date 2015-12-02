@@ -37,6 +37,7 @@
 #include "airac.h"
 #include "route.h"
 #include "htbl.h"
+#include "wmm.h"
 
 #define	IMGH		1200
 #define	IMGW		1200
@@ -786,6 +787,80 @@ test_route(char *navdata_dir)
 	navaid_db_close(navaiddb);
 }
 
+void
+test_magvar_run(const int npos, const char **names, const double *expct_var,
+    const geo_pos3_t *pos, const double year)
+{
+	wmm_t *wmm;
+
+	printf("year: %.2lf\n", year);
+	wmm = wmm_open("WMM.COF", year);
+	ASSERT(wmm != NULL);
+
+	for (int i = 0; i < npos; i++) {
+		double res = wmm_true2mag(wmm, 0, pos[i]);
+
+		printf("%s(%.5lfx%.5lfx%.0lf) 0 true = %.2lf mag "
+		    "(expct: %.2lf): %s\n", names[i], pos[i].lat, pos[i].lon,
+		    pos[i].elev, res, expct_var[i],
+		    round(res * 100) == round(expct_var[i] * 100) ? "OK" :
+		    "FAIL");
+	}
+
+	wmm_close(wmm);
+}
+
+void
+test_magvar(void)
+{
+#define	NPOS		7
+#define NTESTPOS	6
+	char *names[NPOS] = {
+		"PHOG", "YMML", "EGLL", "BGSF", "PABR", "SCCI", "FALE"
+	};
+	double expct_var[NPOS] = {
+		11, 11, -1, -32, 19, 13, -24
+	};
+	geo_pos3_t pos[NPOS] = {
+		{ 20.89866 , -156.4305, 54 },
+		{ -37.67333, 144.84333,  434 },
+		{ 51.4775, 0.46133, 83 },
+		{ 67.017, -50.68933, 165 },
+		{ 71.28483, -156.7685, 48 },
+		{ -53.00366, -70.85366, 139 },
+		{ -29.61183, 31.11933, 304 }
+	};
+	time_t now;
+	struct tm now_d;
+
+	char *names_test[NTESTPOS] = {
+		"test1", "test2", "test3", "test4", "test5", "test6"
+	};
+	double expct_var_test_2015[NTESTPOS] = {
+		-3.85, 0.57, 69.81, -4.27, 0.56, 69.22
+	};
+	double expct_var_test_2017_5[NTESTPOS] = {
+		-2.75, 0.32, 69.58, -3.17, 0.32, 69.00
+	};
+	geo_pos3_t pos_test[NTESTPOS] = {
+		{ 80, 0, 0 },
+		{ 0, 120, 0 },
+		{ -80, 240, 0 },
+		{ 80, 0, 328084 },
+		{ 0, 120, 328084 },
+		{ -80, 240, 328084 }
+	};
+
+	now = time(NULL);
+	localtime_r(&now, &now_d);
+	test_magvar_run(NPOS, (const char **)names, expct_var, pos,
+	    1900 + now_d.tm_year + (now_d.tm_mon / 12.0));
+	test_magvar_run(NTESTPOS, (const char **)names_test,
+	    expct_var_test_2015, pos_test, 2015);
+	test_magvar_run(NTESTPOS, (const char **)names_test,
+	    expct_var_test_2017_5, pos_test, 2017.5);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -819,8 +894,9 @@ main(int argc, char **argv)
 	test_lcc(40, 30, 50);
 	test_fpp();
 	test_geo_xlate();
-*/
 	test_route(argv[optind]);
+*/
+	test_magvar();
 
 	return (0);
 }

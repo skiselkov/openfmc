@@ -64,6 +64,8 @@ typedef struct {
 #define	GEO_POS3(lat, lon, elev)	((geo_pos3_t){(lat), (lon), (elev)})
 #define	VECT2(x, y)			((vect2_t){(x), (y)})
 #define	VECT3(x, y, z)			((vect3_t){(x), (y), (z)})
+#define	VECT2_EQ(a, b)			((a).x == (b).x && (a).y == (b).y)
+#define	VECT2_PARALLEL(a, b)		(((a).x * ((a).y / (b).y)) == (b).x)
 
 #define	ZERO_VECT2		((vect2_t){0.0, 0.0})
 #define	ZERO_VECT3		((vect3_t){0.0, 0.0, 0.0})
@@ -78,6 +80,7 @@ typedef struct {
 
 #define	GEO2_TO_GEO3(v, a)	((geo_pos3_t){(v).lat, (v).lon, (a)})
 #define	GEO3_TO_GEO2(v)		((geo_pos2_t){(v).lat, (v).lon})
+#define	GEO_POS2_INV(v)		((geo_pos2_t){-(v).lat, -(v).lon})
 
 #define	EARTH_MSL		6371000		/* meters */
 #ifndef	ABS
@@ -89,6 +92,7 @@ vect3_t vect3_set_abs(vect3_t a, double abs);
 vect3_t vect3_unit(vect3_t a, double *l);
 
 vect3_t vect3_add(vect3_t a, vect3_t b);
+vect2_t vect2_add(vect2_t a, vect2_t b);
 vect3_t vect3_sub(vect3_t a, vect3_t b);
 vect3_t vect3_scmul(vect3_t a, double b);
 double vect3_dotprod(vect3_t a, vect3_t b);
@@ -97,8 +101,11 @@ vect3_t vect3_xprod(vect3_t a, vect3_t b);
 vect3_t geo2vect(geo_pos3_t pos);
 geo_pos3_t vect2geo(vect3_t v);
 
-int vect_sphere_intersect(vect3_t v, vect3_t o, vect3_t c,
-    double r, vect3_t i[2]);
+int vect_sphere_intersect(vect3_t v, vect3_t o, vect3_t c, double r,
+    bool_t confined, vect3_t i[2]);
+
+vect2_t vect2_intersect(vect2_t da, vect2_t oa, vect2_t db, vect2_t ob,
+    bool_t confined);
 
 /* geometry parser & validator helpers */
 bool_t geo_pos2_from_str(const char *lat, const char *lon, geo_pos2_t *pos);
@@ -135,6 +142,7 @@ fpp_t ortho_fpp_init(geo_pos2_t center, double rot);
 fpp_t gnomo_fpp_init(geo_pos2_t center, double rot);
 fpp_t stereo_fpp_init(geo_pos2_t center, double rot);
 vect2_t geo2fpp(geo_pos2_t pos, const fpp_t *fpp);
+geo_pos2_t fpp2geo(vect2_t pos, const fpp_t *fpp);
 
 /*
  * Lambert conformal conic projection

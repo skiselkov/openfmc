@@ -61,7 +61,10 @@ typedef struct {
 typedef struct {
 	bool_t			disco;
 	navproc_seg_t		seg;
+
+	bool_t			alt_lim_ovrd;
 	alt_lim_t		alt_lim;
+	bool_t			spd_lim_ovrd;
 	spd_lim_t		spd_lim;
 
 	route_leg_group_t	*parent;
@@ -219,5 +222,9 @@ err_t route_l_insert(route_t *route, const fix_t *fix,
 err_t route_l_move(route_t *route, const route_leg_t *x_target_rl,
     const route_leg_t *x_source_rl);
 void route_l_delete(route_t *route, const route_leg_t *x_rl);
+void route_l_set_alt_lim(route_t *route, const route_leg_t *x_rl, alt_lim_t l);
+alt_lim_t route_l_get_alt_lim(const route_leg_t *rl);
+void route_l_set_spd_lim(route_t *route, const route_leg_t *x_rl, spd_lim_t l);
+spd_lim_t route_l_get_spd_lim(const route_leg_t *rl);
 
 #endif	/* _OPENFMC_ROUTE_H_ */

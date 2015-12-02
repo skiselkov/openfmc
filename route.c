@@ -35,7 +35,9 @@ static void rlg_bypass(route_t *route, route_leg_group_t *rlg,
     bool_t allow_mod, bool_t allow_add_legs);
 static route_leg_t * last_leg_before_rlg(route_t *route,
     route_leg_group_t *rlg);
-static bool_t is_intc_leg(const route_leg_t *rl);
+static bool_t rl_is_intc(const route_leg_t *rl);
+static bool_t rl_is_intc_targ(const route_leg_t *rl);
+static bool_t navprocs_related(const navproc_t *nv1, const navproc_t *nv2);
 
 /*
  * Destroys and frees a route_seg_t.
@@ -323,7 +325,7 @@ rlg_update_direct_leg(route_t *route, route_leg_group_t *rlg)
  * is NULL, returns the first leg group (which is never a DISCO).
  */
 static route_leg_group_t *
-rlg_next_ndisc(route_t *route, route_leg_group_t *ref)
+rlg_next_ndisc(route_t *route, const route_leg_group_t *ref)
 {
 	if (ref == NULL)
 		return (list_head(&route->leg_groups));
@@ -341,7 +343,7 @@ rlg_next_ndisc(route_t *route, route_leg_group_t *ref)
  * is NULL, returns the last leg group (which is never a DISCO).
  */
 static route_leg_group_t *
-rlg_prev_ndisc(route_t *route, route_leg_group_t *ref)
+rlg_prev_ndisc(route_t *route, const route_leg_group_t *ref)
 {
 	if (ref == NULL)
 		return (list_tail(&route->leg_groups));
@@ -380,16 +382,31 @@ rlg_tail_ndisc(route_t *route)
 }
 
 static fix_t
-rlg_find_start_fix(route_leg_group_t *rlg, route_leg_group_t *prev_rlg)
+rlg_find_start_fix(const route_leg_group_t *rlg)
 {
-	if (rlg->type == ROUTE_LEG_GROUP_TYPE_PROC)
-		return (navproc_get_start_fix(rlg->proc));
-	else if (prev_rlg != NULL)
-		return (prev_rlg->end_fix);
-	else
-		return (null_fix);
+	route_leg_t *rl = list_head(&rlg->legs);
+	ASSERT(rl != NULL);
+	return (*navproc_seg_get_start_fix(&rl->seg));
 }
 
+static fix_t
+rlg_find_end_fix(const route_leg_group_t *rlg)
+{
+	route_leg_t *rl = list_tail(&rlg->legs);
+	ASSERT(rl != NULL);
+	return (*navproc_seg_get_end_fix(&rl->seg));
+}
+
+/*
+ * Returns B_TRUE if the two navprocs are related, B_FALSE otherwise.
+ * Related navprocs are defined as:
+ *	a) Both belonging to the same airport.
+ *	b) Both being of the same class of navproc. There are two classes
+ *	   of navprocs:
+ *		1) Departure navprocs: SID, SID_COMMON, SID_TRANS.
+ *		2) Arrival navprocs: STAR, STAR_COMMON, STAR_TRANS, FINAL,
+ *		   FINAL_TRANS.
+ */
 static bool_t
 navprocs_related(const navproc_t *nv1, const navproc_t *nv2)
 {
@@ -400,27 +417,72 @@ navprocs_related(const navproc_t *nv1, const navproc_t *nv2)
 	    nv2->type >= NAVPROC_TYPE_STAR)));
 }
 
-static fix_t
-rlg_find_end_fix(route_leg_group_t *rlg, route_leg_group_t *next_rlg)
+static geo_pos2_t
+calc_leg_start_pos(const route_leg_t *lim_rl, geo_pos2_t start_pos)
 {
-	if (rlg->type == ROUTE_LEG_GROUP_TYPE_PROC) {
-		route_leg_t *rl = list_tail(&rlg->legs);
-		fix_t fix;
+	const route_leg_group_t *rlg = lim_rl->parent;
+	vect2_t	cur_pos_v = ZERO_VECT2;
+	fpp_t	fpp, fpp_inv;
 
+	ASSERT(rlg->type != ROUTE_LEG_GROUP_TYPE_DISCO);
+
+	/* If no start position was provided, try the procedure start point */
+	if (IS_NULL_GEO_POS(start_pos))
+		start_pos = rlg->start_fix.pos;
+	/* If still no start, can't make progress */
+	if (IS_NULL_GEO_POS(start_pos))
+		return (NULL_GEO_POS2);
+	fpp = ortho_fpp_init(start_pos, 0);
+	for (route_leg_t *rl = list_head(&rlg->legs); rl != lim_rl;
+	    rl = list_next(&rlg->legs, rl)) {
 		ASSERT(rl != NULL);
-		fix = *leg_get_end_fix(rl);
-		if (!IS_NULL_FIX(&fix))
-			return (fix);
-		if (next_rlg != NULL && is_intc_leg(rl) &&
-		    navprocs_related(rlg->proc, next_rlg->proc)) {
-			return (next_rlg->start_fix);
+		switch (rl->seg.type) {
+		case NAVPROC_SEG_TYPE_ARC_TO_FIX:
+		case NAVPROC_SEG_TYPE_CRS_TO_FIX:
+		case NAVPROC_SEG_TYPE_DIR_TO_FIX:
+		case NAVPROC_SEG_TYPE_RADIUS_ARC_TO_FIX:
+		case NAVPROC_SEG_TYPE_TRK_TO_FIX:
+			cur_pos_v = geo2fpp(rl->seg.term_cond.fix.pos, &fpp);
+			break;
+		case NAVPROC_SEG_TYPE_INIT_FIX:
+			cur_pos_v = geo2fpp(rl->seg.leg_cmd.fix.pos, &fpp);
+			break;
+		case NAVPROC_SEG_TYPE_HOLD_TO_ALT:
+		case NAVPROC_SEG_TYPE_HOLD_TO_FIX:
+		case NAVPROC_SEG_TYPE_HOLD_TO_MANUAL:
+			cur_pos_v = geo2fpp(rl->seg.leg_cmd.hold.fix.pos, &fpp);
+			break;
+		default:
+			assert(0);
 		}
-		return (null_fix);
-	} else if (next_rlg != NULL) {
-		return (next_rlg->start_fix);
-	} else {
-		return (null_fix);
 	}
+	fpp_inv = ortho_fpp_init(GEO_POS2_INV(start_pos), 0);
+	return (NULL_GEO_POS2);
+}
+
+/*
+ * Returns B_TRUE if the two route leg groups intercept each other, B_FALSE
+ * otherwise. Interception is defined as:
+ */
+static bool_t
+rlgs_intc(const route_leg_group_t *rlg1, const route_leg_group_t *rlg2)
+{
+	fix_t end_fix = rlg_find_end_fix(rlg1);
+	fix_t start_fix = rlg_find_start_fix(rlg2);
+	route_leg_t *rl1, *rl2;
+
+	if (FIX_EQ_POS(&start_fix, &end_fix))
+		return (B_TRUE);
+	rl1 = list_tail(&rlg1->legs);
+	rl2 = list_head(&rlg2->legs);
+	ASSERT(rl1 != NULL && rl2 != NULL);
+	if (!rl_is_intc(rl1) || !rl_is_intc_targ(rl2))
+		return (B_FALSE);
+
+	/* Calculate an intercept */
+	calc_leg_start_pos(rl1, NULL_GEO_POS2);
+
+	return (B_FALSE);
 }
 
 /*
@@ -462,13 +524,26 @@ route_remove_arpt_links(route_t *route, const airport_t *arpt)
 }
 
 static bool_t
-is_intc_leg(const route_leg_t *rl)
+rl_is_intc(const route_leg_t *rl)
 {
 	ASSERT(rl != NULL);
 	switch (rl->seg.type) {
 	case NAVPROC_SEG_TYPE_CRS_TO_INTCP:
 	case NAVPROC_SEG_TYPE_HDG_TO_INTCP:
 	case NAVPROC_SEG_TYPE_PROC_TURN:
+		return (B_TRUE);
+	default:
+		return (B_FALSE);
+	}
+}
+
+static bool_t
+rl_is_intc_targ(const route_leg_t *rl)
+{
+	ASSERT(rl != NULL);
+	switch (rl->seg.type) {
+	case NAVPROC_SEG_TYPE_CRS_TO_FIX:
+	case NAVPROC_SEG_TYPE_ARC_TO_FIX:
 		return (B_TRUE);
 	default:
 		return (B_FALSE);
@@ -718,9 +793,9 @@ rlg_try_connect(route_t *route, route_leg_group_t *prev_rlg,
 			 * procedures to be continuous PROVIDED they end in a
 			 * suitable (INTC) leg.
 			 */
-			if (navprocs_related(prev_rlg->proc, next_rlg->proc)) {
-				fix_t new_end = rlg_find_end_fix(prev_rlg,
-				    next_rlg);
+			if (navprocs_related(prev_rlg->proc, next_rlg->proc) &&
+			    rlgs_intc(prev_rlg, next_rlg)) {
+				fix_t new_end = rlg_find_end_fix(prev_rlg);
 				if (!IS_NULL_FIX(&new_end)) {
 					/*
 					 * This is just for display convenience.
@@ -913,11 +988,9 @@ rlg_shorten_proc(route_t *route, route_leg_t *lim_rl, bool_t left)
 		free(rl);
 	}
 	if (left)
-		rlg->start_fix = rlg_find_start_fix(rlg, rlg_prev_ndisc(route,
-		    rlg));
+		rlg->start_fix = rlg_find_start_fix(rlg);
 	else
-		rlg->end_fix = rlg_find_end_fix(rlg, rlg_next_ndisc(route,
-		    rlg));
+		rlg->end_fix = rlg_find_end_fix(rlg);
 	rlg_connect_neigh(route, rlg, B_FALSE, B_FALSE);
 }
 
@@ -1217,7 +1290,7 @@ route_insert_proc_rlg(route_t *route, const navproc_t *proc,
 	}
 	ASSERT(!list_is_empty(&rlg->legs));
 	rlg->start_fix = navproc_get_start_fix(proc);
-	rlg->end_fix = rlg_find_end_fix(rlg, rlg_next_ndisc(route, rlg));
+	rlg->end_fix = rlg_find_end_fix(rlg);
 
 	return (rlg);
 }
@@ -2251,27 +2324,27 @@ route_l_delete(route_t *route, const route_leg_t *x_rl)
 			rlg_bypass(route, rl->parent, B_FALSE, B_FALSE);
 		} else if (prev_rl == NULL) {
 			/* First leg, check if we can adjust start_fix. */
-			fix_t end_fix = *leg_get_end_fix(rl);
+			fix_t start_fix;
+
 			list_remove(&rlg->legs, rl);
 			list_remove(&route->legs, rl);
 			free(rl);
-			if (!IS_NULL_FIX(&end_fix)) {
-				rlg->start_fix = end_fix;
-				rlg_connect(route, rlg_prev_ndisc(route, rlg),
-				    rlg, B_FALSE, B_FALSE);
+			start_fix = rlg_find_start_fix(rlg);
+			if (!IS_NULL_FIX(&start_fix)) {
+				rlg->start_fix = start_fix;
+				rlg_connect_neigh(route, rlg, B_FALSE, B_FALSE);
 			}
 		} else if (next_rl == NULL) {
 			/* Last leg, check if we can adjust end_fix. */
 			fix_t end_fix;
-			ASSERT(prev_rl != NULL);
-			end_fix = *leg_get_end_fix(prev_rl);
+
 			list_remove(&rlg->legs, rl);
 			list_remove(&route->legs, rl);
 			free(rl);
+			end_fix = rlg_find_end_fix(rlg);
 			if (!IS_NULL_FIX(&end_fix)) {
 				rlg->end_fix = end_fix;
-				rlg_connect(route, rlg, rlg_next_ndisc(route,
-				    rlg), B_FALSE, B_FALSE);
+				rlg_connect_neigh(route, rlg, B_FALSE, B_FALSE);
 			}
 		} else {
 			/* Internal delete, just remove it */
@@ -2292,4 +2365,57 @@ route_l_delete(route_t *route, const route_leg_t *x_rl)
 		assert(0);
 	}
 	route->segs_dirty = B_TRUE;
+}
+
+/*
+ * Overrides the leg's navproc seg's altitude constraint with `l'.
+ */
+void
+route_l_set_alt_lim(route_t *route, const route_leg_t *x_rl, alt_lim_t l)
+{
+	route_leg_t *rl = (route_leg_t *)x_rl;
+	if (!rl->alt_lim_ovrd || memcmp(&rl->alt_lim, &l, sizeof (l)) != 0) {
+		rl->alt_lim = l;
+		rl->alt_lim_ovrd = B_TRUE;
+		route->segs_dirty = B_TRUE;
+	}
+}
+
+/*
+ * Returns the active alt constraint on the route leg. If the route leg has
+ * no overriding constraint, the leg's navproc seg's constraint is returned.
+ */
+alt_lim_t route_l_get_alt_lim(const route_leg_t *rl)
+{
+	if (rl->alt_lim_ovrd)
+		return (rl->alt_lim);
+	else
+		return (rl->seg.alt_lim);
+}
+
+/*
+ * Overrides the leg's navproc seg's speed constraint with `l'.
+ */
+void
+route_l_set_spd_lim(route_t *route, const route_leg_t *x_rl, spd_lim_t l)
+{
+	route_leg_t *rl = (route_leg_t *)x_rl;
+	if (!rl->spd_lim_ovrd || memcmp(&rl->spd_lim, &l, sizeof (l)) != 0) {
+		rl->spd_lim = l;
+		rl->spd_lim_ovrd = B_TRUE;
+		route->segs_dirty = B_TRUE;
+	}
+}
+
+/*
+ * Returns the active speed constraint on the route leg. If the route leg has
+ * no overriding constraint, the leg's navproc seg's constraint is returned.
+ */
+spd_lim_t
+route_l_get_spd_lim(const route_leg_t *rl)
+{
+	if (rl->spd_lim_ovrd)
+		return (rl->spd_lim);
+	else
+		return (rl->seg.spd_lim);
 }

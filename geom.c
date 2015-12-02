@@ -120,7 +120,7 @@ vect3_unit(vect3_t a, double *l)
 		return (NULL_VECT3);
 	if (l)
 		*l = len;
-	return ((vect3_t){a.x / len, a.y / len, a.z / len});
+	return (VECT3(a.x / len, a.y / len, a.z / len));
 }
 
 /*
@@ -131,7 +131,18 @@ vect3_unit(vect3_t a, double *l)
 vect3_t
 vect3_add(vect3_t a, vect3_t b)
 {
-	return ((vect3_t){a.x + b.x, a.y + b.y, a.z + b.z});
+	return (VECT3(a.x + b.x, a.y + b.y, a.z + b.z));
+}
+
+/*
+ * Adds 2-space vectors `a' and `b' and returns the result:
+ * _   _   _
+ * r = a + b
+ */
+vect2_t
+vect2_add(vect2_t a, vect2_t b)
+{
+	return (VECT2(a.x + b.x, a.y + b.y));
 }
 
 /*
@@ -142,7 +153,7 @@ vect3_add(vect3_t a, vect3_t b)
 vect3_t
 vect3_sub(vect3_t a, vect3_t b)
 {
-	return ((vect3_t){a.x - b.x, a.y - b.y, a.z - b.z});
+	return (VECT3(a.x - b.x, a.y - b.y, a.z - b.z));
 }
 
 /*
@@ -154,7 +165,7 @@ vect3_sub(vect3_t a, vect3_t b)
 vect3_t
 vect3_scmul(vect3_t a, double b)
 {
-	return ((vect3_t){a.x * b, a.y * b, a.z * b});
+	return (VECT3(a.x * b, a.y * b, a.z * b));
 }
 
 /*
@@ -176,8 +187,8 @@ vect3_dotprod(vect3_t a, vect3_t b)
 vect3_t
 vect3_xprod(vect3_t a, vect3_t b)
 {
-	return ((vect3_t){a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z,
-	    a.x * b.y - a.y * b.x});
+	return (VECT3(a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z,
+	    a.x * b.y - a.y * b.x));
 }
 
 /*
@@ -250,8 +261,6 @@ vect2geo(vect3_t v)
 
 /*
  * Determines whether and where a vector intersects the surface of a sphere.
- * Only takes into account points that lie exactly on the vector
- * (i.e. between its starting and ending points, inclusive).
  * Returns the number of intersection points (zero, one or two).
  *
  * @param v Vector for which to determine the intersection.
@@ -259,6 +268,9 @@ vect2geo(vect3_t v)
  *	of vector v (i.e. displacement of `v' from the origin).
  * @param c Displacement of sphere center point from the coordinate origin.
  * @param r Radius of sphere.
+ * @param confined If B_TRUE, only intersects which lie between the vector's
+ *	start & ending point (inclusive) are returned. Otherwise any
+ *	intersect along an infinite linear extension of the vector is returned.
  * @param i If not NULL, this function stores vectors pointing to the
  *	intersection points from the coordinate origin in this array:
  *	- if 0 is returned, two null vectors are stored in the array.
@@ -269,8 +281,8 @@ vect2geo(vect3_t v)
  *	intersection points are stored in the array.
  */
 int
-vect_sphere_intersect(vect3_t v, vect3_t o, vect3_t c,
-    double r, vect3_t i[2])
+vect_sphere_intersect(vect3_t v, vect3_t o, vect3_t c, double r,
+    bool_t confined, vect3_t i[2])
 {
 	vect3_t l, o_min_c;
 	double d, l_dot_o_min_c, sqrt_tmp, o_min_c_abs;
@@ -306,14 +318,13 @@ vect_sphere_intersect(vect3_t v, vect3_t o, vect3_t c,
 		sqrt_tmp = sqrt(sqrt_tmp);
 
 		i1_d = -l_dot_o_min_c - sqrt_tmp;
-		if (i1_d >= 0 && i1_d <= d) {
+		if ((i1_d >= 0 && i1_d <= d) || !confined) {
 			/*
 			 * Solution lies on vector, store a vector to it
 			 * if the caller requested it.
 			 */
 			if (i)
-				i[0] = vect3_add(vect3_scmul(l, i1_d),
-				    o);
+				i[0] = vect3_add(vect3_scmul(l, i1_d), o);
 			intersects++;
 		} else {
 			/* Solution lies outside of line between o1 & o2 */
@@ -324,10 +335,9 @@ vect_sphere_intersect(vect3_t v, vect3_t o, vect3_t c,
 
 		/* ditto for the second intersect */
 		i2_d = -l_dot_o_min_c + sqrt_tmp;
-		if (i2_d >= 0 && i2_d <= d) {
+		if ((i2_d >= 0 && i2_d <= d) || !confined) {
 			if (i)
-				i[1] = vect3_add(vect3_scmul(l, i2_d),
-				    o);
+				i[1] = vect3_add(vect3_scmul(l, i2_d), o);
 			intersects++;
 		} else {
 			i2_d = NAN;
@@ -344,7 +354,7 @@ vect_sphere_intersect(vect3_t v, vect3_t o, vect3_t c,
 			i[1] = NULL_VECT3;
 
 		i1_d = -l_dot_o_min_c;
-		if (i1_d >= 0 && i1_d <= d) {
+		if ((i1_d >= 0 && i1_d <= d) || !confined) {
 			if (i)
 				i[0] = vect3_add(vect3_scmul(l, i1_d),
 				    o);
@@ -362,6 +372,45 @@ vect_sphere_intersect(vect3_t v, vect3_t o, vect3_t c,
 		}
 		return (0);
 	}
+}
+
+vect2_t
+vect2_intersect(vect2_t da, vect2_t oa, vect2_t db, vect2_t ob, bool_t confined)
+{
+	vect2_t p1, p2, p3, p4, r;
+	double det;
+
+	if (VECT2_PARALLEL(da, db))
+		return (NULL_VECT2);
+	if (VECT2_EQ(oa, ob))
+		return (oa);
+
+	p1 = oa;
+	p2 = vect2_add(oa, da);
+	p3 = ob;
+	p4 = vect2_add(ob, db);
+
+	det = ((p1.x * p3.y) - (p1.x * p4.y) - (p2.x * p3.y) + (p2.x * p4.y) -
+	    (p1.y * p3.x) + (p1.y * p4.x) + (p2.y * p3.x) - (p2.y * p4.x));
+	ASSERT(det != 0.0);
+	r.x = ((p1.x * p2.y * p3.x) - (p1.x * p2.y * p4.x) -
+	    (p1.y * p2.x * p3.x) + (p1.y * p2.x * p4.x) -
+	    (p1.x * p3.x * p4.y) + (p1.x * p3.y * p4.x) +
+	    (p2.x * p3.x * p4.y) - (p2.x * p3.y * p4.x)) / det;
+	r.y = ((p1.x * p2.y * p3.y) - (p1.x * p2.y * p4.y) -
+	    (p1.y * p2.x * p3.y) + (p1.y * p2.x * p4.y) -
+	    (p1.y * p3.x * p4.y) + (p1.y * p3.y * p4.x) +
+	    (p2.y * p3.x * p4.y) - (p2.y * p3.y * p4.x)) / det;
+
+	if (confined) {
+		if (r.x < MIN(p1.x, p2.x) || r.x > MAX(p1.x, p2.x) ||
+		    r.x < MIN(p3.x, p4.x) || r.x > MAX(p3.x, p4.x) ||
+		    r.y < MIN(p1.y, p2.y) || r.x > MAX(p1.y, p2.y) ||
+		    r.y < MIN(p3.y, p4.y) || r.x > MAX(p3.y, p4.y))
+			return (NULL_VECT2);
+	}
+
+	return (r);
 }
 
 /*
@@ -502,12 +551,43 @@ geo_xlate_impl(geo_pos2_t pos, const geo_xlate_t *xlate)
 {
 	vect3_t	p, q;
 	vect2_t	r, s;
+
+	/*
+	 * Translate the geo coordinates to a 3-space vector &
+	 * rotate around the sphere's center point in the x (lat) & z (lon)
+	 * axes.
+	 */
 	p = geo2vect(GEO_POS3(pos.lat, pos.lon, 0));
 	matrix_mul(xlate->geo_matrix, (double *)&p, (double *)&q, 3, 1, 3);
+	/*
+	 * In the final projection plane, grab x & z coords & rotate along
+	 * y axis.
+	 */
 	r = VECT2(q.x, q.z);
 	matrix_mul(xlate->rot_matrix, (double *)&r, (double *)&s, 2, 1, 2);
 	q.x = s.x;
 	q.z = s.y;
+
+	return (q);
+}
+
+/*
+ * Translates a point at `pos' using the geo translation specified by `xlate'.
+ */
+static vect3_t
+geo_xlate_inv_impl(vect3_t p, const geo_xlate_t *xlate)
+{
+	vect3_t	q;
+	vect2_t	r, s;
+
+	/* Undo projection plane rotation along y axis. */
+	r = VECT2(p.x, p.z);
+	matrix_mul(xlate->rot_matrix, (double *)&r, (double *)&s, 2, 1, 2);
+	p.x = s.x;
+	p.z = s.y;
+	/* Undo x (lat) & z (lon) rotation */
+	matrix_mul(xlate->geo_matrix, (double *)&p, (double *)&q, 3, 1, 3);
+
 	return (q);
 }
 
@@ -518,6 +598,18 @@ geo_pos2_t
 geo_xlate(geo_pos2_t pos, const geo_xlate_t *xlate)
 {
 	vect3_t		r = geo_xlate_impl(pos, xlate);
+	geo_pos3_t	res = vect2geo(r);
+	return (GEO_POS2(res.lat, res.lon));
+}
+
+/*
+ * Translates a point at `pos' using the geo translation specified by `xlate'.
+ */
+geo_pos2_t
+geo_xlate_inv(geo_pos2_t pos, const geo_xlate_t *xlate)
+{
+	vect3_t		v = geo2vect(GEO2_TO_GEO3(pos, 0));
+	vect3_t		r = geo_xlate_inv_impl(v, xlate);
 	geo_pos3_t	res = vect2geo(r);
 	return (GEO_POS2(res.lat, res.lon));
 }
@@ -670,6 +762,50 @@ geo2fpp(geo_pos2_t pos, const fpp_t *fpp)
 	}
 
 	return (res_v);
+}
+
+/*
+ * Back-projects a point from a projection surface into spherical coordinate
+ * space. N.B. since projection loses some information about the original
+ * input point, back-projection is incomplete for projections where either:
+ *	a) the projection origin was non-negative, or
+ *	b) the projection origin was less than -EARTH_MSL
+ * This means back-projection is only uniquely possible possible for
+ * gnomonic, stereographic and other projections where the projection origin
+ * lies "inside" the projected sphere. In case back-projection is not unique,
+ * the point closer to the projection origin is returned.
+ */
+geo_pos2_t
+fpp2geo(vect2_t pos, const fpp_t *fpp)
+{
+	vect3_t	v = VECT3(pos.x, -fpp->dist, pos.y);
+	vect3_t	o = VECT3(0, EARTH_MSL + fpp->dist, 0);
+	vect3_t i[2];
+	vect3_t r;
+	int n;
+
+	n = vect_sphere_intersect(v, o, ZERO_VECT3, EARTH_MSL, B_FALSE, i);
+	if (n == 0) {
+		/* Invalid input point, not a member of projection */
+		return (NULL_GEO_POS2);
+	}
+	if (n == 2) {
+		/*
+		 * Two solutions, find the one that's closer to the projection
+		 * origin while located between it and the projection plane
+		 * and place it in i[0].
+		 */
+		if (fpp->dist >= -EARTH_MSL) {
+			if (i[1].y > i[0].y)
+				i[0] = i[1];
+		} else {
+			if (i[1].y < i[0].y)
+				i[0] = i[1];
+		}
+	}
+	/* Result is now in i[0]. Inv-xlate to global space & vect2geo. */
+	r = geo_xlate_inv_impl(i[0], &fpp->xlate);
+	return (GEO3_TO_GEO2(vect2geo(r)));
 }
 
 /*

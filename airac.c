@@ -1597,7 +1597,9 @@ parse_FA_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
 {
 	CHECK_NUM_COMPS(17, FA);
 	seg->type = NAVPROC_SEG_TYPE_FIX_TO_ALT;
-	if (!parse_proc_seg_fix(&comps[1], &seg->leg_cmd.fix) ||
+	seg->leg_cmd.fix_crs.crs = atof(comps[8]);
+	if (!parse_proc_seg_fix(&comps[1], &seg->leg_cmd.fix_crs.fix) ||
+	    !is_valid_hdg(seg->leg_cmd.fix_crs.crs) ||
 	    !parse_alt_spd_term(&comps[9], &seg->term_cond.alt,
 	    &seg->spd_lim) ||
 	    /* altitude constraint is required for FA segs */
@@ -1612,9 +1614,9 @@ dump_FA_seg(char **result, size_t *result_sz, const navproc_seg_t *seg)
 {
 	DUMP_ALT_LIM(&seg->term_cond.alt);
 	DUMP_SPD_LIM(&seg->spd_lim);
-	append_format(result, result_sz, "\tFA,F:%s,lat:%lf,lon:%lf%s%s\n",
-	    seg->leg_cmd.fix.name, seg->leg_cmd.fix.pos.lat,
-	    seg->leg_cmd.fix.pos.lon, alt_lim_desc, spd_lim_desc);
+	append_format(result, result_sz, "\tFA,F:%s(%lfx%lf),c:%lf%s%s\n",
+	    FIX_PRINTF_ARG(&seg->leg_cmd.fix_crs.fix),
+	    seg->leg_cmd.fix_crs.crs, alt_lim_desc, spd_lim_desc);
 }
 
 static bool_t
@@ -2098,7 +2100,7 @@ navproc_seg_get_start_fix(const navproc_seg_t *seg)
 {
 	switch (seg->type) {
 	case NAVPROC_SEG_TYPE_CRS_TO_FIX:
-		return (&seg->leg_cmd.navaid_crs.navaid);
+		return (&seg->term_cond.fix);
 	case NAVPROC_SEG_TYPE_FIX_TO_DIST:
 	case NAVPROC_SEG_TYPE_FIX_TO_DME:
 	case NAVPROC_SEG_TYPE_FIX_TO_MANUAL:
