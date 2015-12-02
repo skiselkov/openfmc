@@ -5,7 +5,7 @@
 #include <stdlib.h>
 #include <ctype.h>
 #include <assert.h>
-#include "GeomagnetismHeader.h"
+#include "GeomagnetismLibrary.h"
 
 /* $Id: GeomagnetismLibrary.c 1287 2014-12-09 22:55:09Z awoods $
  *

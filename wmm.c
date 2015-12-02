@@ -27,7 +27,7 @@
 
 #include "wmm.h"
 #include "helpers.h"
-#include "GeomagnetismHeader.h"
+#include "GeomagnetismLibrary.h"
 
 struct wmm_s {
 	/* time-modified model according to year passed to wmm_open */
@@ -63,7 +63,8 @@ wmm_open(const char *filename, double year)
 
 	if (!MAG_robustReadMagModels(filename, &fixed_model))
 		return (NULL);
-	if (year < fixed_model->epoch || year > fixed_model->epoch + 5) {
+	if (year < fixed_model->epoch ||
+	    year > fixed_model->CoefficientFileEndDate) {
 		/* Magnetic model not applicable */
 		MAG_FreeMagneticModelMemory(fixed_model);
 		return (NULL);
