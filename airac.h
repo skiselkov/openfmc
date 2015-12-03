@@ -252,7 +252,7 @@ typedef struct {
 			fix_t		navaid;
 			double		radial;
 		} radial;
-		struct {			/* FD, CD */
+		struct {			/* CD, FD */
 			fix_t		navaid;
 			double		dist;
 		} dme;
@@ -287,6 +287,7 @@ typedef struct navproc_s {
 	navproc_final_t	final_type;
 } navproc_t;
 
+const char *navproc_seg_type2str(navproc_seg_type_t type);
 const fix_t *navproc_seg_get_start_fix(const navproc_seg_t *seg);
 const fix_t *navproc_seg_get_end_fix(const navproc_seg_t *seg);
 void navproc_seg_set_end_fix(navproc_seg_t *seg, const fix_t *fix);

@@ -129,6 +129,19 @@ vect3_set_abs(vect3_t a, double abs)
 }
 
 /*
+ * Same as vect3_set_abs, but for 2-space vectors.
+ */
+vect2_t
+vect2_set_abs(vect2_t a, double abs)
+{
+	double oldval = vect2_abs(a);
+	if (oldval != 0.0)
+		return (vect2_scmul(a, abs / oldval));
+	else
+		return (ZERO_VECT2);
+}
+
+/*
  * Returns a unit  vector (vector with identical orientation but a length of 1)
  * for a given input vector. The length of the input vector is stored in `l'.
  */
@@ -176,6 +189,15 @@ vect3_sub(vect3_t a, vect3_t b)
 }
 
 /*
+ * Same as vect3_sub, but for 2-space vectors.
+ */
+vect2_t
+vect2_sub(vect2_t a, vect2_t b)
+{
+	return (VECT2(a.x - b.x, a.y - b.y));
+}
+
+/*
  * Performs a scalar multiply of 3-space vector `a' and scalar value `b' and
  * returns the result:
  * _   _
@@ -185,6 +207,15 @@ vect3_t
 vect3_scmul(vect3_t a, double b)
 {
 	return (VECT3(a.x * b, a.y * b, a.z * b));
+}
+
+/*
+ * Same as vect2_scmul, but for 2-space vectors.
+ */
+vect2_t
+vect2_scmul(vect2_t a, double b)
+{
+	return (VECT2(a.x * b, a.y * b));
 }
 
 /*

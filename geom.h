@@ -64,12 +64,18 @@ typedef struct {
 	double	r;	/* mean radius in meters */
 } ellip_t;
 
+/*
+ * Unit conversions
+ */
 #define	RAD2DEG_RATIO	(M_PI / 180)		/* 1 rad / 180 deg */
 #define	DEG2RAD_RATIO	(180 / M_PI)		/* 180 deg / 1 rad */
 #define	DEG2RAD(d)	((d) * RAD2DEG_RATIO)
 #define	RAD2DEG(r)	((r) * DEG2RAD_RATIO)
+
 #define	FEET2MET(x)	((x) * 0.3048)
 #define	MET2FEET(x)	((x) * 3.28083989501312335958)
+#define	NM2MET(x)	((x) * 1852)
+#define	MET2NM(x)	((x) / 1852.0)
 
 #define	GEO_POS2(lat, lon)		((geo_pos2_t){(lat), (lon)})
 #define	GEO_POS3(lat, lon, elev)	((geo_pos3_t){(lat), (lon), (elev)})
@@ -103,12 +109,15 @@ const ellip_t wgs84_ellip;
 double vect3_abs(vect3_t a);
 double vect2_abs(vect2_t a);
 vect3_t vect3_set_abs(vect3_t a, double abs);
+vect2_t vect2_set_abs(vect2_t a, double abs);
 vect3_t vect3_unit(vect3_t a, double *l);
 
 vect3_t vect3_add(vect3_t a, vect3_t b);
 vect2_t vect2_add(vect2_t a, vect2_t b);
 vect3_t vect3_sub(vect3_t a, vect3_t b);
+vect2_t vect2_sub(vect2_t a, vect2_t b);
 vect3_t vect3_scmul(vect3_t a, double b);
+vect2_t vect2_scmul(vect2_t a, double b);
 double vect3_dotprod(vect3_t a, vect3_t b);
 vect3_t vect3_xprod(vect3_t a, vect3_t b);
 

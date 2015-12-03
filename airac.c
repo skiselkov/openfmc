@@ -2082,6 +2082,41 @@ errout:
 }
 
 /*
+ * Returns the string name of a navproc_seg_type.
+ */
+const char *
+navproc_seg_type2str(navproc_seg_type_t type)
+{
+	static const char *typenames[NAVPROC_SEG_TYPES] = {
+		"AF",	/* NAVPROC_SEG_TYPE_ARC_TO_FIX		*/
+		"CA",	/* NAVPROC_SEG_TYPE_CRS_TO_ALT		*/
+		"CD",	/* NAVPROC_SEG_TYPE_CRS_TO_DME		*/
+		"CF",	/* NAVPROC_SEG_TYPE_CRS_TO_FIX		*/
+		"CI",	/* NAVPROC_SEG_TYPE_CRS_TO_INTCP	*/
+		"CR",	/* NAVPROC_SEG_TYPE_CRS_TO_RADIAL	*/
+		"DF",	/* NAVPROC_SEG_TYPE_DIR_TO_FIX		*/
+		"FA",	/* NAVPROC_SEG_TYPE_FIX_TO_ALT		*/
+		"FC",	/* NAVPROC_SEG_TYPE_FIX_TO_DIST		*/
+		"FD",	/* NAVPROC_SEG_TYPE_FIX_TO_DME		*/
+		"FM",	/* NAVPROC_SEG_TYPE_FIX_TO_MANUAL	*/
+		"HA",	/* NAVPROC_SEG_TYPE_HOLD_TO_ALT		*/
+		"HF",	/* NAVPROC_SEG_TYPE_HOLD_TO_FIX		*/
+		"HM",	/* NAVPROC_SEG_TYPE_HOLD_TO_MANUAL	*/
+		"IF",	/* NAVPROC_SEG_TYPE_INIT_FIX		*/
+		"PI",	/* NAVPROC_SEG_TYPE_PROC_TURN		*/
+		"RF",	/* NAVPROC_SEG_TYPE_RADIUS_ARC_TO_FIX	*/
+		"TF",	/* NAVPROC_SEG_TYPE_TRK_TO_FIX		*/
+		"VA",	/* NAVPROC_SEG_TYPE_HDG_TO_ALT		*/
+		"VD",	/* NAVPROC_SEG_TYPE_HDG_TO_DME		*/
+		"VI",	/* NAVPROC_SEG_TYPE_HDG_TO_INTCP	*/
+		"VM",	/* NAVPROC_SEG_TYPE_HDG_TO_MANUAL	*/
+		"VR"	/* NAVPROC_SEG_TYPE_HDG_TO_RADIAL	*/
+	};
+	ASSERT(type < NAVPROC_SEG_TYPES);
+	return (typenames[type]);
+}
+
+/*
  * Returns the initial fix of a navproc_seg_t. Not all navproc segments have
  * an initial point, so the passed seg must be one of:
  *	NAVPROC_SEG_TYPE_CRS_TO_FIX (with a non-NULL navaid set)
@@ -2329,7 +2364,6 @@ airport_open(const char *arpt_icao, const char *navdata_dir,
 	ssize_t		line_len = 0;
 	size_t		line_cap = 0;
 	char		*line = NULL;
-	bool_t		done = B_FALSE;
 
 	arpt = calloc(sizeof (*arpt), 1);
 	if (!arpt)
@@ -2350,14 +2384,12 @@ airport_open(const char *arpt_icao, const char *navdata_dir,
 	}
 
 	/* Locate airport starting line & parse it */
-	while ((line_len = getline(&line, &line_cap, arpt_fp)) != -1 && !done) {
+	while ((line_len = getline(&line, &line_cap, arpt_fp)) != -1) {
 		strip_newline(line);
-		if (parse_arpt_line(line, arpt)) {
-			done = 1;
+		if (parse_arpt_line(line, arpt))
 			break;
-		}
 	}
-	if (done == 0) {
+	if (line_len == -1) {
 		/* error reading/locating airport */
 		openfmc_log(OPENFMC_LOG_ERR, "Error opening airport %s: "
 		    "airport not found.", arpt_icao);

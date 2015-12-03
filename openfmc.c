@@ -30,7 +30,7 @@
 #include <errno.h>
 #include <cairo.h>
 #include <ctype.h>
-
+#include <xlocale.h>
 #include <png.h>
 
 #include "helpers.h"
@@ -625,30 +625,27 @@ find_fix(const char fix_name[NAV_NAME_LEN], waypoint_db_t *wptdb,
 	return (res[0]);
 }
 
+static void
+strtoupper(char *str)
+{
+	while (*str) {
+		*str = toupper(*str);
+		str++;
+	}
+}
+
 void
 test_route(char *navdata_dir)
 {
-	airway_db_t	*awydb;
-	waypoint_db_t	*wptdb;
-	navaid_db_t	*navaiddb;
 	char		cmd[64];
 	route_t		*route = NULL;
-	fms_navdb_t	navdb;
+	fms_navdb_t	*navdb;
 
-	memset(cmd, 0, sizeof (cmd));
-	navaiddb = navaid_db_open(navdata_dir);
-	wptdb = waypoint_db_open(navdata_dir);
-	if (!wptdb || !navaiddb)
-		exit(EXIT_FAILURE);
-	awydb = airway_db_open(navdata_dir, htbl_count(&wptdb->by_name));
-	if (!awydb)
+	navdb = navdb_open(navdata_dir, "WMM.COF");
+	if (!navdb)
 		exit(EXIT_FAILURE);
 
-	navdb.navdata_dir = navdata_dir;
-	navdb.awydb = awydb;
-	navdb.wptdb = wptdb;
-	navdb.navaiddb = navaiddb;
-	route = route_create(&navdb);
+	route = route_create(navdb);
 
 	while (!feof(stdin)) {
 		err_t err = ERR_OK;
@@ -665,10 +662,12 @@ test_route(char *navdata_dir)
 			char	param[8]; \
 			if (scanf("%7s", param) != 1) \
 				continue; \
-			if (strcmp(param, "NULL") == 0) \
+			if (strcmp(param, "NULL") == 0) { \
 				err = func(route, NULL); \
-			else \
+			} else { \
+				strtoupper(param); \
 				err = func(route, param); \
+			}\
 		} \
 	} while (0)
 		SET_RTE_PARAM_CMD("origin", route_set_dep_arpt);
@@ -715,7 +714,7 @@ test_route(char *navdata_dir)
 			memset(fix_name, 0, sizeof (fix_name));
 			if (scanf("%7d %7s", &idx, fix_name) != 2)
 				continue;
-			fix = find_fix(fix_name, wptdb, navaiddb);
+			fix = find_fix(fix_name, navdb->wptdb, navdb->navaiddb);
 			if (IS_NULL_FIX(&fix)) {
 				fprintf(stderr, "%s NOT FOUND\n", fix_name);
 				continue;
@@ -731,7 +730,7 @@ test_route(char *navdata_dir)
 			memset(fix_name, 0, sizeof (fix_name));
 			if (scanf("%7d %7s", &idx, fix_name) != 2)
 				continue;
-			fix = find_fix(fix_name, wptdb, navaiddb);
+			fix = find_fix(fix_name, navdb->wptdb, navdb->navaiddb);
 			if (IS_NULL_FIX(&fix)) {
 				fprintf(stderr, "%s NOT FOUND\n", fix_name);
 				continue;
@@ -772,6 +771,28 @@ test_route(char *navdata_dir)
 			dump_route_leg_groups(route);
 		} else if (strcmp(cmd, "l") == 0) {
 			dump_route_legs(route);
+		} else if (strcmp(cmd, "airac") == 0) {
+			char mon1[5], mon2[5];
+			locale_t loc;
+			struct tm tm_start, tm_end;
+
+			loc = newlocale(LC_TIME_MASK, NULL, LC_GLOBAL_LOCALE);
+			VERIFY(loc != NULL);
+			gmtime_r(&navdb->valid_from, &tm_start);
+			gmtime_r(&navdb->valid_to, &tm_end);
+			strftime_l(mon1, 5, "%b", &tm_start, loc);
+			strftime_l(mon2, 5, "%b", &tm_end, loc);
+			strtoupper(mon1);
+			strtoupper(mon2);
+			printf("CYCLE:%u "
+			    "VALID:%02d%s%02d/%02d%s%02d (%sCURRENT) "
+			    "UNIX:%lu/%lu\n",
+			    navdb->airac_cycle,
+			    tm_start.tm_mday, mon1, tm_start.tm_year % 100,
+			    tm_end.tm_mday, mon2, tm_end.tm_year % 100,
+			    !navdb_is_current(navdb) ? "NOT " : "",
+			    navdb->valid_from, navdb->valid_to);
+			freelocale(loc);
 		}
 
 		if (err != ERR_OK) {
@@ -782,9 +803,7 @@ test_route(char *navdata_dir)
 	}
 
 	route_destroy(route);
-	airway_db_close(awydb);
-	waypoint_db_close(wptdb);
-	navaid_db_close(navaiddb);
+	navdb_close(navdb);
 }
 
 void
@@ -891,9 +910,9 @@ main(int argc, char **argv)
 
 //	test_airac(argv[optind], dump);
 //	test_lcc(40, 30, 50);
-	test_fpp();
+//	test_fpp();
 //	test_geo_xlate();
-//	test_route(argv[optind]);
+	test_route(argv[optind]);
 
 //	test_magvar();
 

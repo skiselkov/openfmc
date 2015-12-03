@@ -32,6 +32,8 @@
 #include "airac.h"
 #include "err.h"
 
+typedef struct route_s route_t;
+
 typedef enum {
 	ROUTE_LEG_GROUP_TYPE_AIRWAY,
 	ROUTE_LEG_GROUP_TYPE_DIRECT,
@@ -47,6 +49,7 @@ typedef enum {
  */
 typedef struct {
 	route_leg_group_type_t	type;
+	route_t			*route;
 	union {
 		const airway_t	*awy;
 		const navproc_t	*proc;
@@ -67,7 +70,7 @@ typedef struct {
 	bool_t			spd_lim_ovrd;
 	spd_lim_t		spd_lim;
 
-	route_leg_group_t	*parent;
+	route_leg_group_t	*rlg;
 
 	list_node_t		leg_group_legs_node;
 	list_node_t		route_legs_node;
@@ -80,7 +83,6 @@ typedef struct {
 typedef enum {
 	ROUTE_SEG_TYPE_STRAIGHT,
 	ROUTE_SEG_TYPE_ARC,
-	ROUTE_SEG_TYPE_DEP_RWY,
 	ROUTE_SEG_TYPES
 } route_seg_type_t;
 
@@ -97,11 +99,10 @@ typedef struct {
 			geo_pos2_t	center;
 		} arc;
 	};
-
 	list_node_t			route_segs_node;
 } route_seg_t;
 
-typedef struct {
+struct route_s {
 	const fms_navdb_t	*navdb;
 
 	airport_t		*dep;
@@ -150,7 +151,7 @@ typedef struct {
 	bool_t			segs_dirty;
 	list_t			segs;
 	route_seg_t		*active_seg;
-} route_t;
+};
 
 /* Constructor/destructor */
 route_t *route_create(const fms_navdb_t *navdb);

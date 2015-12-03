@@ -27,12 +27,26 @@
 #define	_OPENFMC_FMS_H_
 
 #include "airac.h"
+#include "wmm.h"
 
 typedef struct {
+	time_t		valid_from;
+	time_t		valid_to;
+	unsigned	airac_cycle;
+
 	char		*navdata_dir;
 	airway_db_t	*awydb;
 	waypoint_db_t	*wptdb;
 	navaid_db_t	*navaiddb;
+
+	char		*wmm_file;
+	wmm_t		*wmm;
 } fms_navdb_t;
+
+fms_navdb_t *navdb_open(const char *navdata_dir, const char *wmm_file);
+void navdb_close(fms_navdb_t *navdb);
+
+bool_t navdb_is_current(const fms_navdb_t *navdb);
+bool_t navdata_is_current(const char *navdata_dir);
 
 #endif	/* _OPENFMC_FMS_H_ */
