@@ -55,10 +55,18 @@ typedef struct {
 	double	y;
 } vect2_t;
 
-#define	RAD_TO_DEG_RATIO	(M_PI / 180)		/* 1 rad / 180 deg */
-#define	DEG_TO_RAD_RATIO	(180 / M_PI)		/* 180 deg / 1 rad */
-#define	DEG_TO_RAD(d)		((d) * RAD_TO_DEG_RATIO)
-#define	RAD_TO_DEG(r)		((r) * DEG_TO_RAD_RATIO)
+typedef struct {
+	double	a;
+	double	b;
+	double	ecc2;
+} ellip_t;
+
+#define	RAD2DEG_RATIO	(M_PI / 180)		/* 1 rad / 180 deg */
+#define	DEG2RAD_RATIO	(180 / M_PI)		/* 180 deg / 1 rad */
+#define	DEG2RAD(d)	((d) * RAD2DEG_RATIO)
+#define	RAD2DEG(r)	((r) * DEG2RAD_RATIO)
+#define	FEET2MET(x)	((x) * 0.3048)
+#define	MET2FEET(x)	((x) * 3.28083989501312335958)
 
 #define	GEO_POS2(lat, lon)		((geo_pos2_t){(lat), (lon)})
 #define	GEO_POS3(lat, lon, elev)	((geo_pos3_t){(lat), (lon), (elev)})
@@ -87,6 +95,8 @@ typedef struct {
 #define	ABS(x)	((x) > 0 ? (x) : -(x))
 #endif
 
+const ellip_t wgs84_ellip;
+
 double vect3_abs(vect3_t a);
 vect3_t vect3_set_abs(vect3_t a, double abs);
 vect3_t vect3_unit(vect3_t a, double *l);
@@ -98,13 +108,15 @@ vect3_t vect3_scmul(vect3_t a, double b);
 double vect3_dotprod(vect3_t a, vect3_t b);
 vect3_t vect3_xprod(vect3_t a, vect3_t b);
 
-vect3_t geo2vect(geo_pos3_t pos);
-geo_pos3_t vect2geo(vect3_t v);
+ellip_t ellip_init(double semi_major, double semi_minor, double flattening);
+vect3_t sph2ecef(geo_pos3_t pos);
+geo_pos3_t ecef2sph(vect3_t v);
+geo_pos3_t geo2sph(geo_pos3_t pos, const ellip_t *geod);
+vect3_t geo2ecef(geo_pos3_t pos, const ellip_t *geod);
 
 int vect_sphere_intersect(vect3_t v, vect3_t o, vect3_t c, double r,
     bool_t confined, vect3_t i[2]);
-
-vect2_t vect2_intersect(vect2_t da, vect2_t oa, vect2_t db, vect2_t ob,
+vect2_t vect_intersect(vect2_t da, vect2_t oa, vect2_t db, vect2_t ob,
     bool_t confined);
 
 /* geometry parser & validator helpers */

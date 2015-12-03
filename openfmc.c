@@ -342,7 +342,7 @@ test_lcc(double reflat, double stdpar1, double stdpar2)
 			x = (res.x * scale_factor_x * scale_factor) + IMGW / 2;
 
 			y = IMGH - ((res.y * scale_factor - offset) +
-			    (1 - cos(DEG_TO_RAD(lon))) * (tip.y - res.y) *
+			    (1 - cos(DEG2RAD(lon))) * (tip.y - res.y) *
 			    scale_factor);
 
 			if (lat < 88.0)
@@ -889,14 +889,13 @@ main(int argc, char **argv)
 		return (1);
 	}
 
-/*
-	test_airac(argv[optind], dump);
-	test_lcc(40, 30, 50);
+//	test_airac(argv[optind], dump);
+//	test_lcc(40, 30, 50);
 	test_fpp();
-	test_geo_xlate();
-	test_route(argv[optind]);
-*/
-	test_magvar();
+//	test_geo_xlate();
+//	test_route(argv[optind]);
+
+//	test_magvar();
 
 	return (0);
 }

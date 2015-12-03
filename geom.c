@@ -46,7 +46,17 @@
 #define	DEBUG_PRINT(...)
 #endif
 
+#define	POW3(x)	((x) * (x) * (x))
 #define	POW2(x)	((x) * (x))
+
+/*
+ * The WGS 84 ellipsoid parameters.
+ */
+const ellip_t wgs84_ellip = {
+	.a = 6378137.0,
+	.b = 6356752.314245,
+	.ecc2 = 0.00669437999014131697
+};
 
 /*
  * Naive implementation of matrix multiplication. We don't use this very
@@ -192,26 +202,27 @@ vect3_xprod(vect3_t a, vect3_t b)
 }
 
 /*
- * Converts surface coordinates into 3-space coordinate vector from the
- * Earth's center. Please note that this considers the Earth to be a perfect
- * sphere and hence cannot be used for very precise calculations.
+ * Converts surface coordinates on an Earth-sized spheroid into 3-space
+ * coordinate vector in ECEF space. Please note that this considers the
+ * Earth to be a perfect sphere and hence cannot be used for very precise
+ * calculations. For more accurate conversions, use geo2ecef.
  *
  * @param pos The input position to convert.
  *
  * In 3-space, axes have their origins at the globe center point, are
  * perpendicular to each other and are designated as follows:
- * - x: positive & passing through lat=0, lon=+90
- * - y: positive & passing through lat=0, lon=0
+ * - x: positive & passing through lat=0, lon=0
+ * - y: positive & passing through lat=0, lon=+90
  * - z: positive & passing through lat=90
  */
 vect3_t
-geo2vect(geo_pos3_t pos)
+sph2ecef(geo_pos3_t pos)
 {
 	vect3_t result;
 	double lat_rad, lon_rad, R, R0;
 
-	lat_rad = DEG_TO_RAD(pos.lat);
-	lon_rad = DEG_TO_RAD(pos.lon);
+	lat_rad = DEG2RAD(pos.lat);
+	lon_rad = DEG2RAD(pos.lon);
 
 	/* R is total distance from center at alt_msl */
 	R = pos.elev + EARTH_MSL;
@@ -221,19 +232,150 @@ geo2vect(geo_pos3_t pos)
 	 */
 	R0 = R * cos(lat_rad);
 	/* Given R and R0, we can transform the geo coords into 3-space: */
-	result.x = R0 * sin(lon_rad);
-	result.y = R0 * cos(lon_rad);
+	result.x = R0 * cos(lon_rad);
+	result.y = R0 * sin(lon_rad);
 	result.z = R * sin(lat_rad);
 
 	return (result);
 }
 
+ellip_t
+ellip_init(double semi_major, double semi_minor, double flattening)
+{
+	ellip_t ellip;
+
+	ellip.a = semi_major;
+	ellip.b = semi_minor;
+	ellip.ecc2 = flattening * (2 - flattening);
+
+	return (ellip);
+}
+
+geo_pos3_t
+geo2sph(geo_pos3_t pos, const ellip_t *ellip)
+{
+	double		lat_r = DEG2RAD(pos.lat);
+	double		sin_lat = sin(lat_r);
+	double		p, z;
+	double		Rc;	/* curvature of the prime vertical */
+	geo_pos3_t	res;
+
+	Rc = ellip->a / sqrt(1 - ellip->ecc2 * POW2(sin_lat));
+	p = (Rc + pos.elev) * cos(lat_r);
+	z = ((Rc * (1 - ellip->ecc2)) + pos.elev) * sin_lat;
+
+	res.elev = sqrt(POW2(p) + POW2(z));
+	res.lat = RAD2DEG(asin(z / res.elev));
+	res.lon = pos.lon;
+
+	return (res);
+}
+
+vect3_t
+geo2ecef(geo_pos3_t pos, const ellip_t *ellip)
+{
+	double	h = pos.elev / 3.281;	/* convert to meters */
+	double	lat_r = DEG2RAD(pos.lat);
+	double	lon_r = DEG2RAD(pos.lon);
+	double	Rc;	/* curvature of the prime vertical */
+	vect3_t	res;
+	double	sin_lat = sin(lat_r), cos_lat = cos(lat_r);
+	double	sin_lon = sin(lon_r), cos_lon = cos(lon_r);
+
+	Rc = ellip->a / sqrt(1 - ellip->ecc2 * POW2(sin_lat));
+
+	res.x = (Rc + h) * cos_lat * cos_lon;
+	res.y = (Rc + h) * cos_lat * sin_lon;
+	res.z = (Rc * (1 - ellip->ecc2) + h) * sin_lat;
+
+	return (res);
+}
+
+geo_pos3_t
+ecef2geo(vect3_t pos, const ellip_t *ellip)
+{
+	geo_pos3_t	res;
+	double		B;
+	double		d;
+	double		e;
+	double		f;
+	double		g;
+	double		p;
+	double		q;
+	double		r;
+	double		t;
+	double		v;
+	double		zlong;
+
+	/*
+	 * 1.0 compute semi-minor axis and set sign to that of z in order
+	 * to get sign of Phi correct.
+	 */
+	B = (pos.z >= 0 ? ellip->b : -ellip->b);
+
+	/*
+	 * 2.0 compute intermediate values for latitude
+	 */
+	r = sqrt(POW2(pos.x) + POW2(pos.y));
+	e = (B * pos.z - (POW2(ellip->a) - POW2(B))) / (ellip->a * r);
+	f = (B * pos.z + (POW2(ellip->a) - POW2(B))) / (ellip->a * r);
+
+	/*
+	 * 3.0 find solution to:
+	 *       t^4 + 2*E*t^3 + 2*F*t - 1 = 0
+	 */
+	p = (4.0 / 3.0) * (e * f + 1.0);
+	q = 2.0 * (POW2(e) - POW2(f));
+	d = POW3(p) + POW2(q);
+
+	if (d >= 0.0) {
+		v = pow((sqrt(d) - q), (1.0 / 3.0)) - pow((sqrt(d) + q),
+		    (1.0 / 3.0));
+	} else {
+		v = 2.0 * sqrt(-p) * cos(acos(q / (p * sqrt(-p))) / 3.0);
+	}
+
+	/*
+	 * 4.0 improve v
+	 *       NOTE: not really necessary unless point is near pole
+	 */
+	if (POW2(v) < fabs(p))
+		v = -(POW3(v) + 2.0 * q) / (3.0 * p);
+	g = (sqrt(POW2(e) + v) + e) / 2.0;
+	t = sqrt(POW2(g)  + (f - v * g) / (2.0 * g - e)) - g;
+
+	res.lat = atan((ellip->a * (1.0 - POW2(t))) / (2.0 * B * t));
+
+	/*
+	 * 5.0 compute height above ellipsoid
+	 */
+	res.elev= (r - ellip->a * t) * cos(res.lat) + (pos.z - B) * sin(res.lat);
+
+	/*
+	 *   6.0 compute longitude east of Greenwich
+	 */
+	zlong = atan2(pos.y, pos.x);
+	if (zlong < 0.0)
+		zlong = zlong + (2 * M_PI);
+
+	res.lon = zlong;
+
+	/*
+	 * 7.0 convert latitude and longitude to degrees & elev to feet
+	 */
+	res.lat = RAD2DEG(res.lat);
+	res.lon = RAD2DEG(res.lon);
+	res.elev = MET2FEET(res.elev);
+
+	return (res);
+}
+
 /*
- * Converts a 3-space coordinate vector into geographical coordinates on Earth.
- * For axis alignment, see geo2vect().
+ * Converts a 3-space coordinate vector from ECEF coordinate space into
+ * geocentric coordinates on an EARTH_MSL-radius spheroid.
  */
 geo_pos3_t
-vect2geo(vect3_t v)
+ecef2sph(vect3_t v)
 {
 	geo_pos3_t pos;
 	double lat_rad, lon_rad, R, R0;
@@ -245,16 +387,16 @@ vect2geo(vect3_t v)
 		R0 = 0.000000001;
 	}
 	lat_rad = atan(v.z / R0);
-	lon_rad = asin(v.x / R0);
-	if (v.y < 0.0) {
-		if (v.x >= 0.0)
+	lon_rad = asin(v.y / R0);
+	if (v.x < 0.0) {
+		if (v.y >= 0.0)
 			lon_rad = M_PI - lon_rad;
 		else
 			lon_rad = lon_rad - M_PI;
 	}
 	pos.elev = R - EARTH_MSL;
-	pos.lat = RAD_TO_DEG(lat_rad);
-	pos.lon = RAD_TO_DEG(lon_rad);
+	pos.lat = RAD2DEG(lat_rad);
+	pos.lon = RAD2DEG(lon_rad);
 
 	return (pos);
 }
@@ -375,7 +517,7 @@ vect_sphere_intersect(vect3_t v, vect3_t o, vect3_t c, double r,
 }
 
 vect2_t
-vect2_intersect(vect2_t da, vect2_t oa, vect2_t db, vect2_t ob, bool_t confined)
+vect_intersect(vect2_t da, vect2_t oa, vect2_t db, vect2_t ob, bool_t confined)
 {
 	vect2_t p1, p2, p3, p4, r;
 	double det;
@@ -434,7 +576,7 @@ sphere_lon_subdiv(double radius, double lat, double partition_sz)
 {
 	ASSERT(lat >= -90.0 && lat <= 90.0);
 	ASSERT(radius >= partition_sz);
-	double r = cos(DEG_TO_RAD(lat)) * radius;
+	double r = cos(DEG2RAD(lat)) * radius;
 	return (ceil((2 * M_PI * r) / partition_sz));
 }
 
@@ -480,6 +622,9 @@ sec(double x)
  *	and +20 degrees of longitude (east) will result in an input
  *	coordinate of +5,+5 translating into -5,-15 in the target system
  *	(assuming `rotation' below is zero).
+ *	Please note that these coordinates as well as all transformations
+ *	are assumed to be in geocentric coordinates on the an EARTH_MSL
+ *	radius spheroid.
  * @param rotation The relative rotation of the axes of the target
  *	coordinate system to the source coordinate system in degrees
  *	counter-clockwise. For example, a rotation of +90 degrees and
@@ -490,14 +635,16 @@ sec(double x)
 geo_xlate_t
 geo_xlate_init(geo_pos2_t displacement, double rotation)
 {
-	// lat - x axis - alpha
-	// lon - z axis - bravo
-	// rotation - norm to xz axis - theta
-	UNUSED(rotation);
+	/*
+	 * (ECEF axes:)
+	 * lat - y axis - alpha
+	 * lon - z axis - bravo
+	 * rotation - norm to yz axis - theta
+	 */
 	geo_xlate_t	xlate;
-	double		alpha = DEG_TO_RAD(-displacement.lat);
-	double		bravo = DEG_TO_RAD(displacement.lon);
-	double		theta = DEG_TO_RAD(rotation);
+	double		alpha = DEG2RAD(displacement.lat);
+	double		bravo = DEG2RAD(-displacement.lon);
+	double		theta = DEG2RAD(rotation);
 
 #define	M(m, r, c)	((m)[(r) * 3 + (c)])
 	double		R_a[3 * 3], R_b[3 * 3];
@@ -507,16 +654,16 @@ geo_xlate_init(geo_pos2_t displacement, double rotation)
 
 	/*
 	 * +-                  -+
-	 * | 1    0        0    |
-	 * | 0  cos(a)  -sin(a) |
-	 * | 0  sin(a)   cos(a) |
+	 * | cos(a)   0  sin(a) |
+	 * |    0     1     0   |
+	 * | -sin(a)  0  cos(a) |
 	 * +-                  -+
 	 */
 	memset(R_a, 0, sizeof (R_a));
-	M(R_a, 0, 0) = 1;
-	M(R_a, 1, 1) = cos_alpha;
-	M(R_a, 1, 2) = -sin_alpha;
-	M(R_a, 2, 1) = sin_alpha;
+	M(R_a, 0, 0) = cos_alpha;
+	M(R_a, 0, 2) = sin_alpha;
+	M(R_a, 1, 1) = 1;
+	M(R_a, 2, 0) = -sin_alpha;
 	M(R_a, 2, 2) = cos_alpha;
 
 	/*
@@ -544,28 +691,22 @@ geo_xlate_init(geo_pos2_t displacement, double rotation)
 }
 
 /*
- * Translates a point at `pos' using the geo translation specified by `xlate'.
+ * Translates a point at `pos' using the translation specified by `xlate'.
  */
 static vect3_t
-geo_xlate_impl(geo_pos2_t pos, const geo_xlate_t *xlate)
+geo_xlate_impl(vect3_t p, const geo_xlate_t *xlate)
 {
-	vect3_t	p, q;
+	vect3_t	q;
 	vect2_t	r, s;
 
-	/*
-	 * Translate the geo coordinates to a 3-space vector &
-	 * rotate around the sphere's center point in the x (lat) & z (lon)
-	 * axes.
-	 */
-	p = geo2vect(GEO_POS3(pos.lat, pos.lon, 0));
 	matrix_mul(xlate->geo_matrix, (double *)&p, (double *)&q, 3, 1, 3);
 	/*
-	 * In the final projection plane, grab x & z coords & rotate along
-	 * y axis.
+	 * In the final projection plane, grab y & z coords & rotate along
+	 * x axis.
 	 */
-	r = VECT2(q.x, q.z);
+	r = VECT2(q.y, q.z);
 	matrix_mul(xlate->rot_matrix, (double *)&r, (double *)&s, 2, 1, 2);
-	q.x = s.x;
+	q.y = s.x;
 	q.z = s.y;
 
 	return (q);
@@ -581,9 +722,9 @@ geo_xlate_inv_impl(vect3_t p, const geo_xlate_t *xlate)
 	vect2_t	r, s;
 
 	/* Undo projection plane rotation along y axis. */
-	r = VECT2(p.x, p.z);
+	r = VECT2(p.y, p.z);
 	matrix_mul(xlate->rot_matrix, (double *)&r, (double *)&s, 2, 1, 2);
-	p.x = s.x;
+	p.y = s.x;
 	p.z = s.y;
 	/* Undo x (lat) & z (lon) rotation */
 	matrix_mul(xlate->geo_matrix, (double *)&p, (double *)&q, 3, 1, 3);
@@ -597,8 +738,9 @@ geo_xlate_inv_impl(vect3_t p, const geo_xlate_t *xlate)
 geo_pos2_t
 geo_xlate(geo_pos2_t pos, const geo_xlate_t *xlate)
 {
-	vect3_t		r = geo_xlate_impl(pos, xlate);
-	geo_pos3_t	res = vect2geo(r);
+	vect3_t		v = sph2ecef(GEO2_TO_GEO3(pos, 0));
+	vect3_t		r = geo_xlate_impl(v, xlate);
+	geo_pos3_t	res = ecef2sph(r);
 	return (GEO_POS2(res.lat, res.lon));
 }
 
@@ -608,9 +750,9 @@ geo_xlate(geo_pos2_t pos, const geo_xlate_t *xlate)
 geo_pos2_t
 geo_xlate_inv(geo_pos2_t pos, const geo_xlate_t *xlate)
 {
-	vect3_t		v = geo2vect(GEO2_TO_GEO3(pos, 0));
+	vect3_t		v = sph2ecef(GEO2_TO_GEO3(pos, 0));
 	vect3_t		r = geo_xlate_inv_impl(v, xlate);
-	geo_pos3_t	res = vect2geo(r);
+	geo_pos3_t	res = ecef2sph(r);
 	return (GEO_POS2(res.lat, res.lon));
 }
 
@@ -625,8 +767,8 @@ gc_distance(geo_pos2_t start, geo_pos2_t end)
 	 * Convert both coordinates into 3D vectors and calculate the angle
 	 * between them. GC distance is proportional to that angle.
 	 */
-	vect3_t	start_v = geo2vect(GEO2_TO_GEO3(start, 0));
-	vect3_t	end_v = geo2vect(GEO2_TO_GEO3(end, 0));
+	vect3_t	start_v = geo2ecef(GEO2_TO_GEO3(start, 0), &wgs84_ellip);
+	vect3_t	end_v = geo2ecef(GEO2_TO_GEO3(end, 0), &wgs84_ellip);
 	vect3_t	s2e = vect3_sub(end_v, start_v);
 	double	s2e_abs = vect3_abs(s2e);
 	double	alpha = asin(s2e_abs / 2 / EARTH_MSL);
@@ -639,22 +781,22 @@ gc_point_hdg(geo_pos2_t start, geo_pos2_t end, double arg)
 	/* FIXME: THIS IS BROKEN !!! */
 	vect3_t	start_v, end_v, norm_v, an_v, incl_v;
 
-	start_v = geo2vect(GEO2_TO_GEO3(start, 0));
-	end_v = geo2vect(GEO2_TO_GEO3(end, 0));
+	start_v = geo2ecef(GEO2_TO_GEO3(start, 0), &wgs84_ellip);
+	end_v = geo2ecef(GEO2_TO_GEO3(end, 0), &wgs84_ellip);
 	norm_v = vect3_set_abs(vect3_xprod(end_v, start_v), EARTH_MSL);
 	an_v = vect3_set_abs(vect3_xprod(norm_v, VECT3(0, 0, 1)), EARTH_MSL);
 	incl_v = vect3_xprod(norm_v, an_v);
-	geo_pos3_t incl = vect2geo(incl_v);
+	geo_pos3_t incl = ecef2geo(incl_v, &wgs84_ellip);
 	double inclination = incl.lat;
 
-	vect3_t arg_v = {sin(DEG_TO_RAD(arg)) * EARTH_MSL,
-	    cos(DEG_TO_RAD(arg)) * EARTH_MSL, 0};
-	arg_v = VECT3(sin(DEG_TO_RAD(inclination)) * arg_v.x, arg_v.y,
-	    sin(DEG_TO_RAD(inclination)) * arg_v.z);
+	vect3_t arg_v = {sin(DEG2RAD(arg)) * EARTH_MSL,
+	    cos(DEG2RAD(arg)) * EARTH_MSL, 0};
+	arg_v = VECT3(sin(DEG2RAD(inclination)) * arg_v.x, arg_v.y,
+	    sin(DEG2RAD(inclination)) * arg_v.z);
 	arg_v = vect3_unit(vect3_xprod(arg_v, norm_v), NULL);
 	double xy = sqrt(POW2(arg_v.x) + POW2(arg_v.y));
 
-	return (RAD_TO_DEG(acos(xy)));
+	return (RAD2DEG(acos(xy)));
 }
 
 /*
@@ -746,19 +888,23 @@ stereo_fpp_init(geo_pos2_t center, double rot)
 vect2_t
 geo2fpp(geo_pos2_t pos, const fpp_t *fpp)
 {
+//	geo_pos3_t pos3;
 	vect3_t pos_v;
 	vect2_t res_v;
 
-	pos_v = geo_xlate_impl(pos, &fpp->xlate);
+//	pos3 = geo2sph(GEO2_TO_GEO3(pos, 0), &wgs84_ellip);
+//	pos_v = sph2ecef(pos3);
+	pos_v = geo2ecef(GEO2_TO_GEO3(pos, 0), &wgs84_ellip);
+	pos_v = geo_xlate_impl(pos_v, &fpp->xlate);
 	if (isfinite(fpp->dist)) {
-		if (fpp->dist < 0.0 && pos_v.y <= fpp->dist + EARTH_MSL)
+		if (fpp->dist < 0.0 && pos_v.x <= fpp->dist + EARTH_MSL)
 			return (NULL_VECT2);
-		res_v.x = fpp->dist * (pos_v.x / (fpp->dist +
-		    EARTH_MSL - pos_v.y));
+		res_v.x = fpp->dist * (pos_v.y / (fpp->dist +
+		    EARTH_MSL - pos_v.x));
 		res_v.y = fpp->dist * (pos_v.z / (fpp->dist +
-		    EARTH_MSL - pos_v.y));
+		    EARTH_MSL - pos_v.x));
 	} else {
-		res_v = VECT2(pos_v.x, pos_v.z);
+		res_v = VECT2(pos_v.y, pos_v.z);
 	}
 
 	return (res_v);
@@ -778,8 +924,8 @@ geo2fpp(geo_pos2_t pos, const fpp_t *fpp)
 geo_pos2_t
 fpp2geo(vect2_t pos, const fpp_t *fpp)
 {
-	vect3_t	v = VECT3(pos.x, -fpp->dist, pos.y);
-	vect3_t	o = VECT3(0, EARTH_MSL + fpp->dist, 0);
+	vect3_t	v = VECT3(-fpp->dist, pos.x, pos.y);
+	vect3_t	o = VECT3(EARTH_MSL + fpp->dist, 0, 0);
 	vect3_t i[2];
 	vect3_t r;
 	int n;
@@ -796,16 +942,16 @@ fpp2geo(vect2_t pos, const fpp_t *fpp)
 		 * and place it in i[0].
 		 */
 		if (fpp->dist >= -EARTH_MSL) {
-			if (i[1].y > i[0].y)
+			if (i[1].x > i[0].x)
 				i[0] = i[1];
 		} else {
-			if (i[1].y < i[0].y)
+			if (i[1].x < i[0].x)
 				i[0] = i[1];
 		}
 	}
-	/* Result is now in i[0]. Inv-xlate to global space & vect2geo. */
+	/* Result is now in i[0]. Inv-xlate to global space & ecef2sph. */
 	r = geo_xlate_inv_impl(i[0], &fpp->xlate);
-	return (GEO3_TO_GEO2(vect2geo(r)));
+	return (GEO3_TO_GEO2(ecef2geo(r, &wgs84_ellip)));
 }
 
 /*
@@ -821,13 +967,13 @@ fpp2geo(vect2_t pos, const fpp_t *fpp)
 lcc_t
 lcc_init(double reflat, double reflon, double stdpar1, double stdpar2)
 {
-	double	phi0 = DEG_TO_RAD(reflat);
-	double	phi1 = DEG_TO_RAD(stdpar1);
-	double	phi2 = DEG_TO_RAD(stdpar2);
+	double	phi0 = DEG2RAD(reflat);
+	double	phi1 = DEG2RAD(stdpar1);
+	double	phi2 = DEG2RAD(stdpar2);
 	lcc_t	lcc;
 
-	lcc.reflat = DEG_TO_RAD(reflat);
-	lcc.reflon = DEG_TO_RAD(reflon);
+	lcc.reflat = DEG2RAD(reflat);
+	lcc.reflon = DEG2RAD(reflon);
 
 	if (stdpar1 == stdpar2)
 		lcc.n = sin(phi1);
@@ -849,8 +995,8 @@ geo2lcc(geo_pos2_t pos, const lcc_t *lcc)
 {
 	vect2_t		result;
 	double		rho;
-	double		lat = DEG_TO_RAD(pos.lat);
-	double		lon = DEG_TO_RAD(pos.lon);
+	double		lat = DEG2RAD(pos.lat);
+	double		lon = DEG2RAD(pos.lon);
 
 	rho = lcc->F * pow(cot(M_PI / 4 + lat / 2), lcc->n);
 	result.x = rho * sin(lon - lcc->reflon);
