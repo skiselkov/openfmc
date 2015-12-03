@@ -38,6 +38,10 @@ typedef struct wmm_s wmm_t;
 
 wmm_t *wmm_open(const char *filename, double year);
 void wmm_close(wmm_t *wmm);
+
+double wmm_get_start(const wmm_t *wmm);
+double wmm_get_end(const wmm_t *wmm);
+
 double wmm_mag2true(const wmm_t *wmm, double m, geo_pos3_t pos);
 double wmm_true2mag(const wmm_t *wmm, double t, geo_pos3_t pos);
 

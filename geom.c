@@ -55,7 +55,10 @@
 const ellip_t wgs84_ellip = {
 	.a = 6378137.0,
 	.b = 6356752.314245,
-	.ecc2 = 0.00669437999014131697
+	.f = .00335281066474748071,
+	.ecc = 0.08181919084296430238,
+	.ecc2 = 0.00669437999019741354,
+	.r = 6371200.0
 };
 
 /*
@@ -103,6 +106,15 @@ vect3_abs(vect3_t a)
 }
 
 /*
+ * Same as vect3_abs, but for 2-space vectors.
+ */
+double
+vect2_abs(vect2_t a)
+{
+	return (sqrt(POW2(a.x) + POW2(a.y)));
+}
+
+/*
  * Sets the absolute value (length) of a vector without changing
  * its orientation.
  */
@@ -117,11 +129,10 @@ vect3_set_abs(vect3_t a, double abs)
 }
 
 /*
- * Returns a unit 3-space vector (vector with identical orientation but
- * a length of 1) for a given input vector. The length of the input vector
- * is stored in `l'.
+ * Returns a unit  vector (vector with identical orientation but a length of 1)
+ * for a given input vector. The length of the input vector is stored in `l'.
  */
-inline vect3_t
+vect3_t
 vect3_unit(vect3_t a, double *l)
 {
 	double len;
@@ -145,9 +156,7 @@ vect3_add(vect3_t a, vect3_t b)
 }
 
 /*
- * Adds 2-space vectors `a' and `b' and returns the result:
- * _   _   _
- * r = a + b
+ * Same as vect3_add, but for 2-space vectors.
  */
 vect2_t
 vect2_add(vect2_t a, vect2_t b)
@@ -422,9 +431,9 @@ ecef2sph(vect3_t v)
  *	- if 2 is returned, two non-null vectors pointing to the
  *	intersection points are stored in the array.
  */
-int
-vect_sphere_intersect(vect3_t v, vect3_t o, vect3_t c, double r,
-    bool_t confined, vect3_t i[2])
+unsigned
+vect2sph_isect(vect3_t v, vect3_t o, vect3_t c, double r, bool_t confined,
+    vect3_t i[2])
 {
 	vect3_t l, o_min_c;
 	double d, l_dot_o_min_c, sqrt_tmp, o_min_c_abs;
@@ -455,7 +464,7 @@ vect_sphere_intersect(vect3_t v, vect3_t o, vect3_t c, double r,
 	if (sqrt_tmp > 0) {
 		/* Two solutions */
 		double i1_d, i2_d;
-		int intersects = 0;
+		unsigned intersects = 0;
 
 		sqrt_tmp = sqrt(sqrt_tmp);
 
@@ -465,25 +474,25 @@ vect_sphere_intersect(vect3_t v, vect3_t o, vect3_t c, double r,
 			 * Solution lies on vector, store a vector to it
 			 * if the caller requested it.
 			 */
-			if (i)
+			if (i != NULL)
 				i[0] = vect3_add(vect3_scmul(l, i1_d), o);
 			intersects++;
 		} else {
 			/* Solution lies outside of line between o1 & o2 */
 			i1_d = NAN;
-			if (i)
+			if (i != NULL)
 				i[0] = NULL_VECT3;
 		}
 
 		/* ditto for the second intersect */
 		i2_d = -l_dot_o_min_c + sqrt_tmp;
 		if ((i2_d >= 0 && i2_d <= d) || !confined) {
-			if (i)
+			if (i != NULL)
 				i[1] = vect3_add(vect3_scmul(l, i2_d), o);
 			intersects++;
 		} else {
 			i2_d = NAN;
-			if (i)
+			if (i != NULL)
 				i[1] = NULL_VECT3;
 		}
 
@@ -492,17 +501,17 @@ vect_sphere_intersect(vect3_t v, vect3_t o, vect3_t c, double r,
 		/* One solution */
 		double i1_d;
 
-		if (i)
+		if (i != NULL)
 			i[1] = NULL_VECT3;
 
 		i1_d = -l_dot_o_min_c;
 		if ((i1_d >= 0 && i1_d <= d) || !confined) {
-			if (i)
+			if (i != NULL)
 				i[0] = vect3_add(vect3_scmul(l, i1_d),
 				    o);
 			return (1);
 		} else {
-			if (i)
+			if (i != NULL)
 				i[0] = NULL_VECT3;
 			return (0);
 		}
@@ -516,21 +525,67 @@ vect_sphere_intersect(vect3_t v, vect3_t o, vect3_t c, double r,
 	}
 }
 
+/*
+ * Determines whether and where a 2D vector intersects a 2D circle. The
+ * meanings of the arguments and return value are exactly the same as in
+ * vect2sph_isect.
+ */
+unsigned
+vect2circ_isect(vect2_t v, vect2_t o, vect2_t c, double r, bool_t confined,
+    vect2_t i[2])
+{
+	/*
+	 * This is basically a simplified case of a vect2sph intersection,
+	 * where both the vector and sphere's center lie on the xy plane.
+	 * So just convert to 3D coordinates with z=0 and run vect2sph_isect.
+	 * This only adds one extra coordinate to the calculation, which is
+	 * generally negligible on performance.
+	 */
+	vect3_t v3 = VECT3(v.x, v.y, 0), o3 = VECT3(o.x, o.y, 0);
+	vect3_t c3 = VECT3(c.x, c.y, 0);
+	vect3_t i3[2];
+	int n;
+
+	n = vect2sph_isect(v3, o3, c3, r, confined, i3);
+	if (i != NULL) {
+		i[0] = VECT2(i3[0].x, i3[0].y);
+		i[1] = VECT2(i3[1].x, i3[1].y);
+	}
+
+	return (n);
+}
+
+/*
+ * Calculates a 2D vector/vector intersection point and returns it.
+ *
+ * @param a First vector.
+ * @param oa Vector to origin of first vector from the coordinate origin.
+ * @param b Second vector.
+ * @param oa Vector to origin of second vector from the coordinate origin.
+ * @param confined If B_TRUE, only intersects which lie between the vectors'
+ *	start & ending points (inclusive) are considered. Otherwise any
+ *	intersect along an infinite linear extension of the vectors is returned.
+ *
+ * @return A vector from the coordinate origin to the intersection point
+ *	or NULL_VECT2 if the vectors are parallel (no intersection or inf
+ *	many intersections if they're directly on top of each other).
+ */
 vect2_t
-vect_intersect(vect2_t da, vect2_t oa, vect2_t db, vect2_t ob, bool_t confined)
+vect2vect_isect(vect2_t a, vect2_t oa, vect2_t b, vect2_t ob, bool_t confined)
 {
 	vect2_t p1, p2, p3, p4, r;
 	double det;
 
-	if (VECT2_PARALLEL(da, db))
+	if (VECT2_PARALLEL(a, b))
 		return (NULL_VECT2);
+
 	if (VECT2_EQ(oa, ob))
 		return (oa);
 
-	p1 = oa;
-	p2 = vect2_add(oa, da);
-	p3 = ob;
-	p4 = vect2_add(ob, db);
+	p1 = a;
+	p2 = vect2_add(oa, a);
+	p3 = b;
+	p4 = vect2_add(ob, b);
 
 	det = ((p1.x * p3.y) - (p1.x * p4.y) - (p2.x * p3.y) + (p2.x * p4.y) -
 	    (p1.y * p3.x) + (p1.y * p4.x) + (p2.y * p3.x) - (p2.y * p4.x));
@@ -553,6 +608,27 @@ vect_intersect(vect2_t da, vect2_t oa, vect2_t db, vect2_t ob, bool_t confined)
 	}
 
 	return (r);
+}
+
+/*
+ * Given a true heading in degrees, constructs a unit vector pointing in that
+ * direction. 0 degress is parallel with y axis and hdg increases clockwise.
+ */
+vect2_t
+hdg2dir(double truehdg)
+{
+	truehdg = DEG2RAD(truehdg);
+	return (VECT2(sin(truehdg), cos(truehdg)));
+}
+
+/*
+ * Given a direction vector, returns the true heading that the vector
+ * is pointing. See hdg2dir for a description of the returned heading value.
+ */
+double
+dir2hdg(vect2_t dir)
+{
+	return (RAD2DEG(asin(dir.x / vect2_abs(dir))));
 }
 
 /*
@@ -888,12 +964,9 @@ stereo_fpp_init(geo_pos2_t center, double rot)
 vect2_t
 geo2fpp(geo_pos2_t pos, const fpp_t *fpp)
 {
-//	geo_pos3_t pos3;
 	vect3_t pos_v;
 	vect2_t res_v;
 
-//	pos3 = geo2sph(GEO2_TO_GEO3(pos, 0), &wgs84_ellip);
-//	pos_v = sph2ecef(pos3);
 	pos_v = geo2ecef(GEO2_TO_GEO3(pos, 0), &wgs84_ellip);
 	pos_v = geo_xlate_impl(pos_v, &fpp->xlate);
 	if (isfinite(fpp->dist)) {
@@ -930,7 +1003,7 @@ fpp2geo(vect2_t pos, const fpp_t *fpp)
 	vect3_t r;
 	int n;
 
-	n = vect_sphere_intersect(v, o, ZERO_VECT3, EARTH_MSL, B_FALSE, i);
+	n = vect2sph_isect(v, o, ZERO_VECT3, EARTH_MSL, B_FALSE, i);
 	if (n == 0) {
 		/* Invalid input point, not a member of projection */
 		return (NULL_GEO_POS2);

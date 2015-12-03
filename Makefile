@@ -1,7 +1,9 @@
 all : openfmc
 
-OBJS=openfmc.o airac.o helpers.o geom.o log.o list.o htbl.o route.o fms.o err.o \
-    wmm.o GeomagnetismLibrary.o
+OBJS=wmm.o GeomagnetismLibrary.o list.o \
+    helpers.o htbl.o geom.o err.o log.o \
+    airac.o route.o fms.o \
+    openfmc.o
 
 DEPS=$(patsubst %.o, %.d, $(OBJS))
 CFLAGS=$(shell pkg-config --cflags cairo) $(shell pkg-config --cflags libpng) \

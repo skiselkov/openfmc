@@ -1992,6 +1992,8 @@ CALLS : none
 	int n, m, index, a, b;
 	TimedMagneticModel->EditionDate = MagneticModel->EditionDate;
 	TimedMagneticModel->epoch = MagneticModel->epoch;
+	TimedMagneticModel->CoefficientFileEndDate =
+	    MagneticModel->CoefficientFileEndDate;
 	TimedMagneticModel->nMax = MagneticModel->nMax;
 	TimedMagneticModel->nMaxSecVar = MagneticModel->nMaxSecVar;
 	a = TimedMagneticModel->nMaxSecVar;

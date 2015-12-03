@@ -28,6 +28,7 @@
 #include "wmm.h"
 #include "helpers.h"
 #include "GeomagnetismLibrary.h"
+#include "geom.h"
 
 struct wmm_s {
 	/* time-modified model according to year passed to wmm_open */
@@ -35,24 +36,21 @@ struct wmm_s {
 	MAGtype_Ellipsoid	ellip;
 };
 
-static void
-wmm_set_earth_ellip(MAGtype_Ellipsoid *ellip)
-{
-	/* Sets WGS-84 parameters */
-	/* semi-major axis of the ellipsoid in meters */
-	ellip->a = 6378.137;
-	/* semi-minor axis of the ellipsoid in meters */
-	ellip->b = 6356.7523142;
-	/* flattening */
-	ellip->fla = 1 / 298.257223563;
-	/* first eccentricity */
-	ellip->eps = sqrt(1 - (ellip->b * ellip->b) / (ellip->a * ellip->a));
-	/*first eccentricity squared */
-	ellip->epssq = (ellip->eps * ellip->eps);
-	/* Earth's radius */
-	ellip->re = 6371.2;
-}
-
+/*
+ * Opens a World Magnetic Model coefficient file and time-adjusts it.
+ *
+ * @param filename Filename containing the world magnetic model (usually
+ *	named something like 'WMM.COF').
+ * @param year Fractional year for which to time-adjust the model. For
+ *	example, Apr 19 2016 is the 10th day of the year 2015, so it is
+ *	fractional year 2016.3 (rounding to 1 decimal digit is sufficient).
+ *	N.B. the model has limits of applicability. Be sure to check them
+ *	using wmm_get_start and wmm_get_end before trusting the values
+ *	returned by the model.
+ *
+ * @return If successful, the initialized model suitable for passing to
+ *	wmm_mag2true. If a failure occurs, returns NULL instead.
+ */
 wmm_t *
 wmm_open(const char *filename, double year)
 {
@@ -63,12 +61,6 @@ wmm_open(const char *filename, double year)
 
 	if (!MAG_robustReadMagModels(filename, &fixed_model))
 		return (NULL);
-	if (year < fixed_model->epoch ||
-	    year > fixed_model->CoefficientFileEndDate) {
-		/* Magnetic model not applicable */
-		MAG_FreeMagneticModelMemory(fixed_model);
-		return (NULL);
-	}
 
 	n_max = MAX(fixed_model->nMax, 0);
 	n_terms = ((n_max + 1) * (n_max + 2) / 2);
@@ -79,11 +71,21 @@ wmm_open(const char *filename, double year)
 	MAG_TimelyModifyMagneticModel(date, fixed_model, wmm->model);
 	MAG_FreeMagneticModelMemory(fixed_model);
 
-	wmm_set_earth_ellip(&wmm->ellip);
+	wmm->ellip = (MAGtype_Ellipsoid){
+		.a = wgs84_ellip.a,
+		.b = wgs84_ellip.b,
+		.fla = wgs84_ellip.f,
+		.eps = wgs84_ellip.ecc,
+		.epssq = wgs84_ellip.ecc2,
+		.re = wgs84_ellip.r
+	};
 
 	return (wmm);
 }
 
+/*
+ * Closes a model returned by wmm_open and releases all its resources.
+ */
 void
 wmm_close(wmm_t *wmm)
 {
@@ -92,29 +94,75 @@ wmm_close(wmm_t *wmm)
 	free(wmm);
 }
 
+/*
+ * Returns the earliest fractional year at which the provided model is valid.
+ */
+double
+wmm_get_start(const wmm_t *wmm)
+{
+	return (wmm->model->epoch);
+}
+
+/*
+ * Returns the latest fractional year at which the provided model is valid.
+ */
+double
+wmm_get_end(const wmm_t *wmm)
+{
+	return (wmm->model->CoefficientFileEndDate);
+}
+
+/*
+ * Returns the magnetic declination (variation) in degrees at a given point.
+ *
+ * @param wmm Magnetic model to use. See wmm_open.
+ * @param p Geodetic position on the WGS84 spheroid for which to determine
+ *	the magnetic declination.
+ */
 static double
-wmm_get_decl(const wmm_t *wmm, geo_pos3_t pos)
+wmm_get_decl(const wmm_t *wmm, geo_pos3_t p)
 {
 	MAGtype_CoordSpherical		coord_sph;
 	MAGtype_CoordGeodetic		coord_geo = {
-		.lambda = pos.lon, .phi = pos.lat,
-		.HeightAboveEllipsoid = pos.elev / 3281
+		.lambda = p.lon, .phi = p.lat,
+		.HeightAboveEllipsoid = FEET2MET(p.elev)
 	};
 	MAGtype_GeoMagneticElements	gme;
 
 	MAG_GeodeticToSpherical(wmm->ellip, coord_geo, &coord_sph);
 	MAG_Geomag(wmm->ellip, coord_sph, coord_geo, wmm->model, &gme);
+
 	return (gme.Decl);
 }
 
+/*
+ * Converts a magnetic heading to true according to the world magnetic model.
+ *
+ * @param wmm Magnetic model to use. See wmm_open.
+ * @param m Magnetic heading in degrees to convert.
+ * @param p Geodetic position on the WGS84 spheroid for which to determine
+ *	the conversion.
+ *
+ * @return The converted true heading in degrees.
+ */
 double
-wmm_mag2true(const wmm_t *wmm, double m, geo_pos3_t pos)
+wmm_mag2true(const wmm_t *wmm, double m, geo_pos3_t p)
 {
-	return (m - wmm_get_decl(wmm, pos));
+	return (m - wmm_get_decl(wmm, p));
 }
 
+/*
+ * Converts a true heading to magnetic according to the world magnetic model.
+ *
+ * @param wmm Magnetic model to use. See wmm_open.
+ * @param t True heading in degrees to convert.
+ * @param p Geodetic position on the WGS-84 spheroid for which to determine
+ *	the conversion.
+ *
+ * @return The converted magnetic heading in degrees.
+ */
 double
-wmm_true2mag(const wmm_t *wmm, double t, geo_pos3_t pos)
+wmm_true2mag(const wmm_t *wmm, double t, geo_pos3_t p)
 {
-	return (t + wmm_get_decl(wmm, pos));
+	return (t + wmm_get_decl(wmm, p));
 }

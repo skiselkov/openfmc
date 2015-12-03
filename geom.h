@@ -56,9 +56,12 @@ typedef struct {
 } vect2_t;
 
 typedef struct {
-	double	a;
-	double	b;
-	double	ecc2;
+	double	a;	/* semi-major axis of the ellipsoid in meters */
+	double	b;	/* semi-minor axis of the ellipsoid in meters */
+	double	f;	/* flattening */
+	double	ecc;	/* first eccentricity */
+	double	ecc2;	/* first eccentricity squared */
+	double	r;	/* mean radius in meters */
 } ellip_t;
 
 #define	RAD2DEG_RATIO	(M_PI / 180)		/* 1 rad / 180 deg */
@@ -90,7 +93,7 @@ typedef struct {
 #define	GEO3_TO_GEO2(v)		((geo_pos2_t){(v).lat, (v).lon})
 #define	GEO_POS2_INV(v)		((geo_pos2_t){-(v).lat, -(v).lon})
 
-#define	EARTH_MSL		6371000		/* meters */
+#define	EARTH_MSL		6371200		/* meters */
 #ifndef	ABS
 #define	ABS(x)	((x) > 0 ? (x) : -(x))
 #endif
@@ -98,6 +101,7 @@ typedef struct {
 const ellip_t wgs84_ellip;
 
 double vect3_abs(vect3_t a);
+double vect2_abs(vect2_t a);
 vect3_t vect3_set_abs(vect3_t a, double abs);
 vect3_t vect3_unit(vect3_t a, double *l);
 
@@ -114,10 +118,15 @@ geo_pos3_t ecef2sph(vect3_t v);
 geo_pos3_t geo2sph(geo_pos3_t pos, const ellip_t *geod);
 vect3_t geo2ecef(geo_pos3_t pos, const ellip_t *geod);
 
-int vect_sphere_intersect(vect3_t v, vect3_t o, vect3_t c, double r,
+unsigned vect2sph_isect(vect3_t v, vect3_t o, vect3_t c, double r,
     bool_t confined, vect3_t i[2]);
-vect2_t vect_intersect(vect2_t da, vect2_t oa, vect2_t db, vect2_t ob,
+unsigned vect2circ_isect(vect2_t v, vect2_t o, vect2_t c, double r,
+    bool_t confined, vect2_t i[2]);
+vect2_t vect2vect_isect(vect2_t da, vect2_t oa, vect2_t db, vect2_t ob,
     bool_t confined);
+
+vect2_t hdg2dir(double truehdg);
+double dir2hdg(vect2_t dir);
 
 /* geometry parser & validator helpers */
 bool_t geo_pos2_from_str(const char *lat, const char *lon, geo_pos2_t *pos);
