@@ -242,6 +242,25 @@ vect3_xprod(vect3_t a, vect3_t b)
 }
 
 /*
+ * Returns the mean vector of 3-space vectors `a' and `b'. That is, the
+ * resulting vector will point exactly in between `a' and `b':
+ *
+ *   ^.
+ *   |  .
+ *   |    .
+ *   |     x.
+ * a |   / c  .
+ *   | /        .
+ *   +----------->
+ *     b
+ */
+vect3_t
+vect3_mean(vect3_t a, vect3_t b)
+{
+	return (VECT3((a.x + b.x) / 2, (a.y + b.y) / 2, (a.z + b.z) / 2));
+}
+
+/*
  * Converts surface coordinates on an Earth-sized spheroid into 3-space
  * coordinate vector in ECEF space. Please note that this considers the
  * Earth to be a perfect sphere and hence cannot be used for very precise
@@ -406,6 +425,8 @@ ecef2geo(vect3_t pos, const ellip_t *ellip)
 	res.lat = RAD2DEG(res.lat);
 	res.lon = RAD2DEG(res.lon);
 	res.elev = MET2FEET(res.elev);
+	if (res.lon >= 180.0)
+		res.lon -= 360.0;
 
 	return (res);
 }
@@ -475,10 +496,6 @@ vect2sph_isect(vect3_t v, vect3_t o, vect3_t c, double r, bool_t confined,
 	/* compute (o - c) and the dot product of l.(o - c) */
 	o_min_c = vect3_sub(o, c);
 	l_dot_o_min_c = vect3_dotprod(l, o_min_c);
-
-	PRINT_VECT3(l);
-	PRINT_VECT3(o_min_c);
-	DEBUG_PRINT("l_dot_o_min_c = %f\n", l_dot_o_min_c);
 
 	/*
 	 * The full formula for the distance along L for the intersects is:
@@ -723,7 +740,7 @@ sec(double x)
 /*
  * Prepares a set of geographical coordinate translation parameters.
  *
- * @param displacement The relative latitude & longitude (in degrees)
+ * @param displac The relative latitude & longitude (in degrees)
  *	between the origins of the two respective coordinate systems.
  *	For example, a displacement of +10 degrees of latitude (north)
  *	and +20 degrees of longitude (east) will result in an input
@@ -732,26 +749,26 @@ sec(double x)
  *	Please note that these coordinates as well as all transformations
  *	are assumed to be in geocentric coordinates on the an EARTH_MSL
  *	radius spheroid.
- * @param rotation The relative rotation of the axes of the target
+ * @param rot The relative rotation of the axes of the target
  *	coordinate system to the source coordinate system in degrees
  *	counter-clockwise. For example, a rotation of +90 degrees and
  *	no translation applied to an input coordinate of +5 degrees
  *	of latitude (north) and +5 degrees of longitude (east) will
  *	translate into -5,+5.
  */
-geo_xlate_t
-geo_xlate_init(geo_pos2_t displacement, double rotation)
+sph_xlate_t
+sph_xlate_init(geo_pos2_t displac, double rot, bool_t inv)
 {
 	/*
 	 * (ECEF axes:)
-	 * lat - y axis - alpha
-	 * lon - z axis - bravo
-	 * rotation - norm to yz axis - theta
+	 * lat xlate		y axis	alpha
+	 * lon xlate		z axis	bravo
+	 * viewport rotation	x axis	theta
 	 */
-	geo_xlate_t	xlate;
-	double		alpha = DEG2RAD(displacement.lat);
-	double		bravo = DEG2RAD(-displacement.lon);
-	double		theta = DEG2RAD(rotation);
+	sph_xlate_t	xlate;
+	double		alpha = DEG2RAD(!inv ? displac.lat : -displac.lat);
+	double		bravo = DEG2RAD(!inv ? -displac.lon : displac.lon);
+	double		theta = DEG2RAD(!inv ? rot : -rot);
 
 #define	M(m, r, c)	((m)[(r) * 3 + (c)])
 	double		R_a[3 * 3], R_b[3 * 3];
@@ -787,12 +804,16 @@ geo_xlate_init(geo_pos2_t displacement, double rotation)
 	M(R_b, 1, 1) = cos_bravo;
 	M(R_b, 2, 2) = 1;
 
-	matrix_mul(R_a, R_b, xlate.geo_matrix, 3, 3, 3);
+	if (!inv)
+		matrix_mul(R_a, R_b, xlate.sph_matrix, 3, 3, 3);
+	else
+		matrix_mul(R_b, R_a, xlate.sph_matrix, 3, 3, 3);
 
 	xlate.rot_matrix[0] = cos_theta;
 	xlate.rot_matrix[1] = -sin_theta;
 	xlate.rot_matrix[2] = sin_theta;
 	xlate.rot_matrix[3] = cos_theta;
+	xlate.inv = inv;
 
 	return (xlate);
 }
@@ -800,41 +821,34 @@ geo_xlate_init(geo_pos2_t displacement, double rotation)
 /*
  * Translates a point at `pos' using the translation specified by `xlate'.
  */
-static vect3_t
-geo_xlate_impl(vect3_t p, const geo_xlate_t *xlate)
+vect3_t
+sph_xlate_vect(vect3_t p, const sph_xlate_t *xlate)
 {
 	vect3_t	q;
 	vect2_t	r, s;
 
-	matrix_mul(xlate->geo_matrix, (double *)&p, (double *)&q, 3, 1, 3);
-	/*
-	 * In the final projection plane, grab y & z coords & rotate along
-	 * x axis.
-	 */
-	r = VECT2(q.y, q.z);
-	matrix_mul(xlate->rot_matrix, (double *)&r, (double *)&s, 2, 1, 2);
-	q.y = s.x;
-	q.z = s.y;
+	if (xlate->inv) {
+		/* Undo projection plane rotation along y axis. */
+		r = VECT2(p.y, p.z);
+		matrix_mul(xlate->rot_matrix, (double *)&r, (double *)&s,
+		    2, 1, 2);
+		p.y = s.x;
+		p.z = s.y;
+	}
 
-	return (q);
-}
+	matrix_mul(xlate->sph_matrix, (double *)&p, (double *)&q, 3, 1, 3);
 
-/*
- * Translates a point at `pos' using the geo translation specified by `xlate'.
- */
-static vect3_t
-geo_xlate_inv_impl(vect3_t p, const geo_xlate_t *xlate)
-{
-	vect3_t	q;
-	vect2_t	r, s;
-
-	/* Undo projection plane rotation along y axis. */
-	r = VECT2(p.y, p.z);
-	matrix_mul(xlate->rot_matrix, (double *)&r, (double *)&s, 2, 1, 2);
-	p.y = s.x;
-	p.z = s.y;
-	/* Undo x (lat) & z (lon) rotation */
-	matrix_mul(xlate->geo_matrix, (double *)&p, (double *)&q, 3, 1, 3);
+	if (!xlate->inv) {
+		/*
+		 * In the final projection plane, grab y & z coords & rotate
+		 * along x axis.
+		 */
+		r = VECT2(q.y, q.z);
+		matrix_mul(xlate->rot_matrix, (double *)&r, (double *)&s,
+		    2, 1, 2);
+		q.y = s.x;
+		q.z = s.y;
+	}
 
 	return (q);
 }
@@ -843,22 +857,10 @@ geo_xlate_inv_impl(vect3_t p, const geo_xlate_t *xlate)
  * Translates a point at `pos' using the geo translation specified by `xlate'.
  */
 geo_pos2_t
-geo_xlate(geo_pos2_t pos, const geo_xlate_t *xlate)
+sph_xlate(geo_pos2_t pos, const sph_xlate_t *xlate)
 {
 	vect3_t		v = sph2ecef(GEO2_TO_GEO3(pos, 0));
-	vect3_t		r = geo_xlate_impl(v, xlate);
-	geo_pos3_t	res = ecef2sph(r);
-	return (GEO_POS2(res.lat, res.lon));
-}
-
-/*
- * Translates a point at `pos' using the geo translation specified by `xlate'.
- */
-geo_pos2_t
-geo_xlate_inv(geo_pos2_t pos, const geo_xlate_t *xlate)
-{
-	vect3_t		v = sph2ecef(GEO2_TO_GEO3(pos, 0));
-	vect3_t		r = geo_xlate_inv_impl(v, xlate);
+	vect3_t		r = sph_xlate_vect(v, xlate);
 	geo_pos3_t	res = ecef2sph(r);
 	return (GEO_POS2(res.lat, res.lon));
 }
@@ -943,12 +945,24 @@ gc_point_hdg(geo_pos2_t start, geo_pos2_t end, double arg)
  * to pass dist == 0.0.
  */
 fpp_t
-fpp_init(geo_pos2_t center, double rot, double dist)
+fpp_init(geo_pos2_t center, double rot, double dist, bool_t use_wgs84,
+    bool_t allow_inv)
 {
 	fpp_t fpp;
 
 	VERIFY(dist != 0);
-	fpp.xlate = geo_xlate_init(center, rot);
+	fpp.allow_inv = allow_inv;
+	if (use_wgs84) {
+		geo_pos2_t sph_ctr = GEO3_TO_GEO2(geo2sph(GEO2_TO_GEO3(center,
+		    0), &wgs84_ellip));
+		fpp.xlate = sph_xlate_init(sph_ctr, rot, B_FALSE);
+		if (allow_inv)
+			fpp.inv_xlate = sph_xlate_init(sph_ctr, rot, B_TRUE);
+	} else {
+		fpp.xlate = sph_xlate_init(center, rot, B_FALSE);
+		if (allow_inv)
+			fpp.inv_xlate = sph_xlate_init(center, rot, B_TRUE);
+	}
 	fpp.dist = dist;
 
 	return (fpp);
@@ -959,9 +973,10 @@ fpp_init(geo_pos2_t center, double rot, double dist)
  * the projection origin at +INFINITY. See `fpp_init' for more information.
  */
 fpp_t
-ortho_fpp_init(geo_pos2_t center, double rot)
+ortho_fpp_init(geo_pos2_t center, double rot, bool_t use_wgs84,
+    bool_t allow_inv)
 {
-	return (fpp_init(center, rot, INFINITY));
+	return (fpp_init(center, rot, INFINITY, use_wgs84, allow_inv));
 }
 
 /*
@@ -969,9 +984,10 @@ ortho_fpp_init(geo_pos2_t center, double rot)
  * the origin at the Earth's center. See `fpp_init' for more information.
  */
 fpp_t
-gnomo_fpp_init(geo_pos2_t center, double rot)
+gnomo_fpp_init(geo_pos2_t center, double rot, bool_t use_wgs84,
+    bool_t allow_inv)
 {
-	return (fpp_init(center, rot, -EARTH_MSL));
+	return (fpp_init(center, rot, -EARTH_MSL, use_wgs84, allow_inv));
 }
 
 /*
@@ -981,9 +997,10 @@ gnomo_fpp_init(geo_pos2_t center, double rot)
  * See `fpp_init' for more information.
  */
 fpp_t
-stereo_fpp_init(geo_pos2_t center, double rot)
+stereo_fpp_init(geo_pos2_t center, double rot, bool_t use_wgs84,
+    bool_t allow_inv)
 {
-	return (fpp_init(center, rot, -2 * EARTH_MSL));
+	return (fpp_init(center, rot, -2 * EARTH_MSL, use_wgs84, allow_inv));
 }
 
 /*
@@ -998,8 +1015,12 @@ geo2fpp(geo_pos2_t pos, const fpp_t *fpp)
 	vect3_t pos_v;
 	vect2_t res_v;
 
-	pos_v = geo2ecef(GEO2_TO_GEO3(pos, 0), &wgs84_ellip);
-	pos_v = geo_xlate_impl(pos_v, &fpp->xlate);
+	if (fpp->use_wgs84)
+		pos_v = geo2ecef(GEO2_TO_GEO3(pos, 0), &wgs84_ellip);
+	else
+		pos_v = sph2ecef(GEO2_TO_GEO3(pos, 0));
+
+	pos_v = sph_xlate_vect(pos_v, &fpp->xlate);
 	if (isfinite(fpp->dist)) {
 		if (fpp->dist < 0.0 && pos_v.x <= fpp->dist + EARTH_MSL)
 			return (NULL_VECT2);
@@ -1028,22 +1049,36 @@ geo2fpp(geo_pos2_t pos, const fpp_t *fpp)
 geo_pos2_t
 fpp2geo(vect2_t pos, const fpp_t *fpp)
 {
-	vect3_t	v = VECT3(-fpp->dist, pos.x, pos.y);
-	vect3_t	o = VECT3(EARTH_MSL + fpp->dist, 0, 0);
+	vect3_t	v;
+	vect3_t	o;
 	vect3_t i[2];
 	vect3_t r;
 	int n;
 
+	ASSERT(fpp->allow_inv);
+
+	if (isfinite(fpp->dist)) {
+		v = VECT3(-fpp->dist, pos.x, pos.y);
+		o = VECT3(EARTH_MSL + fpp->dist, 0, 0);
+	} else {
+		/*
+		 * For orthographic projections, we'll just pretend the
+		 * projection point is *really* far away so that the
+		 * error in the result is negligible.
+		 */
+		v = VECT3(-1e14, pos.x, pos.y);
+		o = VECT3(1e14, 0, 0);
+	}
 	n = vect2sph_isect(v, o, ZERO_VECT3, EARTH_MSL, B_FALSE, i);
 	if (n == 0) {
 		/* Invalid input point, not a member of projection */
 		return (NULL_GEO_POS2);
 	}
-	if (n == 2) {
+	if (n == 2 && isfinite(fpp->dist)) {
 		/*
-		 * Two solutions, find the one that's closer to the projection
-		 * origin while located between it and the projection plane
-		 * and place it in i[0].
+		 * Two solutions on non-orthographic projections. Find the
+		 * one that's closer to the projection origin while located
+		 * between it and the projection plane and place it in i[0].
 		 */
 		if (fpp->dist >= -EARTH_MSL) {
 			if (i[1].x > i[0].x)
@@ -1054,8 +1089,11 @@ fpp2geo(vect2_t pos, const fpp_t *fpp)
 		}
 	}
 	/* Result is now in i[0]. Inv-xlate to global space & ecef2sph. */
-	r = geo_xlate_inv_impl(i[0], &fpp->xlate);
-	return (GEO3_TO_GEO2(ecef2geo(r, &wgs84_ellip)));
+	r = sph_xlate_vect(i[0], &fpp->inv_xlate);
+	if (fpp->use_wgs84)
+		return (GEO3_TO_GEO2(ecef2geo(r, &wgs84_ellip)));
+	else
+		return (GEO3_TO_GEO2(ecef2sph(r)));
 }
 
 /*

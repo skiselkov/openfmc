@@ -106,6 +106,9 @@ typedef struct {
 
 const ellip_t wgs84_ellip;
 
+/*
+ * Vector math.
+ */
 double vect3_abs(vect3_t a);
 double vect2_abs(vect2_t a);
 vect3_t vect3_set_abs(vect3_t a, double abs);
@@ -120,13 +123,21 @@ vect3_t vect3_scmul(vect3_t a, double b);
 vect2_t vect2_scmul(vect2_t a, double b);
 double vect3_dotprod(vect3_t a, vect3_t b);
 vect3_t vect3_xprod(vect3_t a, vect3_t b);
+vect3_t vect3_mean(vect3_t a, vect3_t b);
 
+/*
+ * Spherical, geodesic and ECEF coordinate conversion.
+ */
 ellip_t ellip_init(double semi_major, double semi_minor, double flattening);
-vect3_t sph2ecef(geo_pos3_t pos);
+geo_pos3_t geo2sph(geo_pos3_t pos, const ellip_t *ellip);
+vect3_t geo2ecef(geo_pos3_t pos, const ellip_t *ellip);
+geo_pos3_t ecef2geo(vect3_t pos, const ellip_t *ellip);
 geo_pos3_t ecef2sph(vect3_t v);
-geo_pos3_t geo2sph(geo_pos3_t pos, const ellip_t *geod);
-vect3_t geo2ecef(geo_pos3_t pos, const ellip_t *geod);
+vect3_t sph2ecef(geo_pos3_t pos);
 
+/*
+ * Interesections.
+ */
 unsigned vect2sph_isect(vect3_t v, vect3_t o, vect3_t c, double r,
     bool_t confined, vect3_t i[2]);
 unsigned vect2circ_isect(vect2_t v, vect2_t o, vect2_t c, double r,
@@ -134,10 +145,15 @@ unsigned vect2circ_isect(vect2_t v, vect2_t o, vect2_t c, double r,
 vect2_t vect2vect_isect(vect2_t da, vect2_t oa, vect2_t db, vect2_t ob,
     bool_t confined);
 
+/*
+ * Converting between headings and direction vectors on a 2D plane.
+ */
 vect2_t hdg2dir(double truehdg);
 double dir2hdg(vect2_t dir);
 
-/* geometry parser & validator helpers */
+/*
+ * Geometry parser & validator helpers.
+ */
 bool_t geo_pos2_from_str(const char *lat, const char *lon, geo_pos2_t *pos);
 bool_t geo_pos3_from_str(const char *lat, const char *lon, const char *elev,
     geo_pos3_t *pos);
@@ -146,12 +162,15 @@ bool_t geo_pos3_from_str(const char *lat, const char *lon, const char *elev,
  * Spherical coordinate system translation.
  */
 typedef struct {
-	double	geo_matrix[3 * 3];
+	double	sph_matrix[3 * 3];
 	double	rot_matrix[2 * 2];
-} geo_xlate_t;
+	bool_t	inv;
+} sph_xlate_t;
 
-geo_xlate_t geo_xlate_init(geo_pos2_t displacement, double rotation);
-geo_pos2_t geo_xlate(geo_pos2_t pos, const geo_xlate_t *xlate);
+sph_xlate_t sph_xlate_init(geo_pos2_t displacement, double rotation,
+    bool_t inv);
+geo_pos2_t sph_xlate(geo_pos2_t pos, const sph_xlate_t *xlate);
+vect3_t sph_xlate_vect(vect3_t pos, const sph_xlate_t *xlate);
 
 /*
  * Great circle functions.
@@ -160,17 +179,24 @@ double gc_distance(geo_pos2_t start, geo_pos2_t end);
 double gc_point_hdg(geo_pos2_t start, geo_pos2_t end, double arg);
 
 /*
- * Generic flat-plane projections.
+ * Generic spherical - to - flat-plane projections.
  */
 typedef struct {
-	geo_xlate_t	xlate;
+	bool_t		use_wgs84;
+	sph_xlate_t	xlate;
+	sph_xlate_t	inv_xlate;
+	bool_t		allow_inv;
 	double		dist;
 } fpp_t;
 
-fpp_t fpp_init(geo_pos2_t center, double rot, double dist);
-fpp_t ortho_fpp_init(geo_pos2_t center, double rot);
-fpp_t gnomo_fpp_init(geo_pos2_t center, double rot);
-fpp_t stereo_fpp_init(geo_pos2_t center, double rot);
+fpp_t fpp_init(geo_pos2_t center, double rot, double dist, bool_t use_wgs84,
+    bool_t allow_inv);
+fpp_t ortho_fpp_init(geo_pos2_t center, double rot, bool_t use_wgs84,
+    bool_t allow_inv);
+fpp_t gnomo_fpp_init(geo_pos2_t center, double rot, bool_t use_wgs84,
+    bool_t allow_inv);
+fpp_t stereo_fpp_init(geo_pos2_t center, double rot, bool_t use_wgs84,
+    bool_t allow_inv);
 vect2_t geo2fpp(geo_pos2_t pos, const fpp_t *fpp);
 geo_pos2_t fpp2geo(vect2_t pos, const fpp_t *fpp);
 

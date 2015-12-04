@@ -26,6 +26,7 @@
 #include <stdlib.h>
 #include <stddef.h>
 #include <string.h>
+#include <stdio.h>
 
 #include "log.h"
 #include "route.h"
@@ -38,26 +39,26 @@ static route_leg_t * last_leg_before_rlg(route_t *route,
     route_leg_group_t *rlg);
 static bool_t navprocs_related(const navproc_t *nv1, const navproc_t *nv2);
 
-typedef vect2_t (*leg_intc_func_t)(geo_pos2_t cur_pos, vect2_t cur_pos_v,
-    const route_leg_t *rl, const route_leg_t *next_rl, const fpp_t *fpp,
-    const fms_navdb_t *navdb);
+typedef geo_pos3_t (*leg_intc_func_t)(geo_pos3_t cur_pos,
+    const route_leg_t *rl, const list_t *legs, const wmm_t *wmm);
 
-static vect2_t calc_dir_leg_intc(geo_pos2_t cur_pos, vect2_t cur_pos_v,
-    const route_leg_t *rl, const route_leg_t *next_rl, const fpp_t *fpp,
-    const fms_navdb_t *navdb);
-static vect2_t calc_dist_leg_intc(geo_pos2_t cur_pos, vect2_t cur_pos_v,
-    const route_leg_t *rl, const route_leg_t *next_rl, const fpp_t *fpp,
-    const fms_navdb_t *navdb);
-static vect2_t calc_radial_leg_intc(geo_pos2_t cur_pos, vect2_t cur_pos_v,
-    const route_leg_t *rl, const route_leg_t *next_rl, const fpp_t *fpp,
-    const fms_navdb_t *navdb);
-static vect2_t calc_manual_leg_intc(geo_pos2_t cur_pos, vect2_t cur_pos_v,
-    const route_leg_t *rl, const route_leg_t *next_rl, const fpp_t *fpp,
-    const fms_navdb_t *navdb);
+static geo_pos3_t calc_dir_leg_intc(geo_pos3_t cur_pos,
+    const route_leg_t *rl, const list_t *legs, const wmm_t *wmm);
+static geo_pos3_t calc_dist_leg_intc(geo_pos3_t cur_pos,
+    const route_leg_t *rl, const list_t *legs, const wmm_t *wmm);
+static geo_pos3_t calc_radial_leg_intc(geo_pos3_t cur_pos,
+    const route_leg_t *rl, const list_t *legs, const wmm_t *wmm);
+static geo_pos3_t calc_manual_leg_intc(geo_pos3_t cur_pos,
+    const route_leg_t *rl, const list_t *legs, const wmm_t *wmm);
+static geo_pos3_t calc_vect_leg_intc(geo_pos3_t cur_pos,
+    const route_leg_t *rl, const list_t *legs, const wmm_t *wmm);
+static geo_pos3_t calc_alt_leg_intc(geo_pos3_t cur_pos,
+    const route_leg_t *rl, const list_t *legs, const wmm_t *wmm);
+static geo_pos3_t calc_proc_leg_intc(geo_pos3_t cur_pos,
+    const route_leg_t *rl, const list_t *legs, const wmm_t *wmm);
 
-static bool_t rl_find_leg_seg(const route_leg_t *rl,
-    const route_leg_t *next_rl, const fpp_t *fpp, const fms_navdb_t *navdb,
-    route_seg_t *seg);
+static bool_t rl_find_leg_seg(const route_leg_t *rl, geo_pos3_t oldpos,
+    const route_leg_t *next_rl, const wmm_t *wmm, route_seg_t *seg);
 
 /*
  * Functions that compute leg intersections. Order must follow
@@ -65,13 +66,13 @@ static bool_t rl_find_leg_seg(const route_leg_t *rl,
  */
 static leg_intc_func_t const leg_intc_func_tbl[NAVPROC_SEG_TYPES] = {
 	calc_dir_leg_intc,	/* NAVPROC_SEG_TYPE_ARC_TO_FIX */
-	NULL,			/* NAVPROC_SEG_TYPE_CRS_TO_ALT */
+	calc_alt_leg_intc,	/* NAVPROC_SEG_TYPE_CRS_TO_ALT */
 	calc_dist_leg_intc,	/* NAVPROC_SEG_TYPE_CRS_TO_DME */
 	calc_dir_leg_intc,	/* NAVPROC_SEG_TYPE_CRS_TO_FIX */
-	NULL,			/* NAVPROC_SEG_TYPE_CRS_TO_INTCP */
+	calc_vect_leg_intc,	/* NAVPROC_SEG_TYPE_CRS_TO_INTCP */
 	calc_radial_leg_intc,	/* NAVPROC_SEG_TYPE_CRS_TO_RADIAL */
 	calc_dir_leg_intc,	/* NAVPROC_SEG_TYPE_DIR_TO_FIX */
-	NULL,			/* NAVPROC_SEG_TYPE_FIX_TO_ALT */
+	calc_alt_leg_intc,	/* NAVPROC_SEG_TYPE_FIX_TO_ALT */
 	calc_dist_leg_intc,	/* NAVPROC_SEG_TYPE_FIX_TO_DIST */
 	calc_dist_leg_intc,	/* NAVPROC_SEG_TYPE_FIX_TO_DME */
 	calc_manual_leg_intc,	/* NAVPROC_SEG_TYPE_FIX_TO_MANUAL */
@@ -79,12 +80,12 @@ static leg_intc_func_t const leg_intc_func_tbl[NAVPROC_SEG_TYPES] = {
 	calc_dir_leg_intc,	/* NAVPROC_SEG_TYPE_HOLD_TO_FIX */
 	calc_dir_leg_intc,	/* NAVPROC_SEG_TYPE_HOLD_TO_MANUAL */
 	calc_dir_leg_intc,	/* NAVPROC_SEG_TYPE_INIT_FIX */
-	NULL,			/* NAVPROC_SEG_TYPE_PROC_TURN */
+	calc_proc_leg_intc,	/* NAVPROC_SEG_TYPE_PROC_TURN */
 	calc_dir_leg_intc,	/* NAVPROC_SEG_TYPE_RADIUS_ARC_TO_FIX */
 	calc_dir_leg_intc,	/* NAVPROC_SEG_TYPE_TRK_TO_FIX */
-	NULL,			/* NAVPROC_SEG_TYPE_HDG_TO_ALT */
+	calc_alt_leg_intc,	/* NAVPROC_SEG_TYPE_HDG_TO_ALT */
 	calc_dist_leg_intc,	/* NAVPROC_SEG_TYPE_HDG_TO_DME */
-	NULL,			/* NAVPROC_SEG_TYPE_HDG_TO_INTCP */
+	calc_vect_leg_intc,	/* NAVPROC_SEG_TYPE_HDG_TO_INTCP */
 	calc_manual_leg_intc,	/* NAVPROC_SEG_TYPE_HDG_TO_MANUAL */
 	calc_radial_leg_intc	/* NAVPROC_SEG_TYPE_HDG_TO_RADIAL */
 };
@@ -372,6 +373,24 @@ rlg_update_direct_leg(route_t *route, route_leg_group_t *rlg)
 }
 
 /*
+ * Returns the first non-DISCO route leg following `ref' in list `legs'
+ * If `ref' is NULL, returns the first leg group (which is never a DISCO).
+ */
+static route_leg_t *
+rl_next_ndisc(const list_t *legs, const route_leg_t *ref)
+{
+	if (ref == NULL)
+		return (list_head(legs));
+
+	for (route_leg_t *rl = list_next(legs, ref); rl;
+	    rl = list_next(legs, rl)) {
+		if (!rl->disco)
+			return (rl);
+	}
+	return (NULL);
+}
+
+/*
  * Returns the first non-DISCO route leg group following `ref'. If `ref'
  * is NULL, returns the first leg group (which is never a DISCO).
  */
@@ -468,132 +487,140 @@ navprocs_related(const navproc_t *nv1, const navproc_t *nv2)
 	    nv2->type >= NAVPROC_TYPE_STAR)));
 }
 
-static geo_pos3_t
-radial_dist_displace(const fpp_t *fpp, const fms_navdb_t *navdb,
-    geo_pos2_t pos, double radial, double dist_nm)
+static geo_pos2_t
+radial_dist_displace(const wmm_t *wmm, geo_pos2_t pos, double radial,
+    double dist_nm)
 {
-	vect2_t ctr_v = geo2fpp(pos, fpp);
-	vect2_t dir_v = vect2_set_abs(hdg2dir(wmm_mag2true(navdb->wmm, radial,
+	fpp_t	fpp = gnomo_fpp_init(pos, 0, B_TRUE, B_TRUE);
+	vect2_t	ctr_v = geo2fpp(pos, &fpp);
+	vect2_t	dir_v = vect2_set_abs(hdg2dir(wmm_mag2true(wmm, radial,
 	    GEO2_TO_GEO3(pos, 0))), NM2MET(dist_nm));
 	vect2_t start_v = vect2_add(ctr_v, dir_v);
-	return (GEO2_TO_GEO3(fpp2geo(start_v, fpp), 0));
+
+	return (fpp2geo(start_v, &fpp));
 }
 
-#define	DIR_V(hdg)	\
-	(hdg2dir(wmm_mag2true(navdb->wmm, (hdg), GEO2_TO_GEO3(cur_pos, 0))))
-#define	PROJ_POS_V(pos)	(geo2fpp((pos), fpp))
+/*
+ * Given a route let and current altitude, determines what adjustment to the
+ * altitude is needed to satisfy the route leg's altitude constraint. If the
+ * leg's altitude is unconstrained, returns the input altitude.
+ */
+static double
+rl_alt_lim_adj(const route_leg_t *rl, double alt)
+{
+	alt_lim_t lim = route_l_get_alt_lim(rl);
+
+	switch (lim.type) {
+	case ALT_LIM_NONE:
+		return (alt);
+	case ALT_LIM_AT:
+		return (lim.alt1);
+	case ALT_LIM_AT_OR_ABV:
+		return (MAX(alt, lim.alt1));
+	case ALT_LIM_AT_OR_BLW:
+		return (MIN(alt, lim.alt1));
+	case ALT_LIM_BETWEEN:
+		return (MAX(MIN(alt, lim.alt1), lim.alt2));
+	}
+}
+
+#define	DIR_V(hdg)	(hdg2dir(wmm_mag2true(wmm, (hdg), cur_pos)))
 #define	SAME_DIR(a, b)	((a).x * (b).x >= 0 && (a).y * (b).y >= 0)
 
 #define	ALT_GUESS_DISPLACE	100.0
 
-static bool_t rl_complete_seg(const route_leg_t *rl, geo_pos2_t start,
-    const fpp_t *fpp, const fms_navdb_t *navdb, route_seg_t *seg)
+static bool_t rl_complete_seg(const route_leg_t *rl, geo_pos3_t start,
+    const wmm_t *wmm, route_seg_t *seg)
 {
 	switch(rl->seg.type) {
 	case NAVPROC_SEG_TYPE_ARC_TO_FIX:
 		seg->type = ROUTE_SEG_TYPE_ARC;
 		seg->arc.center = rl->seg.leg_cmd.dme_arc.navaid.pos;
-		seg->arc.start = radial_dist_displace(fpp, navdb,
+		seg->arc.radius = rl->seg.leg_cmd.dme_arc.radius;
+		seg->arc.start = GEO2_TO_GEO3(radial_dist_displace(wmm,
 		    rl->seg.leg_cmd.dme_arc.navaid.pos,
-		    rl->seg.leg_cmd.dme_arc.start_radial,
-		    rl->seg.leg_cmd.dme_arc.radius);
-		seg->arc.end = GEO2_TO_GEO3(rl->seg.term_cond.fix.pos, 0);
+		    rl->seg.leg_cmd.dme_arc.start_radial, seg->arc.radius),
+		    start.elev);
+		seg->arc.end = GEO2_TO_GEO3(rl->seg.term_cond.fix.pos,
+		    rl_alt_lim_adj(rl, start.elev));
 		return (B_TRUE);
 	case NAVPROC_SEG_TYPE_CRS_TO_ALT:
-		seg->straight.start = GEO2_TO_GEO3(start, 0);
-		seg->straight.end = radial_dist_displace(fpp, navdb,
+		seg->straight.start = start;
+		seg->straight.end = GEO2_TO_GEO3(radial_dist_displace(wmm,
 		    GEO3_TO_GEO2(start), rl->seg.leg_cmd.crs,
-		    ALT_GUESS_DISPLACE);
+		    ALT_GUESS_DISPLACE), rl_alt_lim_adj(rl, start.elev));
 		return (B_TRUE);
-	case NAVPROC_SEG_TYPE_CRS_TO_DME: {
-		vect2_t end_v = calc_dist_leg_intc(start, geo2fpp(start, fpp),
-		    rl, NULL, fpp, navdb);
-		if (IS_NULL_VECT(end_v)) {
-			openfmc_log(OPENFMC_LOG_ERR, "Found broken CD leg "
-			    "which doesn't interecept its own target.");
-			return (B_FALSE);
-		}
+	case NAVPROC_SEG_TYPE_CRS_TO_DME:
 		seg->type = ROUTE_SEG_TYPE_STRAIGHT;
-		seg->straight.start = GEO2_TO_GEO3(start, 0);
-		seg->straight.end = GEO2_TO_GEO3(fpp2geo(end_v, fpp), 0);
+		seg->straight.start = start;
+		seg->straight.end = calc_dist_leg_intc(start, rl, NULL, wmm);
 		return (B_TRUE);
-	}
 	case NAVPROC_SEG_TYPE_CRS_TO_FIX:
 		seg->type = ROUTE_SEG_TYPE_STRAIGHT;
-		seg->straight.start = GEO2_TO_GEO3(start, 0);
-		seg->straight.end = GEO2_TO_GEO3(rl->seg.term_cond.fix.pos, 0);
+		seg->straight.start = start;
+		seg->straight.end = GEO2_TO_GEO3(rl->seg.term_cond.fix.pos,
+		    rl_alt_lim_adj(rl, start.elev));
 		return (B_TRUE);
 	case NAVPROC_SEG_TYPE_CRS_TO_INTCP:
 		return (B_FALSE);
 	case NAVPROC_SEG_TYPE_CRS_TO_RADIAL:
-	case NAVPROC_SEG_TYPE_HDG_TO_RADIAL: {
-		vect2_t end_v = calc_radial_leg_intc(start, geo2fpp(start, fpp),
-		    rl, NULL, fpp, navdb);
-		if (IS_NULL_VECT(end_v)) {
-			openfmc_log(OPENFMC_LOG_ERR, "Found broken CR leg "
-			    "which doesn't interecept its own target.");
-			return (B_FALSE);
-		}
+	case NAVPROC_SEG_TYPE_HDG_TO_RADIAL:
 		seg->type = ROUTE_SEG_TYPE_STRAIGHT;
-		seg->straight.start = GEO2_TO_GEO3(start, 0);
-		seg->straight.end = GEO2_TO_GEO3(fpp2geo(end_v, fpp), 0);
+		seg->straight.start = start;
+		seg->straight.end = calc_radial_leg_intc(start, rl, NULL, wmm);
 		return (B_TRUE);
-	}
 	case NAVPROC_SEG_TYPE_DIR_TO_FIX:
 		seg->type = ROUTE_SEG_TYPE_STRAIGHT;
-		seg->straight.start = GEO2_TO_GEO3(start, 0);
-		seg->straight.end = GEO2_TO_GEO3(rl->seg.term_cond.fix.pos, 0);
+		seg->straight.start = start;
+		seg->straight.end = GEO2_TO_GEO3(rl->seg.term_cond.fix.pos,
+		    rl_alt_lim_adj(rl, start.elev));
 		return (B_TRUE);
 	case NAVPROC_SEG_TYPE_FIX_TO_ALT:
 		seg->type = ROUTE_SEG_TYPE_STRAIGHT;
 		seg->straight.start = GEO2_TO_GEO3(
-		    rl->seg.leg_cmd.fix_crs.fix.pos, 0);
-		seg->straight.end = radial_dist_displace(fpp, navdb,
+		    rl->seg.leg_cmd.fix_crs.fix.pos, start.elev);
+		seg->straight.end = GEO2_TO_GEO3(radial_dist_displace(wmm,
 		    rl->seg.leg_cmd.fix_crs.fix.pos,
-		    rl->seg.leg_cmd.fix_crs.crs, ALT_GUESS_DISPLACE);
+		    rl->seg.leg_cmd.fix_crs.crs, ALT_GUESS_DISPLACE),
+		    rl_alt_lim_adj(rl, start.elev));
 		return (B_TRUE);
 	case NAVPROC_SEG_TYPE_FIX_TO_DIST:
 		seg->type = ROUTE_SEG_TYPE_STRAIGHT;
 		seg->straight.start = GEO2_TO_GEO3(
-		    rl->seg.leg_cmd.fix_crs.fix.pos, 0);
-		seg->straight.end = radial_dist_displace(fpp, navdb,
+		    rl->seg.leg_cmd.fix_crs.fix.pos, start.elev);
+		seg->straight.end = GEO2_TO_GEO3(radial_dist_displace(wmm,
 		    rl->seg.leg_cmd.fix_crs.fix.pos,
-		    rl->seg.leg_cmd.fix_crs.crs, rl->seg.term_cond.dist);
+		    rl->seg.leg_cmd.fix_crs.crs, rl->seg.term_cond.dist),
+		    rl_alt_lim_adj(rl, start.elev));
 		return (B_TRUE);
-	case NAVPROC_SEG_TYPE_FIX_TO_DME: {
-		vect2_t end_v = calc_dist_leg_intc(NULL_GEO_POS2, NULL_VECT2,
-		    rl, NULL, fpp, navdb);
-		if (IS_NULL_VECT(end_v)) {
-			openfmc_log(OPENFMC_LOG_ERR, "Found broken FD leg "
-			    "which doesn't interecept its own target.");
-			return (B_FALSE);
-		}
+	case NAVPROC_SEG_TYPE_FIX_TO_DME:
 		seg->type = ROUTE_SEG_TYPE_STRAIGHT;
 		seg->straight.start = GEO2_TO_GEO3(
-		    rl->seg.leg_cmd.fix_crs.fix.pos, 0);
-		seg->straight.end = GEO2_TO_GEO3(fpp2geo(end_v, fpp), 0);
+		    rl->seg.leg_cmd.fix_crs.fix.pos, start.elev);
+		seg->straight.end = calc_dist_leg_intc(start, rl, NULL, wmm);
 		return (B_TRUE);
-	}
 	case NAVPROC_SEG_TYPE_FIX_TO_MANUAL:
 		return (B_FALSE);
 	case NAVPROC_SEG_TYPE_HOLD_TO_ALT:
 	case NAVPROC_SEG_TYPE_HOLD_TO_FIX:
 	case NAVPROC_SEG_TYPE_HOLD_TO_MANUAL:
 		seg->type = ROUTE_SEG_TYPE_STRAIGHT;
-		seg->straight.start = GEO2_TO_GEO3(start, 0);
+		seg->straight.start = start;
 		seg->straight.end = GEO2_TO_GEO3(rl->seg.leg_cmd.hold.fix.pos,
-		    0);
+		    rl_alt_lim_adj(rl, start.elev));
 		return (B_TRUE);
 	case NAVPROC_SEG_TYPE_INIT_FIX:
 		seg->type = ROUTE_SEG_TYPE_STRAIGHT;
-		seg->straight.start = GEO2_TO_GEO3(start, 0);
-		seg->straight.end = GEO2_TO_GEO3(rl->seg.leg_cmd.fix.pos, 0);
+		seg->straight.start = GEO2_TO_GEO3(start, start.elev);
+		seg->straight.end = GEO2_TO_GEO3(rl->seg.leg_cmd.fix.pos,
+		    rl_alt_lim_adj(rl, start.elev));
 		return (B_TRUE);
 	case NAVPROC_SEG_TYPE_PROC_TURN:
 		seg->type = ROUTE_SEG_TYPE_STRAIGHT;
-		seg->straight.start = GEO2_TO_GEO3(start, 0);
+		seg->straight.start = start;
 		seg->straight.end = GEO2_TO_GEO3(
-		    rl->seg.leg_cmd.proc_turn.startpt.pos, 0);
+		    rl->seg.leg_cmd.proc_turn.startpt.pos,
+		    rl_alt_lim_adj(rl, start.elev));
 		return (B_TRUE);
 	case NAVPROC_SEG_TYPE_RADIUS_ARC_TO_FIX:
 		return (B_FALSE);
@@ -604,23 +631,16 @@ static bool_t rl_complete_seg(const route_leg_t *rl, geo_pos2_t start,
 		return (B_TRUE);
 	case NAVPROC_SEG_TYPE_HDG_TO_ALT:
 		seg->type = ROUTE_SEG_TYPE_STRAIGHT;
-		seg->straight.start = GEO2_TO_GEO3(start, 0);
-		seg->straight.end = radial_dist_displace(fpp, navdb, start,
-		    rl->seg.leg_cmd.hdg, ALT_GUESS_DISPLACE);
+		seg->straight.start = start;
+		seg->straight.end = GEO2_TO_GEO3(radial_dist_displace(wmm,
+		    GEO3_TO_GEO2(start), rl->seg.leg_cmd.hdg,
+		    ALT_GUESS_DISPLACE), rl_alt_lim_adj(rl, start.elev));
 		return (B_TRUE);
-	case NAVPROC_SEG_TYPE_HDG_TO_DME: {
-		vect2_t end_v = calc_dist_leg_intc(start, geo2fpp(start, fpp),
-		    rl, NULL, fpp, navdb);
-		if (IS_NULL_VECT(end_v)) {
-			openfmc_log(OPENFMC_LOG_ERR, "Found broken VD leg "
-			    "which doesn't interecept its own target.");
-			return (B_FALSE);
-		}
+	case NAVPROC_SEG_TYPE_HDG_TO_DME:
 		seg->type = ROUTE_SEG_TYPE_STRAIGHT;
-		seg->straight.start = GEO2_TO_GEO3(start, 0);
-		seg->straight.end = GEO2_TO_GEO3(fpp2geo(end_v, fpp), 0);
+		seg->straight.start = start;
+		seg->straight.end = calc_dist_leg_intc(start, rl, NULL, wmm);
 		return (B_TRUE);
-	}
 	case NAVPROC_SEG_TYPE_HDG_TO_INTCP:
 	case NAVPROC_SEG_TYPE_HDG_TO_MANUAL:
 		return (B_FALSE);
@@ -629,21 +649,21 @@ static bool_t rl_complete_seg(const route_leg_t *rl, geo_pos2_t start,
 	}
 }
 
-static bool_t rl_find_leg_seg(const route_leg_t *rl,
-    const route_leg_t *next_rl, const fpp_t *fpp, const fms_navdb_t *navdb,
-    route_seg_t *seg)
+static bool_t
+rl_find_leg_seg(const route_leg_t *rl, geo_pos3_t oldpos,
+    const route_leg_t *next_rl, const wmm_t *wmm, route_seg_t *seg)
 {
 	switch (rl->seg.type) {
 	case NAVPROC_SEG_TYPE_ARC_TO_FIX:
 	case NAVPROC_SEG_TYPE_FIX_TO_ALT:
 	case NAVPROC_SEG_TYPE_FIX_TO_DIST:
 	case NAVPROC_SEG_TYPE_FIX_TO_DME:
-		return (rl_complete_seg(rl, NULL_GEO_POS2, fpp, navdb, seg));
+		return (rl_complete_seg(rl, oldpos, wmm, seg));
 	case NAVPROC_SEG_TYPE_INIT_FIX:
 		if (next_rl == NULL)
 			return (B_FALSE);
-		return (rl_complete_seg(next_rl, rl->seg.leg_cmd.fix.pos, fpp,
-		    navdb, seg));
+		return (rl_complete_seg(next_rl, GEO2_TO_GEO3(
+		    rl->seg.leg_cmd.fix.pos, oldpos.elev), wmm, seg));
 	case NAVPROC_SEG_TYPE_PROC_TURN:
 		/* TODO */
 		return (B_FALSE);
@@ -652,31 +672,82 @@ static bool_t rl_find_leg_seg(const route_leg_t *rl,
 	}
 }
 
-static vect2_t
-calc_manual_leg_intc(geo_pos2_t cur_pos, vect2_t cur_pos_v,
-    const route_leg_t *rl, const route_leg_t *next_rl, const fpp_t *fpp,
-    const fms_navdb_t *navdb)
+/*
+ * Finds the geodetic coordinate midpoint between two geodetic coordinates.
+ */
+static geo_pos2_t
+find_geo_midpoint(geo_pos2_t a, geo_pos2_t b)
+{
+	vect3_t a_v = geo2ecef(GEO2_TO_GEO3(a, 0), &wgs84_ellip);
+	vect3_t b_v = geo2ecef(GEO2_TO_GEO3(b, 0), &wgs84_ellip);
+	vect3_t r_v = vect3_mean(a_v, b_v);
+	geo_pos3_t r = ecef2geo(r_v, &wgs84_ellip);
+	return (GEO3_TO_GEO2(r));
+}
+
+/*
+ * Determines the best intersection of a flight route and a DME circle.
+ */
+static geo_pos3_t
+find_best_circ_isect(geo_pos3_t cur_pos, double hdg, geo_pos2_t center_pos,
+    double radius, const wmm_t *wmm)
+{
+	geo_pos2_t midpt = find_geo_midpoint(GEO3_TO_GEO2(cur_pos), center_pos);
+	fpp_t fpp = gnomo_fpp_init(midpt, 0, B_TRUE, B_TRUE);
+	vect2_t cur_pos_v, dir_v, center_v;
+	vect2_t isects[2];
+	vect2_t c2i[2];		/* from cur_pos to respective isect point */
+	vect2_t res;
+	unsigned n;
+
+	cur_pos_v = geo2fpp(GEO3_TO_GEO2(cur_pos), &fpp);
+	dir_v = hdg2dir(wmm_mag2true(wmm, hdg, cur_pos));
+	center_v = geo2fpp(GEO3_TO_GEO2(center_pos), &fpp);
+	n = vect2circ_isect(dir_v, cur_pos_v, center_v, radius, B_FALSE,
+	    isects);
+
+	if (n == 0)
+		return (NULL_GEO_POS3);
+	if (n == 1) {
+		c2i[0] = vect2_sub(isects[0], cur_pos_v);
+		if (!SAME_DIR(c2i[0], dir_v))
+			return (NULL_GEO_POS3);
+		res = isects[0];
+	} else {
+		c2i[0] = vect2_sub(isects[0], cur_pos_v);
+		c2i[1] = vect2_sub(isects[1], cur_pos_v);
+		if (vect2_abs(c2i[0]) < vect2_abs(c2i[1]) &&
+		    SAME_DIR(c2i[0], dir_v))
+			res = isects[0];
+		else if (SAME_DIR(c2i[1], dir_v))
+			res = isects[1];
+		else
+			return (NULL_GEO_POS3);
+	}
+
+	return (GEO2_TO_GEO3(fpp2geo(res, &fpp), cur_pos.elev));
+}
+
+static geo_pos3_t
+calc_manual_leg_intc(geo_pos3_t cur_pos, const route_leg_t *rl,
+    const list_t *legs, const wmm_t *wmm)
 {
 	UNUSED(cur_pos);
-	UNUSED(cur_pos_v);
 	UNUSED(rl);
-	UNUSED(next_rl);
-	UNUSED(fpp);
-	UNUSED(navdb);
+	UNUSED(legs);
+	UNUSED(wmm);
 
 	ASSERT(rl->seg.type == NAVPROC_SEG_TYPE_FIX_TO_MANUAL ||
 	    rl->seg.type == NAVPROC_SEG_TYPE_HDG_TO_MANUAL);
-	return (NULL_VECT2);
+	return (NULL_GEO_POS3);
 }
 
-static vect2_t
-calc_dir_leg_intc(geo_pos2_t cur_pos, vect2_t cur_pos_v, const route_leg_t *rl,
-    const route_leg_t *next_rl, const fpp_t *fpp, const fms_navdb_t *navdb)
+static geo_pos3_t
+calc_dir_leg_intc(geo_pos3_t cur_pos, const route_leg_t *rl,
+    const list_t *legs, const wmm_t *wmm)
 {
-	UNUSED(cur_pos);
-	UNUSED(cur_pos_v);
-	UNUSED(next_rl);
-	UNUSED(navdb);
+	UNUSED(legs);
+	UNUSED(wmm);
 
 	switch (rl->seg.type) {
 	case NAVPROC_SEG_TYPE_ARC_TO_FIX:
@@ -684,165 +755,249 @@ calc_dir_leg_intc(geo_pos2_t cur_pos, vect2_t cur_pos_v, const route_leg_t *rl,
 	case NAVPROC_SEG_TYPE_DIR_TO_FIX:
 	case NAVPROC_SEG_TYPE_RADIUS_ARC_TO_FIX:
 	case NAVPROC_SEG_TYPE_TRK_TO_FIX:
-		return (geo2fpp(rl->seg.term_cond.fix.pos, fpp));
+		return (GEO2_TO_GEO3(rl->seg.term_cond.fix.pos,
+		    rl_alt_lim_adj(rl, cur_pos.elev)));
 	case NAVPROC_SEG_TYPE_INIT_FIX:
-		return (geo2fpp(rl->seg.leg_cmd.fix.pos, fpp));
+		return (GEO2_TO_GEO3(rl->seg.leg_cmd.fix.pos,
+		    rl_alt_lim_adj(rl, cur_pos.elev)));
 	case NAVPROC_SEG_TYPE_HOLD_TO_ALT:
 	case NAVPROC_SEG_TYPE_HOLD_TO_FIX:
 	case NAVPROC_SEG_TYPE_HOLD_TO_MANUAL:
-		return (geo2fpp(rl->seg.leg_cmd.hold.fix.pos, fpp));
+		return (GEO2_TO_GEO3(rl->seg.leg_cmd.hold.fix.pos,
+		    rl_alt_lim_adj(rl, cur_pos.elev)));
 	default:
 		assert(0);
 	}
 }
 
-static vect2_t
-calc_dist_leg_intc(geo_pos2_t cur_pos, vect2_t cur_pos_v, const route_leg_t *rl,
-    const route_leg_t *next_rl, const fpp_t *fpp, const fms_navdb_t *navdb)
+static geo_pos3_t
+calc_dist_leg_intc(geo_pos3_t cur_pos, const route_leg_t *rl,
+    const list_t *legs, const wmm_t *wmm)
 {
-	vect2_t dir_v, dme_v, i[2], c2i0, c2i1;
-	double radius;
+	double hdg, dist;	/* hdg in deg, dist in NM */
+	geo_pos2_t center;
+	geo_pos3_t res;
 
-	UNUSED(cur_pos);
-	UNUSED(next_rl);
-	if (IS_NULL_VECT(cur_pos_v)) {
+	UNUSED(legs);
+	if (IS_NULL_GEO_POS(cur_pos)) {
 		/* Can't resolve without a starting point */
 		openfmc_log(OPENFMC_LOG_ERR, "Cannot resolve %s leg to "
 		    "%s/%.1lf: missing start pos",
 		    navproc_seg_type2str(rl->seg.type),
 		    rl->seg.term_cond.dme.navaid.name,
 		    rl->seg.term_cond.dme.dist);
-		return (NULL_VECT2);
+		return (NULL_GEO_POS3);
 	}
-	switch (rl->seg.type) {
-	case NAVPROC_SEG_TYPE_CRS_TO_DME:
-		dir_v = DIR_V(rl->seg.leg_cmd.crs);
-		dme_v = PROJ_POS_V(rl->seg.term_cond.dme.navaid.pos);
-		radius = NM2MET(rl->seg.term_cond.dme.dist);
-		break;
-	case NAVPROC_SEG_TYPE_FIX_TO_DIST:
-		cur_pos_v = PROJ_POS_V(rl->seg.leg_cmd.fix_crs.fix.pos);
-		dir_v = DIR_V(rl->seg.leg_cmd.fix_crs.crs);
-		dme_v = cur_pos_v;
-		radius = NM2MET(rl->seg.term_cond.dist);
-		break;
-	case NAVPROC_SEG_TYPE_FIX_TO_DME:
-		cur_pos_v = PROJ_POS_V(rl->seg.leg_cmd.fix_crs.fix.pos);
-		dir_v = DIR_V(rl->seg.leg_cmd.fix_crs.crs);
-		dme_v = PROJ_POS_V(rl->seg.term_cond.dme.navaid.pos);
-		radius = NM2MET(rl->seg.term_cond.dme.dist);
-		break;
-	case NAVPROC_SEG_TYPE_HDG_TO_DME:
-		dir_v = DIR_V(rl->seg.leg_cmd.hdg);
-		dme_v = PROJ_POS_V(rl->seg.term_cond.dme.navaid.pos);
-		radius = NM2MET(rl->seg.term_cond.dme.dist);
-		break;
-	default:
-		assert(0);
+	ASSERT(rl->seg.type == NAVPROC_SEG_TYPE_CRS_TO_RADIAL ||
+	    rl->seg.type == NAVPROC_SEG_TYPE_FIX_TO_DIST ||
+	    rl->seg.type == NAVPROC_SEG_TYPE_FIX_TO_DME ||
+	    rl->seg.type == NAVPROC_SEG_TYPE_HDG_TO_DME);
+	if (rl->seg.type == NAVPROC_SEG_TYPE_CRS_TO_DME) {
+		hdg = rl->seg.leg_cmd.crs;
+		center = rl->seg.term_cond.dme.navaid.pos;
+		dist = rl->seg.term_cond.dme.dist;
+	} else if (rl->seg.type == NAVPROC_SEG_TYPE_FIX_TO_DIST) {
+		cur_pos = GEO2_TO_GEO3(rl->seg.leg_cmd.fix_crs.fix.pos,
+		    cur_pos.elev);
+		hdg = rl->seg.leg_cmd.fix_crs.crs;
+		center = rl->seg.leg_cmd.fix_crs.fix.pos;
+		dist = rl->seg.term_cond.dist;
+	} else if (rl->seg.type == NAVPROC_SEG_TYPE_FIX_TO_DME) {
+		cur_pos = GEO2_TO_GEO3(rl->seg.leg_cmd.fix_crs.fix.pos,
+		    cur_pos.elev);
+		hdg = rl->seg.leg_cmd.fix_crs.crs;
+		center = rl->seg.term_cond.dme.navaid.pos;
+		dist = rl->seg.term_cond.dme.dist;
+	} else {	/* NAVPROC_SEG_TYPE_HDG_TO_DME */
+		hdg = rl->seg.leg_cmd.hdg;
+		center = rl->seg.term_cond.dme.navaid.pos;
+		dist = rl->seg.term_cond.dme.dist;
 	}
 
-	switch (vect2circ_isect(dir_v, cur_pos_v, dme_v, radius, B_FALSE, i)) {
-	case 0:
-		return (NULL_VECT2);
-	case 1:
-		return (i[0]);
-	case 2: {
-		/*
-		 * Two solutions, find closer one to cur_pos and return it.
-		 * Be sure to check though that the solution lies in the
-		 * direction of our vector (done by checking signs on coords
-		 * of cur_pos-to-intersect & direction vectors match).
-		 */
-		c2i0 = vect2_sub(i[0], cur_pos_v);
-		c2i1 = vect2_sub(i[1], cur_pos_v);
-		if (vect2_abs(c2i0) < vect2_abs(c2i1) && SAME_DIR(c2i0, dir_v))
-			return i[0];
-		else
-			return i[1];
+	res = find_best_circ_isect(cur_pos, hdg, center, dist, wmm);
+	res.elev = rl_alt_lim_adj(rl, cur_pos.elev);
+
+	return (res);
+}
+
+static geo_pos3_t
+calc_radial_leg_intc(geo_pos3_t cur_pos, const route_leg_t *rl,
+    const list_t *legs, const wmm_t *wmm)
+{
+	fpp_t fpp = gnomo_fpp_init(find_geo_midpoint(GEO3_TO_GEO2(cur_pos),
+	    rl->seg.term_cond.radial.navaid.pos), 0, B_TRUE, B_TRUE);
+	vect2_t dir_v, cur_pos_v, navaid_v, radial_dir_v, isect, c2i;
+
+	UNUSED(legs);
+	ASSERT(rl->seg.type == NAVPROC_SEG_TYPE_CRS_TO_RADIAL ||
+	    rl->seg.type == NAVPROC_SEG_TYPE_HDG_TO_RADIAL);
+
+	if (rl->seg.type == NAVPROC_SEG_TYPE_CRS_TO_RADIAL) {
+		dir_v = DIR_V(rl->seg.leg_cmd.hdg);
+	} else {	/* NAVPROC_SEG_TYPE_HDG_TO_RADIAL */
+		dir_v = DIR_V(rl->seg.leg_cmd.crs);
 	}
-	default:
-		assert(0);
+	radial_dir_v = DIR_V(rl->seg.term_cond.radial.radial);
+	navaid_v = geo2fpp(rl->seg.term_cond.radial.navaid.pos, &fpp);
+	cur_pos_v = geo2fpp(GEO3_TO_GEO2(cur_pos), &fpp);
+
+	isect = vect2vect_isect(dir_v, cur_pos_v, radial_dir_v, navaid_v,
+	    B_FALSE);
+	c2i = vect2_sub(isect, cur_pos_v);
+
+	/* Check intersection exists and lies in direction of travel. */
+	if (!IS_NULL_VECT(isect) && SAME_DIR(c2i, dir_v)) {
+		return (GEO2_TO_GEO3(fpp2geo(isect, &fpp),
+		    rl_alt_lim_adj(rl, cur_pos.elev)));
+	} else {
+		return (NULL_GEO_POS3);
 	}
 }
 
-static vect2_t
-calc_radial_leg_intc(geo_pos2_t cur_pos, vect2_t cur_pos_v,
-    const route_leg_t *rl, const route_leg_t *next_rl, const fpp_t *fpp,
-    const fms_navdb_t *navdb)
+static geo_pos3_t
+calc_vect_leg_intc(const geo_pos3_t cur_pos, const route_leg_t *rl,
+    const list_t *legs, const wmm_t *wmm)
 {
-	vect2_t dir_v, navaid_v, radial_dir_v, i, c2i;
+	const route_leg_t *next_rl = rl_next_ndisc(legs, rl);
+	route_seg_t next_seg;
+	double hdg;
 
-	UNUSED(next_rl);
-	switch (rl->seg.type) {
-	case NAVPROC_SEG_TYPE_CRS_TO_RADIAL:
-		dir_v = DIR_V(rl->seg.leg_cmd.hdg);
-		break;
-	case NAVPROC_SEG_TYPE_HDG_TO_RADIAL:
-		dir_v = DIR_V(rl->seg.leg_cmd.crs);
-		break;
-	default:
-		assert(0);
+	UNUSED(cur_pos);
+	if (IS_NULL_GEO_POS(cur_pos) || next_rl == NULL)
+		return (NULL_GEO_POS3);
+
+	ASSERT(rl->seg.type == NAVPROC_SEG_TYPE_CRS_TO_INTCP ||
+	    rl->seg.type == NAVPROC_SEG_TYPE_HDG_TO_INTCP);
+	if (rl->seg.type == NAVPROC_SEG_TYPE_CRS_TO_INTCP) {
+		hdg = rl->seg.leg_cmd.hdg;
+	} else {	/* NAVPROC_SEG_TYPE_CRS_TO_INTCP */
+		hdg = rl->seg.leg_cmd.crs;
 	}
-	radial_dir_v = DIR_V(rl->seg.term_cond.radial.radial);
-	navaid_v = PROJ_POS_V(rl->seg.term_cond.radial.navaid.pos);
 
-	i = vect2vect_isect(dir_v, cur_pos_v, radial_dir_v, navaid_v, B_FALSE);
-	c2i = vect2_sub(i, cur_pos_v);
+	if (!rl_find_leg_seg(next_rl, cur_pos, rl_next_ndisc(legs, next_rl),
+	    wmm, &next_seg))
+		return (NULL_GEO_POS3);
 
-	/* Check intersection exists and lies in direction of travel. */
-	if (!IS_NULL_VECT(i) && SAME_DIR(c2i, dir_v))
-		return (i);
-	else
-		return (NULL_VECT2);
+	if (next_seg.type == ROUTE_SEG_TYPE_STRAIGHT) {
+		fpp_t fpp = gnomo_fpp_init(GEO3_TO_GEO2(cur_pos), 0, B_TRUE,
+		    B_TRUE);
+		vect2_t cur_pos_v, dir_v, start_v, end_v, s2e, isect, c2i;
+
+		cur_pos_v = geo2fpp(GEO3_TO_GEO2(cur_pos), &fpp);
+		start_v = geo2fpp(GEO3_TO_GEO2(next_seg.straight.start), &fpp);
+		end_v = geo2fpp(GEO3_TO_GEO2(next_seg.straight.end), &fpp);
+		s2e = vect2_sub(end_v, start_v);
+		dir_v = DIR_V(hdg);
+		isect = vect2vect_isect(cur_pos_v, dir_v, start_v, s2e,
+		    B_FALSE);
+		c2i = vect2_sub(isect, cur_pos_v);
+		if (IS_NULL_VECT(isect) || !SAME_DIR(c2i, dir_v))
+			return (NULL_GEO_POS3);
+		return (GEO2_TO_GEO3(fpp2geo(isect, &fpp),
+		    rl_alt_lim_adj(rl, cur_pos.elev)));
+	} else {
+		ASSERT(next_seg.type == ROUTE_SEG_TYPE_ARC);
+		return (find_best_circ_isect(cur_pos, hdg, next_seg.arc.center,
+		    next_seg.arc.radius, wmm));
+	}
+}
+
+static geo_pos3_t
+calc_alt_leg_intc(geo_pos3_t cur_pos, const route_leg_t *rl,
+    const list_t *legs, const wmm_t *wmm)
+{
+	/* TODO */
+	UNUSED(cur_pos);
+	UNUSED(rl);
+	UNUSED(legs);
+	UNUSED(wmm);
+	return (NULL_GEO_POS3);
+}
+
+static geo_pos3_t
+calc_proc_leg_intc(geo_pos3_t cur_pos, const route_leg_t *rl,
+    const list_t *legs, const wmm_t *wmm)
+{
+	/* TODO */
+	UNUSED(cur_pos);
+	UNUSED(rl);
+	UNUSED(legs);
+	UNUSED(wmm);
+	return (NULL_GEO_POS3);
+}
+
+#undef	DIR_V
+#undef	SAME_DIR
+
+static geo_pos3_t
+calc_leg_start_pos(const route_leg_t *targ_rl, const route_leg_t *rl,
+    geo_pos3_t cur_pos, const list_t *legs)
+{
+#define	PROJ_LIMIT	100000
+	const route_leg_group_t	*rlg = targ_rl->rlg;
+	const route_t		*route = rlg->route;
+
+	ASSERT(targ_rl != NULL && rl != NULL);
+	ASSERT(!IS_NULL_GEO_POS(cur_pos));
+
+	for (; rl != targ_rl; rl = list_next(legs, rl)) {
+		ASSERT(rl != NULL);
+		if (rl->disco) {
+			cur_pos = NULL_GEO_POS3;
+			continue;
+		}
+		ASSERT(leg_intc_func_tbl[rl->seg.type] != NULL);
+		cur_pos = leg_intc_func_tbl[rl->seg.type](cur_pos, rl,
+		    legs, route->navdb->wmm);
+	}
+
+	return (cur_pos);
 }
 
 /*
-static vect2_t
-calc_vect_leg_intc(const geo_pos2_t cur_pos, const vect2_t cur_pos_v,
-    const route_leg_t *rl, const route_leg_t *next_rl, const fpp_t *fpp,
-    const fms_navdb_t *navdb)
+ * Looks for the first suitable starting position on a route for leg segment
+ * computation. Suitable starting positions are (in order of preference):
+ *	1) departure runway threshold
+ *	2) departure airport reference point
+ *	3) any rlg up to lim_rlg that has a defined start_fix
+ * If a starting position is found, it is returned, otherwise NULL_GEO_POS3
+ * is returned. If a 
+ */
+static geo_pos3_t
+route_first_start_pos(const route_t *route, const route_leg_group_t *lim_rlg,
+    const route_leg_group_t **rlg_start)
 {
-}*/
+	double alt = 0;
 
-#undef	DIR_V
-#undef	PROJ_POS_V
-#undef	SAME_DIR
-
-static geo_pos2_t
-calc_proc_leg_start_pos(const route_leg_t *lim_rl, const geo_pos2_t start_pos)
-{
-	const route_leg_group_t	*rlg = lim_rl->rlg;
-	const route_t		*route = rlg->route;
-	geo_pos2_t		cur_pos;
-	vect2_t			cur_pos_v;
-	fpp_t			fpp, fpp_inv;
-
-	ASSERT(rlg->type == ROUTE_LEG_GROUP_TYPE_PROC);
-	ASSERT(!IS_NULL_GEO_POS(start_pos));
-
-	fpp = gnomo_fpp_init(start_pos, 0);
-	cur_pos_v = geo2fpp(start_pos, &fpp);
-	cur_pos = start_pos;
-
-	for (const route_leg_t *rl = list_head(&rlg->legs); rl != lim_rl;) {
-		const route_leg_t *next_rl;
-
-		ASSERT(rl != NULL);
-		next_rl = list_next(&rlg->legs, rl);
-		ASSERT(leg_intc_func_tbl[rl->seg.type] != NULL);
-		cur_pos_v = leg_intc_func_tbl[rl->seg.type](cur_pos,
-		    cur_pos_v, rl, next_rl, &fpp, route->navdb);
-		if (!IS_NULL_VECT(cur_pos_v)) {
-			cur_pos = fpp2geo(cur_pos_v, &fpp);
-			ASSERT(!IS_NULL_GEO_POS(cur_pos));
-		} else {
-			cur_pos = NULL_GEO_POS2;
-		}
-		rl = next_rl;
+	if (route->dep_rwy != NULL) {
+		*rlg_start = NULL;
+		return (route->dep_rwy->thr_pos);
 	}
-	fpp_inv = gnomo_fpp_init(GEO_POS2_INV(start_pos), 0);
-
-	return (NULL_GEO_POS2);
+	if (route->dep != NULL) {
+		*rlg_start = NULL;
+		return (route->dep->refpt);
+	}
+	for (const route_leg_group_t *rlg = list_head(&route->leg_groups); rlg;
+	    rlg = list_next(&route->leg_groups, rlg)) {
+		if (!IS_NULL_FIX(&rlg->start_fix)) {
+			*rlg_start = rlg;
+			return (GEO2_TO_GEO3(rlg->start_fix.pos, alt));
+		}
+		if (rlg == lim_rlg) {
+			/* Searched too far */
+			break;
+		}
+		for (const route_leg_t *rl = list_head(&rlg->legs); rl;
+		    rl = list_next(&rlg->legs, rl)) {
+			/*
+			 * Figure out the altitude constraints to guesstimate
+			 * suitable start point altitude.
+			 */
+			alt = rl_alt_lim_adj(rl, alt);
+		}
+	}
+	*rlg_start = NULL;
+	return (NULL_GEO_POS3);
 }
 
 /*
@@ -852,25 +1007,42 @@ calc_proc_leg_start_pos(const route_leg_t *lim_rl, const geo_pos2_t start_pos)
 static bool_t
 proc_rlgs_intc(const route_leg_group_t *rlg1, const route_leg_group_t *rlg2)
 {
-	fix_t end_fix = rlg_find_end_fix(rlg1);
-	fix_t start_fix = rlg_find_start_fix(rlg2);
-	route_leg_t *rl1 = list_head(&rlg1->legs);
+	const route_t		*route = rlg1->route;
+	fix_t			rlg1_end_fix = rlg_find_end_fix(rlg1);
+	fix_t			rlg2_start_fix = rlg_find_start_fix(rlg2);
+	geo_pos3_t		route_start_pos, leg_start, intcpt;
+	const route_leg_t	*rl1;
+	const route_leg_group_t	*rlg_start;
 
-	ASSERT(rlg1->type == ROUTE_LEG_GROUP_TYPE_PROC &&
-	    rlg2->type == ROUTE_LEG_GROUP_TYPE_PROC);
+	ASSERT(rlg1 != NULL && rlg2 != NULL);
+	ASSERT(rlg1->route == rlg2->route);
 
-	if (FIX_EQ_POS(&start_fix, &end_fix))
+	/* Overlapping fixes means intercept is guaranteed */
+	if (FIX_EQ_POS(&rlg2_start_fix, &rlg1_end_fix))
 		return (B_TRUE);
 
-	/* Calculate an intercept */
-
-	if (!IS_NULL_FIX(&rlg1->start_fix))
-		/* Don't know where to start */
+	/*
+	 * We'll need to calculate an intercept. Check if the last leg on
+	 * rlg1 is even capable of that.
+	 */
+	rl1 = list_tail(&rlg1->legs);
+	if (rl1->seg.type != NAVPROC_SEG_TYPE_CRS_TO_INTCP &&
+	    rl1->seg.type != NAVPROC_SEG_TYPE_HDG_TO_INTCP &&
+	    rl1->seg.type != NAVPROC_SEG_TYPE_PROC_TURN)
 		return (B_FALSE);
 
-	calc_proc_leg_start_pos(rl1, rlg1->start_fix.pos);
+	/* We'll need an initial route start position. */
+	route_start_pos = route_first_start_pos(route, rlg1, &rlg_start);
+	if (IS_NULL_GEO_POS(route_start_pos))
+		return (B_FALSE);
+	leg_start = calc_leg_start_pos(rl1, rlg_start != NULL ?
+	    list_head(&rlg_start->legs) : list_head(&route->legs),
+	    route_start_pos, &route->legs);
 
-	return (B_FALSE);
+	intcpt = calc_vect_leg_intc(leg_start, rl1, &route->legs,
+	    route->navdb->wmm);
+
+	return (!IS_NULL_GEO_POS(intcpt));
 }
 
 /*
@@ -2287,7 +2459,14 @@ rlg_append_direct(route_t *route, route_leg_group_t *rlg, const fix_t *fix,
 	ASSERT(rlg->type == ROUTE_LEG_GROUP_TYPE_AIRWAY ||
 	    rlg->type == ROUTE_LEG_GROUP_TYPE_PROC);
 	rlg->end_fix = *fix;
-	rlg_update_awy_legs(route, rlg, B_TRUE);
+	if (rlg->type == ROUTE_LEG_GROUP_TYPE_AIRWAY) {
+		rlg_update_awy_legs(route, rlg, B_TRUE);
+	} else {
+		route_leg_t *rl = rl_new_direct(fix, rlg);
+		route_leg_t *rl_last = list_tail(&rlg->legs);
+		list_insert_tail(&rlg->legs, rl);
+		list_insert_after(&route->legs, rl_last, rl);
+	}
 	rlg_connect_neigh(route, rlg, B_FALSE, B_FALSE);
 	if (rlpp)
 		*rlpp = list_tail(&rlg->legs);

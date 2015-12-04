@@ -224,11 +224,12 @@ test_fpp(void)
 #define	LONi	5
 #define	SCALE	1
 
-#define	PROJLAT	45
-#define	PROJLON	45
-#define	PROJROT	45
+#define	PROJLAT	25.0
+#define	PROJLON	45.0
+#define	PROJROT	65.0
 
-	fpp = ortho_fpp_init(GEO_POS2(PROJLAT, PROJLON), PROJROT);
+	fpp = ortho_fpp_init(GEO_POS2(PROJLAT, PROJLON), PROJROT, B_TRUE,
+	    B_TRUE);
 
 	surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, IMGW, IMGH);
 	cr = cairo_create(surface);
@@ -266,7 +267,7 @@ test_fpp(void)
 		cairo_stroke(cr);
 	}
 
-	snprintf(text, sizeof (text), "lat: %d lon: %d rot: %d",
+	snprintf(text, sizeof (text), "lat: %.1lf lon: %.1lf rot: %.1lf",
 	    PROJLAT, PROJLON, PROJROT);
 	cairo_set_font_size(cr, FONTSZ);
 
@@ -300,6 +301,31 @@ test_fpp(void)
 	write_png_img("test.png", rows, IMGW, IMGH);
 
 	cairo_destroy(cr);
+
+#define	PRINT_VECT(v) \
+	printf(#v "  x: %lf\ty: %lf\tz: %lf\n", v.x, v.y, v.z)
+#define	PRINT_POS(p) \
+	printf(#p "  lat: %lf\tlon: %lf\telev: %.0lf\n", p.lat, p.lon, p.elev)
+
+	vect3_t ecef = geo2ecef(GEO_POS3(PROJLAT, PROJLON, 0), &wgs84_ellip);
+	geo_pos3_t pos2 = ecef2geo(ecef, &wgs84_ellip);
+	sph_xlate_t xlate, inv_xlate;
+	xlate = sph_xlate_init(GEO_POS2(PROJLAT, PROJLON), PROJROT, B_FALSE);
+	inv_xlate = sph_xlate_init(GEO_POS2(PROJLAT, PROJLON), PROJROT, B_TRUE);
+
+	vect3_t xlated = sph_xlate_vect(ecef, &xlate);
+	vect3_t unxlated = sph_xlate_vect(xlated, &inv_xlate);
+	PRINT_POS(pos2);
+
+	PRINT_VECT(ecef);
+	PRINT_VECT(xlated);
+	PRINT_VECT(unxlated);
+
+//	vect2_t fwd = geo2fpp(GEO_POS2(PROJLAT, PROJLON), &fpp);
+//	geo_pos2_t back = fpp2geo(fwd, &fpp);
+//	printf("inlat: %lf\tinlon: %lf\nfwd.x: %lf\tfwd.y: %lf\n"
+//	    "outlat: %lf\toutlon: %lf\n",
+//	    PROJLAT, PROJLON, fwd.x, fwd.y, back.lat, back.lon);
 }
 
 void
@@ -386,10 +412,10 @@ test_gc(void)
 }
 
 void
-test_geo_xlate(void)
+test_sph_xlate(void)
 {
-	geo_xlate_t	xlate = geo_xlate_init(GEO_POS2(0, 90), 0);
-	geo_pos2_t	pos = geo_xlate(GEO_POS2(0, 0), &xlate);
+	sph_xlate_t	xlate = sph_xlate_init(GEO_POS2(0, 90), 0, B_FALSE);
+	geo_pos2_t	pos = sph_xlate(GEO_POS2(0, 0), &xlate);
 	printf("pos.lat: %lf  pos.lon: %lf\n", pos.lat, pos.lon);
 }
 
@@ -639,11 +665,13 @@ test_route(char *navdata_dir)
 {
 	char		cmd[64];
 	route_t		*route = NULL;
+	fms_t		*fms;
 	fms_navdb_t	*navdb;
 
-	navdb = navdb_open(navdata_dir, "WMM.COF");
-	if (!navdb)
+	fms = fms_new(navdata_dir, "WMM.COF");
+	if (!fms)
 		exit(EXIT_FAILURE);
+	navdb = fms->navdb;
 
 	route = route_create(navdb);
 
@@ -674,7 +702,7 @@ test_route(char *navdata_dir)
 		SET_RTE_PARAM_CMD("dest", route_set_arr_arpt);
 		SET_RTE_PARAM_CMD("altn1", route_set_altn1_arpt);
 		SET_RTE_PARAM_CMD("altn2", route_set_altn2_arpt);
-		SET_RTE_PARAM_CMD("runway", route_set_dep_rwy);
+		SET_RTE_PARAM_CMD("rwy", route_set_dep_rwy);
 		SET_RTE_PARAM_CMD("sid", route_set_sid);
 		SET_RTE_PARAM_CMD("sidtr", route_set_sidtr);
 		SET_RTE_PARAM_CMD("star", route_set_star);
@@ -803,7 +831,7 @@ test_route(char *navdata_dir)
 	}
 
 	route_destroy(route);
-	navdb_close(navdb);
+	fms_destroy(fms);
 }
 
 void
@@ -911,10 +939,10 @@ main(int argc, char **argv)
 //	test_airac(argv[optind], dump);
 //	test_lcc(40, 30, 50);
 //	test_fpp();
-//	test_geo_xlate();
+//	test_sph_xlate();
 	test_route(argv[optind]);
-
 //	test_magvar();
+
 
 	return (0);
 }

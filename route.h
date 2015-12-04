@@ -97,6 +97,7 @@ typedef struct {
 			geo_pos3_t	start;
 			geo_pos3_t	end;
 			geo_pos2_t	center;
+			double		radius;
 		} arc;
 	};
 	list_node_t			route_segs_node;

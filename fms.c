@@ -29,6 +29,7 @@
 #include <xlocale.h>
 #include <time.h>
 #include <errno.h>
+#include <regex.h>
 
 #include "log.h"
 #include "fms.h"
@@ -142,6 +143,114 @@ errout:
 	return (B_FALSE);
 }
 
+static bool_t
+fms_alloc_regex(fms_t *fms)
+{
+	int err;
+
+#define	COMPILE_REGEX(preg, pattern) \
+	do { \
+		ASSERT((preg) == NULL); \
+		(preg) = malloc(sizeof (regex_t)); \
+		VERIFY((preg) != NULL); \
+		if ((err = regcomp((preg), (pattern), REG_EXTENDED)) != 0) { \
+			openfmc_log(OPENFMC_LOG_ERR, "Error compiling regex " \
+			    "\"%s\": compile error %d", (pattern), err); \
+			free((preg)); \
+			return (B_FALSE); \
+		} \
+	} while (0)
+
+	COMPILE_REGEX(fms->regex.wptname, "^([A-Z]{1,5})$");
+	COMPILE_REGEX(fms->regex.navaid_blw100, "^([A-Z]{1,3})([0-9]{2})$");
+	COMPILE_REGEX(fms->regex.navaid_abv100, "^([0-9]{2})([A-Z]{1,3})$");
+	/* 5010N, 50N10 */
+	COMPILE_REGEX(fms->regex.geo_nw_blw100, "^([0-9]{2})([0-9]{2})N$");
+	COMPILE_REGEX(fms->regex.geo_nw_abv100, "^([0-9]{2})N([0-9]{2})$");
+	/* 5010E, 50E10 */
+	COMPILE_REGEX(fms->regex.geo_ne_blw100, "^([0-9]{2})([0-9]{2})E$");
+	COMPILE_REGEX(fms->regex.geo_ne_abv100, "^([0-9]{2})E([0-9]{2})$");
+	/* 5010W, 50W10 */
+	COMPILE_REGEX(fms->regex.geo_sw_blw100, "^([0-9]{2})([0-9]{2})W$");
+	COMPILE_REGEX(fms->regex.geo_sw_abv100, "^([0-9]{2})W([0-9]{2})$");
+	/* 5010S, 50S10 */
+	COMPILE_REGEX(fms->regex.geo_se_blw100, "^([0-9]{2})([0-9]{2})S$");
+	COMPILE_REGEX(fms->regex.geo_se_abv100, "^([0-9]{2})S([0-9]{2})$");
+
+	/* SEA330/10 */
+	COMPILE_REGEX(fms->regex.radial_dme,
+	    "^([A-Z]{1,5})([0-9]{3})/([0-9]{1,3})$");
+	/* SEA330/OLM020 */
+	COMPILE_REGEX(fms->regex.radial_isect,
+	    "^([A-Z]{1,5})([0-9]{3})/([A-Z]{1,5})([0-9]{3})$");
+
+	/* VAMPS/25, ELN/-30 */
+	COMPILE_REGEX(fms->regex.along_trk, "^([A-Z]{1,5})/([-]?[0-9]{1,3})$");
+
+#undef	COMPILE_REGEX
+
+	return (B_TRUE);
+}
+
+static void
+fms_free_regex(fms_t *fms)
+{
+#define	DESTROY_REGEX(preg) \
+	do { \
+		if ((preg) != NULL) { \
+			regfree((preg)); \
+			free((preg)); \
+			(preg) = NULL; \
+		} \
+	} while (0)
+
+	DESTROY_REGEX(fms->regex.wptname);
+	DESTROY_REGEX(fms->regex.navaid_blw100);
+	DESTROY_REGEX(fms->regex.navaid_abv100);
+
+	DESTROY_REGEX(fms->regex.geo_nw_blw100);
+	DESTROY_REGEX(fms->regex.geo_nw_abv100);
+	DESTROY_REGEX(fms->regex.geo_ne_blw100);
+	DESTROY_REGEX(fms->regex.geo_ne_abv100);
+	DESTROY_REGEX(fms->regex.geo_sw_blw100);
+	DESTROY_REGEX(fms->regex.geo_sw_abv100);
+	DESTROY_REGEX(fms->regex.geo_se_blw100);
+	DESTROY_REGEX(fms->regex.geo_se_abv100);
+
+	DESTROY_REGEX(fms->regex.radial_dme);
+	DESTROY_REGEX(fms->regex.radial_isect);
+
+	DESTROY_REGEX(fms->regex.along_trk);
+
+#undef	DESTROY_REGEX
+}
+
+fms_t *
+fms_new(const char *navdata_dir, const char *wmm_file)
+{
+	fms_t *fms = calloc(sizeof (*fms), 1);
+
+	fms->navdb = fms_navdb_open(navdata_dir, wmm_file);
+	if (!fms->navdb)
+		goto errout;
+	if (!fms_alloc_regex(fms))
+		goto errout;
+
+	return (fms);
+errout:
+	fms_destroy(fms);
+	return (NULL);
+}
+
+void
+fms_destroy(fms_t *fms)
+{
+	if (fms->navdb)
+		fms_navdb_close(fms->navdb);
+	fms_free_regex(fms);
+	free(fms);
+}
+
 /*
  * Opens and constructs a navigational database + the world magnetic model.
  * Argument should be self-explanatory.
@@ -149,7 +258,7 @@ errout:
  * @return The database on success, NULL on failure.
  */
 fms_navdb_t *
-navdb_open(const char *navdata_dir, const char *wmm_file)
+fms_navdb_open(const char *navdata_dir, const char *wmm_file)
 {
 	time_t t = time(NULL);
 	struct tm now;
@@ -181,7 +290,7 @@ navdb_open(const char *navdata_dir, const char *wmm_file)
 
 	return (navdb);
 errout:
-	navdb_close(navdb);
+	fms_navdb_close(navdb);
 	return (NULL);
 }
 
@@ -190,7 +299,7 @@ errout:
  * all of its resources.
  */
 void
-navdb_close(fms_navdb_t *navdb)
+fms_navdb_close(fms_navdb_t *navdb)
 {
 	free(navdb->navdata_dir);
 	if (navdb->awydb != NULL)
@@ -216,7 +325,8 @@ navdb_is_current(const fms_navdb_t *navdb)
 	return (navdb->valid_from <= now && now <= navdb->valid_to);
 }
 
-bool_t navdata_is_current(const char *navdata_dir)
+bool_t
+navdata_is_current(const char *navdata_dir)
 {
 	time_t now = time(NULL);
 	unsigned cycle;
@@ -224,4 +334,21 @@ bool_t navdata_is_current(const char *navdata_dir)
 
 	return (navdata_get_valid(navdata_dir, &cycle, &from, &to) &&
 	    from <= now && now <= to);
+}
+
+static size_t
+fms_fix_lookup(const char *fixname, const fms_t *fms)
+{
+	/* TODO */
+}
+
+fix_t *
+fms_wpt_name_decode(const char *name, fms_t *fms, size_t *num)
+{
+	regmatch_t pmatch[4];
+	int n;
+
+	if ((n = regexec(fms->regex.wptname, name, 1, pmatch, 0)) == 0) {
+		char fixname[NAV_NAME_LEN];
+	}
 }
