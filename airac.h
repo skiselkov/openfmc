@@ -176,7 +176,7 @@ typedef enum {
 	ALT_LIM_AT,		/* ALT == alt1 */
 	ALT_LIM_AT_OR_ABV,	/* ALT >= alt1 */
 	ALT_LIM_AT_OR_BLW,	/* ALT <= alt1 */
-	ALT_LIM_BETWEEN,	/* alt1 >= ALT && ALT >= alt2 */
+	ALT_LIM_BETWEEN		/* alt1 >= ALT && ALT >= alt2 */
 } alt_lim_type_t;
 
 typedef enum {
@@ -195,14 +195,22 @@ typedef struct {
 	unsigned	spd1;
 } spd_lim_t;
 
+typedef enum {
+	TURN_ANY,
+	TURN_LEFT,
+	TURN_RIGHT
+} turn_t;
+
 typedef struct {
 	navproc_seg_type_t	type;
 
 	/* Segment leg */
 	union {
-		double		hdg;		/* VA, VD, VI, VM, VR */
-		double		crs;		/* CA, CD, CI, CR */
-		struct {			/* FA, FC, FD, FM */
+		struct {	/* CA, CD, CI, CR, VA, VD, VI, VM, VR */
+			double	hdg;
+			turn_t	turn;
+		} hdg;
+		struct {	/* FA, FC, FD, FM */
 			fix_t	fix;
 			double	crs;
 		} fix_crs;
@@ -211,29 +219,30 @@ typedef struct {
 		 * or unreliable, provided that the previous leg ends in a
 		 * definite fix.
 		 */
-		struct {			/* CF */
+		struct {	/* CF */
 			fix_t		navaid;
 			double		crs;
+			turn_t		turn;
 		} navaid_crs;
-		struct {			/* AF */
+		struct {	/* AF */
 			fix_t		navaid;
 			double		start_radial;
 			double		end_radial;
 			double		radius;
 		} dme_arc;
-		struct {			/* RF */
+		struct {	/* RF */
 			fix_t		ctr_fix;
 			double		radius;
 			bool_t		cw;	/* clockwise or counter-CW */
 		} radius_arc;
 		fix_t			fix;	/* IF */
-		struct {			/* HA, HF, HM */
+		struct {	/* HA, HF, HM */
 			fix_t		fix;
 			double		inbd_crs;
 			double		leg_len;
 			bool_t		turn_right;
 		} hold;
-		struct {			/* PI */
+		struct {	/* PI */
 			fix_t		startpt;
 			double		outbd_radial;
 			double		outbd_turn_hdg;

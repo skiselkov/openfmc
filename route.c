@@ -516,9 +516,32 @@ rl_alt_lim_adj(const route_leg_t *rl, double alt)
 
 #define	ALT_GUESS_DISPLACE	100.0
 
-static bool_t rl_complete_seg(const route_leg_t *rl, geo_pos3_t start,
-    const wmm_t *wmm, route_seg_t *seg)
+/*
+ * Given a route leg terminating a route segment and a segment starting
+ * position, attempts to complete the route segment. This function is a
+ * complement to rl_find_leg_seg. rl_find_leg_seg tries to determine a
+ * leg segment's starting point from a route leg and an initial aircraft
+ * position. Then if the leg segment can be completed using the same route
+ * leg, it passes that leg to rl_complete_seg to fill in the rest of the
+ * leg segment. Othewise it attempts to pass the *next* route leg following
+ * the one being examined to try and terminate the leg segment.
+ *
+ * This is because route legs can be one of the following:
+ *
+ *	1) A leg with a definite starting point but no end point at all
+ *	   (i.e. the route leg is just a single point): IF
+ *	2) A leg with a definite starting point, a direction of travel
+ *	   but no end point (i.e. the route leg is an intercept command):
+ *	   CI, VI, CR, VR
+ *	3) A leg with a definite starting point and an end point: AF,
+ */
+static bool_t
+rl_complete_seg(const route_leg_t *rl, geo_pos3_t start, const wmm_t *wmm,
+    route_seg_t *seg)
 {
+	if (rl->disco)
+		return (B_FALSE);
+
 	switch(rl->seg.type) {
 	case NAVPROC_SEG_TYPE_ARC_TO_FIX:
 		seg->type = ROUTE_SEG_TYPE_ARC;
@@ -534,7 +557,7 @@ static bool_t rl_complete_seg(const route_leg_t *rl, geo_pos3_t start,
 	case NAVPROC_SEG_TYPE_CRS_TO_ALT:
 		seg->straight.start = start;
 		seg->straight.end = GEO2_TO_GEO3(geo_displace_mag(&wgs84, wmm,
-		    GEO3_TO_GEO2(start), rl->seg.leg_cmd.crs, NM2MET(
+		    GEO3_TO_GEO2(start), rl->seg.leg_cmd.hdg.hdg, NM2MET(
 		    ALT_GUESS_DISPLACE)), rl_alt_lim_adj(rl, start.elev));
 		return (B_TRUE);
 	case NAVPROC_SEG_TYPE_CRS_TO_DME:
@@ -621,7 +644,7 @@ static bool_t rl_complete_seg(const route_leg_t *rl, geo_pos3_t start,
 		seg->type = ROUTE_SEG_TYPE_STRAIGHT;
 		seg->straight.start = start;
 		seg->straight.end = GEO2_TO_GEO3(geo_displace_mag(&wgs84, wmm,
-		    GEO3_TO_GEO2(start), rl->seg.leg_cmd.hdg,
+		    GEO3_TO_GEO2(start), rl->seg.leg_cmd.hdg.hdg,
 		    NM2MET(ALT_GUESS_DISPLACE)),
 		    rl_alt_lim_adj(rl, start.elev));
 		return (B_TRUE);
@@ -638,6 +661,25 @@ static bool_t rl_complete_seg(const route_leg_t *rl, geo_pos3_t start,
 	}
 }
 
+/*
+ * Attempts to construct a leg segment for a leg starting at `rl'. This
+ * requires that the navproc segment type of the leg is one of:
+ *	1) AF: this type has a definite start & end position.
+ *	2) FA, FC, FD: this type has a definable end based on a previous
+ *	   segment end position.
+ *	3) IF: this type has a start position. We then attempt to connect it
+ *	   to the next leg.
+ *
+ * @param rl Current route leg for which to construct the leg segment.
+ * @param oldpos Previous known aircraft position prior to transitioning to
+ *	the current leg.
+ * @param next_rl Next route leg following the current. NULL if unknown.
+ * @param wmm World magnetic model in effect for converting headings.
+ * @param seg Pointer to a route segment structure that will be filled with
+ *	the leg segment information.
+ *
+ * @return B_TRUE if constructing the leg segment succeeded, B_FALSE if not.
+ */
 static bool_t
 rl_find_leg_seg(const route_leg_t *rl, geo_pos3_t oldpos,
     const route_leg_t *next_rl, const wmm_t *wmm, route_seg_t *seg)
@@ -782,7 +824,7 @@ calc_dist_leg_intc(geo_pos3_t cur_pos, const route_leg_t *rl,
 	    rl->seg.type == NAVPROC_SEG_TYPE_FIX_TO_DME ||
 	    rl->seg.type == NAVPROC_SEG_TYPE_HDG_TO_DME);
 	if (rl->seg.type == NAVPROC_SEG_TYPE_CRS_TO_DME) {
-		hdg = rl->seg.leg_cmd.crs;
+		hdg = rl->seg.leg_cmd.hdg.hdg;
 		center = rl->seg.term_cond.dme.navaid.pos;
 		dist = rl->seg.term_cond.dme.dist;
 	} else if (rl->seg.type == NAVPROC_SEG_TYPE_FIX_TO_DIST) {
@@ -798,7 +840,7 @@ calc_dist_leg_intc(geo_pos3_t cur_pos, const route_leg_t *rl,
 		center = rl->seg.term_cond.dme.navaid.pos;
 		dist = rl->seg.term_cond.dme.dist;
 	} else {	/* NAVPROC_SEG_TYPE_HDG_TO_DME */
-		hdg = rl->seg.leg_cmd.hdg;
+		hdg = rl->seg.leg_cmd.hdg.hdg;
 		center = rl->seg.term_cond.dme.navaid.pos;
 		dist = rl->seg.term_cond.dme.dist;
 	}
@@ -821,11 +863,7 @@ calc_radial_leg_intc(geo_pos3_t cur_pos, const route_leg_t *rl,
 	ASSERT(rl->seg.type == NAVPROC_SEG_TYPE_CRS_TO_RADIAL ||
 	    rl->seg.type == NAVPROC_SEG_TYPE_HDG_TO_RADIAL);
 
-	if (rl->seg.type == NAVPROC_SEG_TYPE_CRS_TO_RADIAL) {
-		dir_v = DIR_V(rl->seg.leg_cmd.hdg);
-	} else {	/* NAVPROC_SEG_TYPE_HDG_TO_RADIAL */
-		dir_v = DIR_V(rl->seg.leg_cmd.crs);
-	}
+	dir_v = DIR_V(rl->seg.leg_cmd.hdg.hdg);
 	radial_dir_v = DIR_V(rl->seg.term_cond.radial.radial);
 	navaid_v = geo2fpp(rl->seg.term_cond.radial.navaid.pos, &fpp);
 	cur_pos_v = geo2fpp(GEO3_TO_GEO2(cur_pos), &fpp);
@@ -857,11 +895,7 @@ calc_vect_leg_intc(const geo_pos3_t cur_pos, const route_leg_t *rl,
 
 	ASSERT(rl->seg.type == NAVPROC_SEG_TYPE_CRS_TO_INTCP ||
 	    rl->seg.type == NAVPROC_SEG_TYPE_HDG_TO_INTCP);
-	if (rl->seg.type == NAVPROC_SEG_TYPE_CRS_TO_INTCP) {
-		hdg = rl->seg.leg_cmd.hdg;
-	} else {	/* NAVPROC_SEG_TYPE_CRS_TO_INTCP */
-		hdg = rl->seg.leg_cmd.crs;
-	}
+	hdg = rl->seg.leg_cmd.hdg.hdg;
 
 	if (!rl_find_leg_seg(next_rl, cur_pos, rl_next_ndisc(legs, next_rl),
 	    wmm, &next_seg))
@@ -950,7 +984,7 @@ calc_leg_start_pos(const route_leg_t *targ_rl, const route_leg_t *rl,
  *	2) departure airport reference point
  *	3) any rlg up to lim_rlg that has a defined start_fix
  * If a starting position is found, it is returned, otherwise NULL_GEO_POS3
- * is returned. If a 
+ * is returned.
  */
 static geo_pos3_t
 route_first_start_pos(const route_t *route, const route_leg_group_t *lim_rlg,
@@ -1571,6 +1605,14 @@ route_destroy(route_t *route)
 
 	free(route);
 }
+
+/* TODO:
+void
+route_update(route_t *route)
+{
+	geo_pos3_t cur_pos =
+}
+*/
 
 /*
  * Returns B_TRUE if the route needs to be route_update'd, B_FALSE if not.

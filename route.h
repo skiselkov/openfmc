@@ -151,7 +151,6 @@ struct route_s {
 
 	bool_t			segs_dirty;
 	list_t			segs;
-	route_seg_t		*active_seg;
 };
 
 /* Constructor/destructor */
@@ -159,10 +158,11 @@ route_t *route_create(const fms_navdb_t *navdb);
 void route_destroy(route_t *route);
 
 /*
- * Updating
+ * Updating & copying routes
  */
-bool_t route_update(route_t *route);
+void route_update(route_t *route);
 bool_t route_update_needed(const route_t *route);
+route_t *route_copy(const route_t *route);
 
 /*
  * Airport handling
