@@ -72,12 +72,12 @@ wmm_open(const char *filename, double year)
 	MAG_FreeMagneticModelMemory(fixed_model);
 
 	wmm->ellip = (MAGtype_Ellipsoid){
-		.a = wgs84_ellip.a,
-		.b = wgs84_ellip.b,
-		.fla = wgs84_ellip.f,
-		.eps = wgs84_ellip.ecc,
-		.epssq = wgs84_ellip.ecc2,
-		.re = wgs84_ellip.r
+		.a = wgs84.a,
+		.b = wgs84.b,
+		.fla = wgs84.f,
+		.eps = wgs84.ecc,
+		.epssq = wgs84.ecc2,
+		.re = wgs84.r
 	};
 
 	return (wmm);
@@ -114,6 +114,7 @@ wmm_get_end(const wmm_t *wmm)
 
 /*
  * Returns the magnetic declination (variation) in degrees at a given point.
+ * East declination is positive, west negative.
  *
  * @param wmm Magnetic model to use. See wmm_open.
  * @param p Geodetic position on the WGS84 spheroid for which to determine
@@ -148,7 +149,7 @@ wmm_get_decl(const wmm_t *wmm, geo_pos3_t p)
 double
 wmm_mag2true(const wmm_t *wmm, double m, geo_pos3_t p)
 {
-	return (m - wmm_get_decl(wmm, p));
+	return (m + wmm_get_decl(wmm, p));
 }
 
 /*
@@ -164,5 +165,5 @@ wmm_mag2true(const wmm_t *wmm, double m, geo_pos3_t p)
 double
 wmm_true2mag(const wmm_t *wmm, double t, geo_pos3_t p)
 {
-	return (t + wmm_get_decl(wmm, p));
+	return (t - wmm_get_decl(wmm, p));
 }

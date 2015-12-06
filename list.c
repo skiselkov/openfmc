@@ -55,6 +55,7 @@ extern list_node_t *list_d2l(list_t *list, void *obj);
 	lnew->list_next = (node)->list_next;		\
 	(node)->list_next->list_prev = lnew;		\
 	(node)->list_next = lnew;			\
+	(list)->list_count++;				\
 }
 
 #define	list_insert_before_node(list, node, object) {	\
@@ -63,6 +64,7 @@ extern list_node_t *list_d2l(list_t *list, void *obj);
 	lnew->list_prev = (node)->list_prev;		\
 	(node)->list_prev->list_next = lnew;		\
 	(node)->list_prev = lnew;			\
+	(list)->list_count++;				\
 }
 
 #define	list_remove_node(node)					\
@@ -79,6 +81,7 @@ list_create(list_t *list, size_t size, size_t offset)
 
 	list->list_size = size;
 	list->list_offset = offset;
+	list->list_count = 0;
 	list->list_head.list_next = list->list_head.list_prev =
 	    &list->list_head;
 }
@@ -91,6 +94,7 @@ list_destroy(list_t *list)
 	ASSERT(list);
 	ASSERT(list->list_head.list_next == node);
 	ASSERT(list->list_head.list_prev == node);
+	ASSERT(list->list_count == 0);
 
 	node->list_next = node->list_prev = NULL;
 }
@@ -138,6 +142,7 @@ list_remove(list_t *list, void *object)
 	ASSERT(!list_empty(list));
 	ASSERT(lold->list_next != NULL);
 	list_remove_node(lold);
+	list->list_count--;
 }
 
 void *
@@ -147,6 +152,7 @@ list_remove_head(list_t *list)
 	if (head == &list->list_head)
 		return (NULL);
 	list_remove_node(head);
+	list->list_count--;
 	return (list_object(list, head));
 }
 
@@ -157,6 +163,7 @@ list_remove_tail(list_t *list)
 	if (tail == &list->list_head)
 		return (NULL);
 	list_remove_node(tail);
+	list->list_count--;
 	return (list_object(list, tail));
 }
 
@@ -219,9 +226,11 @@ list_move_tail(list_t *dst, list_t *src)
 	srcnode->list_next->list_prev = dstnode->list_prev;
 	dstnode->list_prev = srcnode->list_prev;
 	srcnode->list_prev->list_next = dstnode;
+	dst->list_count += src->list_count;
 
 	/* empty src list */
 	srcnode->list_next = srcnode->list_prev = srcnode;
+	src->list_count = 0;
 }
 
 void
@@ -254,4 +263,13 @@ int
 list_is_empty(const list_t *list)
 {
 	return (list_empty(list));
+}
+
+/*
+ * Counts the number of items in the list.
+ */
+size_t
+list_count(const list_t *list)
+{
+	return (list->list_count);
 }

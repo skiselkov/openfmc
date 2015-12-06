@@ -212,7 +212,7 @@ err_t route_lg_awy_insert(route_t *route, const char *awyname,
     const route_leg_group_t *x_prev_rlg, const route_leg_group_t **new_rlgpp);
 err_t route_lg_awy_set_end_fix(route_t *route, const route_leg_group_t *x_rlg,
     const char *fixname);
-void route_lg_direct_insert(route_t *route, const fix_t *fix,
+err_t route_lg_direct_insert(route_t *route, const fix_t *fix,
     const route_leg_group_t *prev_rlg, const route_leg_group_t **new_rlgpp);
 err_t route_lg_delete(route_t *route, const route_leg_group_t *rlg);
 

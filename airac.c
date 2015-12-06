@@ -957,7 +957,7 @@ find_nearest(const char *name, geo_pos3_t refpt, const waypoint_db_t *wptdb,
 	if (list == NULL)
 		return (result);
 
-	refpt_v = geo2ecef(refpt, &wgs84_ellip);
+	refpt_v = geo2ecef(refpt, &wgs84);
 	for (void *v = list_head(list); v != NULL; v = list_next(list, v)) {
 		geo_pos3_t	pos;
 		double		dist;
@@ -973,7 +973,7 @@ find_nearest(const char *name, geo_pos3_t refpt, const waypoint_db_t *wptdb,
 			pos = navaid->pos;
 		}
 		dist = vect3_abs(vect3_sub(refpt_v, geo2ecef(pos,
-		    &wgs84_ellip)));
+		    &wgs84)));
 		if (dist < min_dist) {
 			result = GEO3_TO_GEO2(pos);
 			min_dist = dist;
@@ -1005,11 +1005,11 @@ proc_navaid_lookup(const char *name, fix_t *fix, const airport_t *arpt,
 		pos = navaid_pos;
 	} else {
 		/* Found both, resolve conflict, pick the closest one */
-		vect3_t refpt_v = geo2ecef(arpt->refpt, &wgs84_ellip);
+		vect3_t refpt_v = geo2ecef(arpt->refpt, &wgs84);
 		vect3_t fix_v = geo2ecef(GEO2_TO_GEO3(fix_pos, 0),
-		    &wgs84_ellip);
+		    &wgs84);
 		vect3_t navaid_v = geo2ecef(GEO2_TO_GEO3(navaid_pos, 0),
-		    &wgs84_ellip);
+		    &wgs84);
 		vect3_t r2f = vect3_sub(refpt_v, fix_v);
 		vect3_t r2n = vect3_sub(refpt_v, navaid_v);
 		if (vect3_abs(r2f) < vect3_abs(r2n))
@@ -1642,9 +1642,10 @@ dump_FC_seg(char **result, size_t *result_sz, const navproc_seg_t *seg)
 {
 	DUMP_ALT_LIM(&seg->alt_lim);
 	DUMP_SPD_LIM(&seg->spd_lim);
-	append_format(result, result_sz, "\tFC,F:%s(%lfx%lf),d:%.01f%s%s\n",
-	    FIX_PRINTF_ARG(&seg->leg_cmd.fix_crs.fix), seg->term_cond.dist,
-	    alt_lim_desc, spd_lim_desc);
+	append_format(result, result_sz, "\tFC,F:%s(%lfx%lf),c:%.1lf,"
+	    "d:%.01f%s%s\n", FIX_PRINTF_ARG(&seg->leg_cmd.fix_crs.fix),
+	    seg->leg_cmd.fix_crs.crs, seg->term_cond.dist, alt_lim_desc,
+	    spd_lim_desc);
 }
 
 static bool_t

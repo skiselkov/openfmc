@@ -41,6 +41,7 @@ struct list_node {
 struct list {
 	size_t	list_size;
 	size_t	list_offset;
+	size_t	list_count;
 	struct list_node list_head;
 };
 

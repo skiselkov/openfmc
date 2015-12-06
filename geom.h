@@ -27,6 +27,7 @@
 #define	_OPENFMC_GEOM_H_
 
 #include <math.h>
+
 #include "types.h"
 
 #ifdef	__cplusplus
@@ -104,7 +105,10 @@ typedef struct {
 #define	ABS(x)	((x) > 0 ? (x) : -(x))
 #endif
 
-const ellip_t wgs84_ellip;
+/*
+ * The standard WGS84 ellipsoid.
+ */
+const ellip_t wgs84;
 
 /*
  * Vector math.
@@ -152,6 +156,19 @@ vect2_t hdg2dir(double truehdg);
 double dir2hdg(vect2_t dir);
 
 /*
+ * Calculating coordinate displacement & radial intersection.
+ */
+struct wmm_s;
+geo_pos2_t geo_displace_mag(const ellip_t *ellip, const struct wmm_s *wmm,
+    geo_pos2_t pos, double maghdg, double dist);
+geo_pos2_t geo_displace(const ellip_t *ellip, geo_pos2_t pos, double truehdg,
+    double dist);
+geo_pos2_t geo_displace_dir(const ellip_t *ellip, geo_pos2_t pos, vect2_t dir,
+    double dist);
+geo_pos2_t geo_mag_radial_isect(const ellip_t *ellip, const struct wmm_s *wmm,
+    geo_pos2_t pos1, double rad1, geo_pos2_t pos2, double rad2);
+
+/*
  * Geometry parser & validator helpers.
  */
 bool_t geo_pos2_from_str(const char *lat, const char *lon, geo_pos2_t *pos);
@@ -182,20 +199,20 @@ double gc_point_hdg(geo_pos2_t start, geo_pos2_t end, double arg);
  * Generic spherical - to - flat-plane projections.
  */
 typedef struct {
-	bool_t		use_wgs84;
+	const ellip_t	*ellip;
 	sph_xlate_t	xlate;
 	sph_xlate_t	inv_xlate;
 	bool_t		allow_inv;
 	double		dist;
 } fpp_t;
 
-fpp_t fpp_init(geo_pos2_t center, double rot, double dist, bool_t use_wgs84,
+fpp_t fpp_init(geo_pos2_t center, double rot, double dist,
+    const ellip_t *ellip, bool_t allow_inv);
+fpp_t ortho_fpp_init(geo_pos2_t center, double rot, const ellip_t *ellip,
     bool_t allow_inv);
-fpp_t ortho_fpp_init(geo_pos2_t center, double rot, bool_t use_wgs84,
+fpp_t gnomo_fpp_init(geo_pos2_t center, double rot, const ellip_t *ellip,
     bool_t allow_inv);
-fpp_t gnomo_fpp_init(geo_pos2_t center, double rot, bool_t use_wgs84,
-    bool_t allow_inv);
-fpp_t stereo_fpp_init(geo_pos2_t center, double rot, bool_t use_wgs84,
+fpp_t stereo_fpp_init(geo_pos2_t center, double rot, const ellip_t *ellip,
     bool_t allow_inv);
 vect2_t geo2fpp(geo_pos2_t pos, const fpp_t *fpp);
 geo_pos2_t fpp2geo(vect2_t pos, const fpp_t *fpp);

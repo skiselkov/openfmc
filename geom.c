@@ -30,6 +30,7 @@
 
 #include "geom.h"
 #include "helpers.h"
+#include "wmm.h"
 
 #if	1
 #include <stdio.h>
@@ -50,9 +51,9 @@
 #define	POW2(x)	((x) * (x))
 
 /*
- * The WGS 84 ellipsoid parameters.
+ * The WGS84 ellipsoid parameters.
  */
-const ellip_t wgs84_ellip = {
+const ellip_t wgs84 = {
 	.a = 6378137.0,
 	.b = 6356752.314245,
 	.f = .00335281066474748071,
@@ -453,7 +454,7 @@ ecef2sph(vect3_t v)
 		if (v.y >= 0.0)
 			lon_rad = M_PI - lon_rad;
 		else
-			lon_rad = lon_rad - M_PI;
+			lon_rad = -M_PI - lon_rad;
 	}
 	pos.elev = R - EARTH_MSL;
 	pos.lat = RAD2DEG(lat_rad);
@@ -630,22 +631,22 @@ vect2vect_isect(vect2_t a, vect2_t oa, vect2_t b, vect2_t ob, bool_t confined)
 	if (VECT2_EQ(oa, ob))
 		return (oa);
 
-	p1 = a;
+	p1 = oa;
 	p2 = vect2_add(oa, a);
-	p3 = b;
+	p3 = ob;
 	p4 = vect2_add(ob, b);
 
 	det = ((p1.x * p3.y) - (p1.x * p4.y) - (p2.x * p3.y) + (p2.x * p4.y) -
 	    (p1.y * p3.x) + (p1.y * p4.x) + (p2.y * p3.x) - (p2.y * p4.x));
 	ASSERT(det != 0.0);
-	r.x = ((p1.x * p2.y * p3.x) - (p1.x * p2.y * p4.x) -
+	r.y = ((p1.x * p2.y * p3.x) - (p1.x * p2.y * p4.x) -
 	    (p1.y * p2.x * p3.x) + (p1.y * p2.x * p4.x) -
 	    (p1.x * p3.x * p4.y) + (p1.x * p3.y * p4.x) +
-	    (p2.x * p3.x * p4.y) - (p2.x * p3.y * p4.x)) / det;
-	r.y = ((p1.x * p2.y * p3.y) - (p1.x * p2.y * p4.y) -
+	    (p2.x * p3.x * p4.y) - (p2.x * p3.y * p4.x)) / -det;
+	r.x = ((p1.x * p2.y * p3.y) - (p1.x * p2.y * p4.y) -
 	    (p1.y * p2.x * p3.y) + (p1.y * p2.x * p4.y) -
 	    (p1.y * p3.x * p4.y) + (p1.y * p3.y * p4.x) +
-	    (p2.y * p3.x * p4.y) - (p2.y * p3.y * p4.x)) / det;
+	    (p2.y * p3.x * p4.y) - (p2.y * p3.y * p4.x)) / -det;
 
 	if (confined) {
 		if (r.x < MIN(p1.x, p2.x) || r.x > MAX(p1.x, p2.x) ||
@@ -677,6 +678,65 @@ double
 dir2hdg(vect2_t dir)
 {
 	return (RAD2DEG(asin(dir.x / vect2_abs(dir))));
+}
+
+/*
+ * Displaces a given geodetic position 
+ */
+geo_pos2_t
+geo_displace_mag(const ellip_t *ellip, const wmm_t *wmm, geo_pos2_t pos,
+    double maghdg, double dist)
+{
+	return (geo_displace(ellip, pos, wmm_mag2true(wmm, maghdg,
+	    GEO2_TO_GEO3(pos, 0)), dist));
+}
+
+geo_pos2_t
+geo_displace(const ellip_t *ellip, geo_pos2_t pos, double truehdg, double dist)
+{
+	return (geo_displace_dir(ellip, pos, hdg2dir(truehdg), dist));
+}
+
+geo_pos2_t
+geo_displace_dir(const ellip_t *ellip, geo_pos2_t pos, vect2_t dir, double dist)
+{
+	double	dist_r = dist / EARTH_MSL;
+	fpp_t	fpp;
+
+	if (dist >= M_PI * EARTH_MSL / 2)
+		return (NULL_GEO_POS2);
+	fpp = gnomo_fpp_init(pos, 0, ellip, B_TRUE);
+	dir = vect2_set_abs(dir, tan(dist_r));
+
+	return (fpp2geo(dir, &fpp));
+}
+
+geo_pos2_t
+geo_mag_radial_isect(const ellip_t *ellip, const wmm_t *wmm, geo_pos2_t pos1,
+    double rad1, geo_pos2_t pos2, double rad2)
+{
+	geo_pos3_t	pos1_3d = GEO2_TO_GEO3(pos1, 0);
+	geo_pos3_t	pos2_3d = GEO2_TO_GEO3(pos2, 0);
+	vect3_t		pos1_v = geo2ecef(pos1_3d, ellip);
+	vect3_t		pos2_v = geo2ecef(pos2_3d, ellip);
+	vect3_t		pos_mean = vect3_mean(pos1_v, pos2_v);
+	geo_pos3_t	fpp_pos = ecef2geo(pos_mean, ellip);
+	fpp_t		fpp;
+	vect2_t		pos1_fpp_v, rad1_dir, pos2_fpp_v, rad2_dir, isect;
+
+	fpp = gnomo_fpp_init(GEO3_TO_GEO2(fpp_pos), 0, ellip, B_TRUE);
+	pos1_fpp_v = geo2fpp(pos1, &fpp);
+	rad1_dir = hdg2dir(wmm_mag2true(wmm, rad1, pos1_3d));
+	pos2_fpp_v = geo2fpp(pos2, &fpp);
+	rad2_dir = hdg2dir(wmm_mag2true(wmm, rad2, pos2_3d));
+
+	isect = vect2vect_isect(rad1_dir, pos1_fpp_v, rad2_dir, pos2_fpp_v,
+	    B_FALSE);
+
+	if (IS_NULL_VECT(isect))
+		return (NULL_GEO_POS2);
+
+	return (fpp2geo(isect, &fpp));
 }
 
 /*
@@ -876,8 +936,8 @@ gc_distance(geo_pos2_t start, geo_pos2_t end)
 	 * Convert both coordinates into 3D vectors and calculate the angle
 	 * between them. GC distance is proportional to that angle.
 	 */
-	vect3_t	start_v = geo2ecef(GEO2_TO_GEO3(start, 0), &wgs84_ellip);
-	vect3_t	end_v = geo2ecef(GEO2_TO_GEO3(end, 0), &wgs84_ellip);
+	vect3_t	start_v = geo2ecef(GEO2_TO_GEO3(start, 0), &wgs84);
+	vect3_t	end_v = geo2ecef(GEO2_TO_GEO3(end, 0), &wgs84);
 	vect3_t	s2e = vect3_sub(end_v, start_v);
 	double	s2e_abs = vect3_abs(s2e);
 	double	alpha = asin(s2e_abs / 2 / EARTH_MSL);
@@ -890,12 +950,12 @@ gc_point_hdg(geo_pos2_t start, geo_pos2_t end, double arg)
 	/* FIXME: THIS IS BROKEN !!! */
 	vect3_t	start_v, end_v, norm_v, an_v, incl_v;
 
-	start_v = geo2ecef(GEO2_TO_GEO3(start, 0), &wgs84_ellip);
-	end_v = geo2ecef(GEO2_TO_GEO3(end, 0), &wgs84_ellip);
+	start_v = geo2ecef(GEO2_TO_GEO3(start, 0), &wgs84);
+	end_v = geo2ecef(GEO2_TO_GEO3(end, 0), &wgs84);
 	norm_v = vect3_set_abs(vect3_xprod(end_v, start_v), EARTH_MSL);
 	an_v = vect3_set_abs(vect3_xprod(norm_v, VECT3(0, 0, 1)), EARTH_MSL);
 	incl_v = vect3_xprod(norm_v, an_v);
-	geo_pos3_t incl = ecef2geo(incl_v, &wgs84_ellip);
+	geo_pos3_t incl = ecef2geo(incl_v, &wgs84);
 	double inclination = incl.lat;
 
 	vect3_t arg_v = {sin(DEG2RAD(arg)) * EARTH_MSL,
@@ -945,16 +1005,17 @@ gc_point_hdg(geo_pos2_t start, geo_pos2_t end, double arg)
  * to pass dist == 0.0.
  */
 fpp_t
-fpp_init(geo_pos2_t center, double rot, double dist, bool_t use_wgs84,
+fpp_init(geo_pos2_t center, double rot, double dist, const ellip_t *ellip,
     bool_t allow_inv)
 {
 	fpp_t fpp;
 
 	VERIFY(dist != 0);
 	fpp.allow_inv = allow_inv;
-	if (use_wgs84) {
+	fpp.ellip = ellip;
+	if (ellip) {
 		geo_pos2_t sph_ctr = GEO3_TO_GEO2(geo2sph(GEO2_TO_GEO3(center,
-		    0), &wgs84_ellip));
+		    0), ellip));
 		fpp.xlate = sph_xlate_init(sph_ctr, rot, B_FALSE);
 		if (allow_inv)
 			fpp.inv_xlate = sph_xlate_init(sph_ctr, rot, B_TRUE);
@@ -973,10 +1034,10 @@ fpp_init(geo_pos2_t center, double rot, double dist, bool_t use_wgs84,
  * the projection origin at +INFINITY. See `fpp_init' for more information.
  */
 fpp_t
-ortho_fpp_init(geo_pos2_t center, double rot, bool_t use_wgs84,
+ortho_fpp_init(geo_pos2_t center, double rot, const ellip_t *ellip,
     bool_t allow_inv)
 {
-	return (fpp_init(center, rot, INFINITY, use_wgs84, allow_inv));
+	return (fpp_init(center, rot, INFINITY, ellip, allow_inv));
 }
 
 /*
@@ -984,10 +1045,10 @@ ortho_fpp_init(geo_pos2_t center, double rot, bool_t use_wgs84,
  * the origin at the Earth's center. See `fpp_init' for more information.
  */
 fpp_t
-gnomo_fpp_init(geo_pos2_t center, double rot, bool_t use_wgs84,
+gnomo_fpp_init(geo_pos2_t center, double rot, const ellip_t *ellip,
     bool_t allow_inv)
 {
-	return (fpp_init(center, rot, -EARTH_MSL, use_wgs84, allow_inv));
+	return (fpp_init(center, rot, -EARTH_MSL, ellip, allow_inv));
 }
 
 /*
@@ -997,10 +1058,10 @@ gnomo_fpp_init(geo_pos2_t center, double rot, bool_t use_wgs84,
  * See `fpp_init' for more information.
  */
 fpp_t
-stereo_fpp_init(geo_pos2_t center, double rot, bool_t use_wgs84,
+stereo_fpp_init(geo_pos2_t center, double rot, const ellip_t *ellip,
     bool_t allow_inv)
 {
-	return (fpp_init(center, rot, -2 * EARTH_MSL, use_wgs84, allow_inv));
+	return (fpp_init(center, rot, -2 * EARTH_MSL, ellip, allow_inv));
 }
 
 /*
@@ -1015,11 +1076,10 @@ geo2fpp(geo_pos2_t pos, const fpp_t *fpp)
 	vect3_t pos_v;
 	vect2_t res_v;
 
-	if (fpp->use_wgs84)
-		pos_v = geo2ecef(GEO2_TO_GEO3(pos, 0), &wgs84_ellip);
+	if (fpp->ellip != NULL)
+		pos_v = geo2ecef(GEO2_TO_GEO3(pos, 0), fpp->ellip);
 	else
 		pos_v = sph2ecef(GEO2_TO_GEO3(pos, 0));
-
 	pos_v = sph_xlate_vect(pos_v, &fpp->xlate);
 	if (isfinite(fpp->dist)) {
 		if (fpp->dist < 0.0 && pos_v.x <= fpp->dist + EARTH_MSL)
@@ -1090,8 +1150,8 @@ fpp2geo(vect2_t pos, const fpp_t *fpp)
 	}
 	/* Result is now in i[0]. Inv-xlate to global space & ecef2sph. */
 	r = sph_xlate_vect(i[0], &fpp->inv_xlate);
-	if (fpp->use_wgs84)
-		return (GEO3_TO_GEO2(ecef2geo(r, &wgs84_ellip)));
+	if (fpp->ellip != NULL)
+		return (GEO3_TO_GEO2(ecef2geo(r, fpp->ellip)));
 	else
 		return (GEO3_TO_GEO2(ecef2sph(r)));
 }

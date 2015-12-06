@@ -228,7 +228,7 @@ test_fpp(void)
 #define	PROJLON	45.0
 #define	PROJROT	65.0
 
-	fpp = ortho_fpp_init(GEO_POS2(PROJLAT, PROJLON), PROJROT, B_TRUE,
+	fpp = ortho_fpp_init(GEO_POS2(PROJLAT, PROJLON), PROJROT, &wgs84,
 	    B_TRUE);
 
 	surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, IMGW, IMGH);
@@ -307,8 +307,8 @@ test_fpp(void)
 #define	PRINT_POS(p) \
 	printf(#p "  lat: %lf\tlon: %lf\telev: %.0lf\n", p.lat, p.lon, p.elev)
 
-	vect3_t ecef = geo2ecef(GEO_POS3(PROJLAT, PROJLON, 0), &wgs84_ellip);
-	geo_pos3_t pos2 = ecef2geo(ecef, &wgs84_ellip);
+	vect3_t ecef = geo2ecef(GEO_POS3(PROJLAT, PROJLON, 0), &wgs84);
+	geo_pos3_t pos2 = ecef2geo(ecef, &wgs84);
 	sph_xlate_t xlate, inv_xlate;
 	xlate = sph_xlate_init(GEO_POS2(PROJLAT, PROJLON), PROJROT, B_FALSE);
 	inv_xlate = sph_xlate_init(GEO_POS2(PROJLAT, PROJLON), PROJROT, B_TRUE);
@@ -320,12 +320,6 @@ test_fpp(void)
 	PRINT_VECT(ecef);
 	PRINT_VECT(xlated);
 	PRINT_VECT(unxlated);
-
-//	vect2_t fwd = geo2fpp(GEO_POS2(PROJLAT, PROJLON), &fpp);
-//	geo_pos2_t back = fpp2geo(fwd, &fpp);
-//	printf("inlat: %lf\tinlon: %lf\nfwd.x: %lf\tfwd.y: %lf\n"
-//	    "outlat: %lf\toutlon: %lf\n",
-//	    PROJLAT, PROJLON, fwd.x, fwd.y, back.lat, back.lon);
 }
 
 void
@@ -603,52 +597,39 @@ find_rl(route_t *route, int idx)
 }
 
 fix_t
-find_fix(const char fix_name[NAV_NAME_LEN], waypoint_db_t *wptdb,
-    navaid_db_t *navaiddb)
+find_fix(const char *fix_name, fms_t *fms)
 {
-	fix_t res[32];
-	int nres = 0;
-	const list_t *list;
+	fix_t fix;
+	fix_t *fixes;
+	size_t num_fixes;
+	bool_t is_wpt_seq;
 
-	memset(&res, 0, sizeof (res));
-	list = htbl_lookup_multi(&wptdb->by_name, fix_name);
-	if (list != NULL) {
-		const void *mv;
-		for (mv = list_head(list); mv; mv = list_next(list, mv)) {
-			ASSERT(nres < 32);
-			res[nres++] = *(fix_t *)HTBL_VALUE_MULTI(mv);
-		}
+	fixes = fms_wpt_name_decode(fix_name, fms, &num_fixes, &is_wpt_seq);
+	if (fixes == NULL) {
+		fprintf(stderr, "%s\n", err2str(ERR_NOT_IN_DATABASE));
+		return (null_fix);
 	}
-	list = htbl_lookup_multi(&navaiddb->by_id, fix_name);
-	if (list != NULL) {
-		const void *mv;
-		for (mv = list_head(list); mv; mv = list_next(list, mv)) {
-			ASSERT(nres < 32);
-			const navaid_t *navaid = HTBL_VALUE_MULTI(mv);
-
-			strlcpy(res[nres].name, fix_name,
-			    sizeof (res[nres].name));
-			res[nres].pos = GEO3_TO_GEO2(navaid->pos);
-			nres++;
-		}
+	if (is_wpt_seq) {
+		free(fixes);
+		fprintf(stderr, "%s\n", err2str(ERR_INVALID_ENTRY));
+		return (null_fix);
 	}
 
-	if (nres > 1) {
-		char idx_str[8];
-		int idx;
+	if (num_fixes > 1) {
+		unsigned idx;
 		printf("  %s is ambiguous, choose one:\n", fix_name);
-		for (int i = 0; i < nres; i++)
-			printf("   %d: %s  %lf  %lf\n", i, res[i].name,
-			    res[i].pos.lat, res[i].pos.lon);
-		scanf("%7s", idx_str);
-		idx = atoi(idx_str);
-		if (idx > 0) {
-			ASSERT(idx < 32);
-			res[0] = res[idx];
-		}
+		for (unsigned i = 0; i < num_fixes; i++)
+			printf("   %d: %s  %lf  %lf\n", i, fixes[i].name,
+			    fixes[i].pos.lat, fixes[i].pos.lon);
+		scanf("%u", &idx);
+		ASSERT(idx < num_fixes);
+		fix = fixes[idx];
+	} else {
+		fix = fixes[0];
 	}
+	free(fixes);
 
-	return (res[0]);
+	return (fix);
 }
 
 static void
@@ -690,12 +671,11 @@ test_route(char *navdata_dir)
 			char	param[8]; \
 			if (scanf("%7s", param) != 1) \
 				continue; \
-			if (strcmp(param, "NULL") == 0) { \
+			strtoupper(param); \
+			if (strcmp(param, "NULL") == 0) \
 				err = func(route, NULL); \
-			} else { \
-				strtoupper(param); \
+			else \
 				err = func(route, param); \
-			}\
 		} \
 	} while (0)
 		SET_RTE_PARAM_CMD("origin", route_set_dep_arpt);
@@ -721,48 +701,51 @@ test_route(char *navdata_dir)
 			if (scanf("%7d %7s", &idx, awy_name) != 2)
 				continue;
 			prev_rlg = find_rlg(route, idx - 1);
+			strtoupper(awy_name);
 			err = route_lg_awy_insert(route, awy_name, prev_rlg,
 			    NULL);
 		} else if (strcmp(cmd, "to") == 0) {
 			int idx;
-			char fix_name[NAV_NAME_LEN];
+			char fix_name[32];
 			const route_leg_group_t *rlg;
 
 			memset(fix_name, 0, sizeof (fix_name));
 			if (scanf("%7d %31s", &idx, fix_name) != 2)
 				continue;
+			strtoupper(fix_name);
 			rlg = find_rlg(route, idx);
+			if (!rlg)
+				continue;
 			err = route_lg_awy_set_end_fix(route, rlg, fix_name);
 		} else if (strcmp(cmd, "dir") == 0) {
 			int idx;
-			char fix_name[NAV_NAME_LEN];
+			char fix_name[32];
 			const route_leg_group_t *prev_rlg;
 			fix_t fix;
 
 			memset(fix_name, 0, sizeof (fix_name));
-			if (scanf("%7d %7s", &idx, fix_name) != 2)
+			if (scanf("%7d %31s", &idx, fix_name) != 2)
 				continue;
-			fix = find_fix(fix_name, navdb->wptdb, navdb->navaiddb);
-			if (IS_NULL_FIX(&fix)) {
-				fprintf(stderr, "%s NOT FOUND\n", fix_name);
+			strtoupper(fix_name);
+			fix = find_fix(fix_name, fms);
+			if (IS_NULL_FIX(&fix))
 				continue;
-			}
 			prev_rlg = find_rlg(route, idx - 1);
-			route_lg_direct_insert(route, &fix, prev_rlg, NULL);
+			err = route_lg_direct_insert(route, &fix, prev_rlg,
+			    NULL);
 		} else if (strcmp(cmd, "ldir") == 0) {
 			int idx;
-			char fix_name[NAV_NAME_LEN];
+			char fix_name[32];
 			const route_leg_t *prev_rl;
 			fix_t fix;
 
 			memset(fix_name, 0, sizeof (fix_name));
-			if (scanf("%7d %7s", &idx, fix_name) != 2)
+			if (scanf("%7d %31s", &idx, fix_name) != 2)
 				continue;
-			fix = find_fix(fix_name, navdb->wptdb, navdb->navaiddb);
-			if (IS_NULL_FIX(&fix)) {
-				fprintf(stderr, "%s NOT FOUND\n", fix_name);
+			strtoupper(fix_name);
+			fix = find_fix(fix_name, fms);
+			if (IS_NULL_FIX(&fix))
 				continue;
-			}
 			prev_rl = find_rl(route, idx - 1);
 			err = route_l_insert(route, &fix, prev_rl, NULL);
 		} else if (strcmp(cmd, "rm") == 0) {

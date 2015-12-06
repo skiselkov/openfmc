@@ -52,8 +52,6 @@ typedef struct {
 
 	struct {
 		regex_t	*wptname;		/* 'DOT', 'ALPHA', etc */
-		regex_t	*navaid_blw100;		/* JAN58 = JAN VOR 58 NM arc */
-		regex_t	*navaid_abv100;		/* 58JAN = JAN VOR 158 NM arc */
 
 		regex_t	*geo_nw_blw100;		/* 5010N = N50 W010 */
 		regex_t	*geo_nw_abv100;		/* 50N10 = N50 W110 */
@@ -66,6 +64,12 @@ typedef struct {
 
 		regex_t	*geo_se_blw100;		/* 5010S = S50 E010 */
 		regex_t	*geo_se_abv100;		/* 50S10 = S50 E110 */
+
+		regex_t	*geo_long;		/* N47W008 */
+		regex_t	*geo_detailed;		/* N4715.4W00803.4 */
+
+		regex_t	*geo_report;		/* W060-10 */
+
 		/* SEA330/10 = SEA VOR 330 radial, 10 DME */
 		regex_t	*radial_dme;
 		/* SEA330/OLM020 = intersection SEA 330 & OLM 020 radials */
@@ -84,6 +88,7 @@ void fms_navdb_close(fms_navdb_t *navdb);
 bool_t navdb_is_current(const fms_navdb_t *navdb);
 bool_t navdata_is_current(const char *navdata_dir);
 
-fix_t *fms_wpt_name_decode(const char *name, fms_t *fms, size_t *num);
+fix_t *fms_wpt_name_decode(const char *name, fms_t *fms, size_t *num,
+    bool_t *is_wpt_seq);
 
 #endif	/* _OPENFMC_FMS_H_ */

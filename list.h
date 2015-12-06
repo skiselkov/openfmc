@@ -57,6 +57,7 @@ void list_link_init(list_node_t *);
 void list_link_replace(list_node_t *, list_node_t *);
 
 int list_link_active(const list_node_t *);
+size_t list_count(const list_t *);
 
 #ifdef	__cplusplus
 }
