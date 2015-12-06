@@ -1606,11 +1606,15 @@ route_destroy(route_t *route)
 	free(route);
 }
 
-/* TODO:
+/*
 void
-route_update(route_t *route)
+route_update(route_t *route, perf_t *perf)
 {
-	geo_pos3_t cur_pos =
+	geo_pos3_t	cur_pos;
+	vect2_t		cur_flt_dir;
+	double		cur_spd;
+
+	route_first_start_pos
 }
 */
 

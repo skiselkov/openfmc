@@ -205,40 +205,41 @@ dump_turn(turn_t turn)
  * Parses one airway line starting with 'A,' from ATS.txt.
  */
 static bool_t
-parse_airway_line(const char *line, airway_t *awy)
+parse_airway_line(const char *line, airway_t *awy, const char *filename,
+    size_t line_num)
 {
 	char	line_copy[128];
 	char	*comps[3];
 
-	STRLCPY_CHECK_ERROUT(line_copy, line);
+	(void) strlcpy(line_copy, line, sizeof (line_copy));
 	if (explode_line(line_copy, ',', comps, 3) != 3) {
-		openfmc_log(OPENFMC_LOG_ERR, "Error parsing airway line: "
-		    "invalid number of columns, wanted 3.");
-		goto errout;
+		openfmc_log(OPENFMC_LOG_ERR, "%s:%lu: error parsing airway "
+		    "line: invalid number of columns, wanted 3.", filename,
+		    line_num);
+		return (B_FALSE);
 	}
 	if (strcmp(comps[0], "A") != 0) {
-		openfmc_log(OPENFMC_LOG_ERR, "Error parsing airway line: "
-		    "wanted line type 'A', got '%s'.", comps[0]);
-		goto errout;
+		openfmc_log(OPENFMC_LOG_ERR, "%s:%lu: error parsing airway "
+		    "line: wanted line type 'A', got '%s'.", filename,
+		    line_num, comps[0]);
+		return (B_FALSE);
 	}
 	if (strlen(comps[1]) > sizeof (awy->name) - 1) {
-		openfmc_log(OPENFMC_LOG_ERR, "Error parsing airway line: "
-		    "airway name '%s' too long (max allowed %lu chars).",
-		    comps[1], sizeof (awy->name) - 1);
-		goto errout;
+		openfmc_log(OPENFMC_LOG_ERR, "%s:%lu: error parsing airway "
+		    "line: airway name '%s' too long (max allowed %lu chars).",
+		    filename, line_num, comps[1], sizeof (awy->name) - 1);
+		return (B_FALSE);
 	}
-	STRLCPY_CHECK_ERROUT(awy->name, comps[1]);
+	(void) strlcpy(awy->name, comps[1], sizeof (awy->name));
 	awy->num_segs = atoi(comps[2]);
 	if (awy->num_segs == 0 || awy->num_segs > MAX_AWY_SEGS) {
-		openfmc_log(OPENFMC_LOG_ERR, "Error parsing airway line: "
-		    "invalid number of segments \"%s\".", comps[2]);
-		goto errout;
+		openfmc_log(OPENFMC_LOG_ERR, "%s:%lu: error parsing airway "
+		    "line: invalid number of segments \"%s\".", filename,
+		    line_num, comps[2]);
+		return (B_FALSE);
 	}
 
 	return (B_TRUE);
-errout:
-	openfmc_log(OPENFMC_LOG_ERR, "Offending line was: \"%s\".", line);
-	return (B_FALSE);
 }
 
 static bool_t
@@ -274,7 +275,8 @@ errout:
 }
 
 static bool_t
-parse_airway_segs(FILE *fp, airway_t *awy)
+parse_airway_segs(FILE *fp, airway_t *awy, const char *filename,
+    size_t *line_num)
 {
 	char	*line = NULL;
 	ssize_t	line_len = 0;
@@ -284,41 +286,35 @@ parse_airway_segs(FILE *fp, airway_t *awy)
 	ASSERT(awy->segs == NULL);
 	awy->segs = calloc(sizeof (airway_seg_t), awy->num_segs);
 
-	for (nsegs = 0; (line_len = getline(&line, &line_cap, fp)) != -1;
-	    nsegs++) {
-		strip_newline(line);
-		if (strlen(line) == 0)
-			break;
-		if (nsegs == awy->num_segs) {
-			openfmc_log(OPENFMC_LOG_ERR, "Error parsing airway: "
-			    "too many segments following airway line.");
-			goto errout;
-		}
+	for (nsegs = 0; nsegs < awy->num_segs &&
+	    (line_len = parser_get_next_line(fp, &line, &line_cap,
+	    line_num)) != -1; nsegs++) {
 		if (!parse_airway_seg_line(line, &awy->segs[nsegs]))
 			goto errout;
 
 		/* Check that adjacent airway segments are connected */
 		if (nsegs > 0 && memcmp(&awy->segs[nsegs - 1].endpt[1],
 		    &awy->segs[nsegs].endpt[0], sizeof (fix_t)) != 0) {
-			openfmc_log(OPENFMC_LOG_ERR, "Error parsing airway "
-			    "\"%s\": segment #%lu (fix %s) and #%lu "
-			    "(fix %s) aren't connected.", awy->name,
-			    nsegs - 1, awy->segs[nsegs - 1].endpt[1].name,
-			    nsegs, awy->segs[nsegs].endpt[0].name);
+			openfmc_log(OPENFMC_LOG_ERR, "%s:%lu: error parsing "
+			    "airway \"%s\": segment #%lu (fix %s) and #%lu "
+			    "(fix %s) aren't connected.", filename, *line_num,
+			    awy->name, nsegs - 1,
+			    awy->segs[nsegs - 1].endpt[1].name, nsegs,
+			    awy->segs[nsegs].endpt[0].name);
 			goto errout;
 		}
 	}
 	if (nsegs != awy->num_segs) {
-		openfmc_log(OPENFMC_LOG_ERR, "Error parsing airway \"%s\": "
-		    "expected %u segments, but only %lu 'S' lines followed.",
-		    awy->name, awy->num_segs, nsegs);
+		openfmc_log(OPENFMC_LOG_ERR, "%s:%lu: error parsing airway "
+		    "\"%s\": expected %u segments, but only %lu 'S' lines "
+		    "followed.", filename, *line_num, awy->name,
+		    awy->num_segs, nsegs);
 		goto errout;
 	}
 
 	free(line);
 	return (B_TRUE);
 errout:
-	openfmc_log(OPENFMC_LOG_ERR, "Offending line was: \"%s\".", line);
 	free(line);
 	free(awy->segs);
 	awy->segs = NULL;
@@ -340,7 +336,7 @@ airway_db_open(const char *navdata_dir, size_t num_waypoints)
 	FILE		*ats_fp = NULL;
 	char		*ats_fname = NULL;
 	ssize_t		line_len = 0;
-	size_t		line_cap = 0;
+	size_t		line_cap = 0, line_num = 0;
 	char		*line = NULL;
 	uint64_t	num_airways = 0;
 	airway_t	*awy = NULL;
@@ -356,11 +352,13 @@ airway_db_open(const char *navdata_dir, size_t num_waypoints)
 	}
 
 	/* Count number of lines starting with "A," to size up hash table */
-	while ((line_len = getline(&line, &line_cap, ats_fp)) != -1) {
+	while ((line_len = parser_get_next_line(ats_fp, &line, &line_cap,
+	    &line_num)) != -1) {
 		if (line_len > 3 && line[0] == 'A' && line[1] == ',')
 			num_airways++;
 	}
 	rewind(ats_fp);
+	line_num = 0;
 	if (num_airways == 0 || num_airways > MAX_NUM_AWYS) {
 		openfmc_log(OPENFMC_LOG_ERR, "Error parsing %s: invalid "
 		    "number of airways found: %llu", ats_fname, num_airways);
@@ -373,16 +371,17 @@ airway_db_open(const char *navdata_dir, size_t num_waypoints)
 	htbl_create(&db->by_awy_name, num_airways, NAV_NAME_LEN, B_TRUE);
 	htbl_create(&db->by_fix_name, num_waypoints, NAV_NAME_LEN, B_TRUE);
 
-	while ((line_len = getline(&line, &line_cap, ats_fp)) != -1) {
-		strip_newline(line);
-		if (line[0] == 0)
+	while ((line_len = parser_get_next_line(ats_fp, &line, &line_cap,
+	    &line_num)) != -1) {
+		if (line_len == 0)
 			continue;
 		awy = calloc(sizeof (*awy), 1);
 		if (!awy)
 			goto errout;
-		if (!parse_airway_line(line, awy) ||
-		    !parse_airway_segs(ats_fp, awy))
+		if (!parse_airway_line(line, awy, ats_fname, line_num) ||
+		    !parse_airway_segs(ats_fp, awy, ats_fname, &line_num)) {
 			goto errout;
+		}
 		htbl_set(&db->by_awy_name, awy->name, awy);
 		for (size_t i = 0; i < awy->num_segs; i++)
 			htbl_set(&db->by_fix_name, awy->segs[i].endpt[0].name,
@@ -674,7 +673,7 @@ waypoint_db_open(const char *navdata_dir)
 	FILE		*wpts_fp = NULL;
 	char		*wpts_fname = NULL;
 	ssize_t		line_len = 0;
-	size_t		line_cap = 0;
+	size_t		line_cap = 0, line_num = 0;
 	char		*line = NULL;
 	uint64_t	num_wpts = 0;
 	fix_t		*wpt = NULL;
@@ -695,11 +694,13 @@ waypoint_db_open(const char *navdata_dir)
 	 * table. We don't care about non-named (coordinate) waypoints, we
 	 * can construct those on the fly.
 	 */
-	while ((line_len = getline(&line, &line_cap, wpts_fp)) != -1) {
-		if (line_len > 1 && line[0] != ' ')
+	while ((line_len = parser_get_next_line(wpts_fp, &line, &line_cap,
+	    &line_num)) != -1) {
+		if (line_len > 1 && line[0] != ',')
 			num_wpts++;
 	}
 	rewind(wpts_fp);
+	line_num = 0;
 	if (num_wpts == 0 || num_wpts > MAX_NUM_WPTS) {
 		openfmc_log(OPENFMC_LOG_ERR, "Error parsing %s: invalid "
 		    "number of waypoints found: %llu", wpts_fname, num_wpts);
@@ -711,9 +712,9 @@ waypoint_db_open(const char *navdata_dir)
 		goto errout;
 	htbl_create(&db->by_name, num_wpts, NAV_NAME_LEN, B_TRUE);
 
-	while ((line_len = getline(&line, &line_cap, wpts_fp)) != -1) {
-		strip_newline(line);
-		if (line[0] == 0 || line[0] == ' ')
+	while ((line_len = parser_get_next_line(wpts_fp, &line, &line_cap,
+	    &line_num)) != -1) {
+		if (line_len == 0 || *line == ',')
 			continue;
 		wpt = calloc(sizeof (*wpt), 1);
 		if (!wpt)
@@ -835,7 +836,7 @@ navaid_db_open(const char *navdata_dir)
 	FILE		*navaids_fp = NULL;
 	char		*navaids_fname = NULL;
 	ssize_t		line_len = 0;
-	size_t		line_cap = 0;
+	size_t		line_cap = 0, line_num = 0;
 	char		*line = NULL;
 	uint64_t	num_navaids = 0;
 	navaid_t	*navaid = NULL;
@@ -851,11 +852,13 @@ navaid_db_open(const char *navdata_dir)
 		goto errout;
 	}
 
-	while ((line_len = getline(&line, &line_cap, navaids_fp)) != -1) {
+	while ((line_len = parser_get_next_line(navaids_fp, &line, &line_cap,
+	    &line_num)) != -1) {
 		if (line_len > 3)
 			num_navaids++;
 	}
 	rewind(navaids_fp);
+	line_num = 0;
 	if (num_navaids == 0 || num_navaids > MAX_NUM_NAVAIDS) {
 		openfmc_log(OPENFMC_LOG_ERR, "Error parsing %s: invalid "
 		    "number of navaids found: %llu", navaids_fname,
@@ -868,9 +871,9 @@ navaid_db_open(const char *navdata_dir)
 		goto errout;
 	htbl_create(&db->by_id, num_navaids, NAV_NAME_LEN, B_TRUE);
 
-	while ((line_len = getline(&line, &line_cap, navaids_fp)) != -1) {
-		strip_newline(line);
-		if (line[0] == 0)
+	while ((line_len = parser_get_next_line(navaids_fp, &line, &line_cap,
+	    &line_num)) != -1) {
+		if (line_len == 0)
 			continue;
 		navaid = calloc(sizeof (*navaid), 1);
 		if (!navaid)
@@ -2310,7 +2313,7 @@ navproc_get_end_fix(const navproc_t *proc)
 }
 
 static int
-parse_proc(FILE *fp, navproc_t *proc, airport_t *arpt,
+parse_proc(FILE *fp, size_t *line_num, navproc_t *proc, airport_t *arpt,
     const waypoint_db_t *wptdb, const navaid_db_t *navdb)
 {
 	size_t		line_cap = 0;
@@ -2321,12 +2324,13 @@ parse_proc(FILE *fp, navproc_t *proc, airport_t *arpt,
 	size_t		num_comps;
 
 	memset(proc, 0, sizeof (*proc));
-	line_len = getline(&line, &line_cap, fp);
+	while ((line_len = parser_get_next_line(fp, &line, &line_cap,
+	    line_num)) == 0)
+		;
 	if (line_len == -1) {
 		/* EOF */
 		return (0);
 	}
-	strip_newline(line);
 	STRLCPY_CHECK_ERROUT(line_copy, line);
 	num_comps = explode_line(line_copy, ',', comps, 8);
 	ASSERT(num_comps != 0);
@@ -2347,9 +2351,9 @@ parse_proc(FILE *fp, navproc_t *proc, airport_t *arpt,
 		goto errout;
 	}
 
-	while ((line_len = getline(&line, &line_cap, fp)) != -1) {
-		strip_newline(line);
-		if (strlen(line) == 0)
+	while ((line_len = parser_get_next_line(fp, &line, &line_cap,
+	    line_num)) != -1) {
+		if (line_len == 0)
 			break;
 		if (!parse_proc_seg_line(line, proc, arpt, wptdb, navdb))
 			goto errout;
@@ -2385,8 +2389,10 @@ parse_proc_file(FILE *fp, airport_t *arpt, const waypoint_db_t *wptdb,
 {
 	navproc_t	proc;
 	int		n;
+	size_t		line_num = 0;
 
-	while ((n = parse_proc(fp, &proc, arpt, wptdb, navdb)) != 0) {
+	while ((n = parse_proc(fp, &line_num, &proc, arpt, wptdb,
+	    navdb)) != 0) {
 		if (n == -1) {
 			/* broken procedure, skip over it */
 			continue;
@@ -2408,7 +2414,7 @@ airport_open(const char *arpt_icao, const char *navdata_dir,
 	char		*arpt_fname = NULL;
 	char		*proc_fname = NULL;
 	ssize_t		line_len = 0;
-	size_t		line_cap = 0;
+	size_t		line_cap = 0, line_num = 0;
 	char		*line = NULL;
 
 	arpt = calloc(sizeof (*arpt), 1);
@@ -2430,8 +2436,10 @@ airport_open(const char *arpt_icao, const char *navdata_dir,
 	}
 
 	/* Locate airport starting line & parse it */
-	while ((line_len = getline(&line, &line_cap, arpt_fp)) != -1) {
-		strip_newline(line);
+	while ((line_len = parser_get_next_line(arpt_fp, &line, &line_cap,
+	    &line_num)) != -1) {
+		if (line_len == 0)
+			continue;
 		if (parse_arpt_line(line, arpt))
 			break;
 	}
@@ -2443,9 +2451,9 @@ airport_open(const char *arpt_icao, const char *navdata_dir,
 	}
 
 	/* airport found, read non-empty runway lines */
-	while ((line_len = getline(&line, &line_cap, arpt_fp)) > 0) {
-		strip_newline(line);
-		if (strlen(line) == 0)
+	while ((line_len = parser_get_next_line(arpt_fp, &line, &line_cap,
+	    &line_num)) > 0) {
+		if (line_len == 0)
 			break;
 		arpt->num_rwys++;
 		arpt->rwys = realloc(arpt->rwys, sizeof (*arpt->rwys) *

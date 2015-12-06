@@ -38,6 +38,7 @@
 #include "route.h"
 #include "htbl.h"
 #include "wmm.h"
+#include "perf.h"
 
 #define	IMGH		1200
 #define	IMGW		1200

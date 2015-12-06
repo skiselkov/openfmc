@@ -122,36 +122,95 @@ is_valid_rwy_ID(const char *rwy_ID)
 	return (B_TRUE);
 }
 
-size_t
+/*
+ * Grabs the next non-empty, non-comment line from a file, having stripped
+ * away all leading and trailing whitespace.
+ *
+ * @param fp File from which to retrieve the line.
+ * @param linep Line buffer which will hold the new line. If the buffer pointer
+ *	is set to NULL, it will be allocated. If it is not long enough, it
+ *	will be expanded.
+ * @param linecap The capacity of *linep. If set to zero a new buffer is
+ *	allocated.
+ * @param linenum The current line number. Will be advanced by 1 for each
+ *	new line read.
+ *
+ * @return The number of characters in the line (after stripping whitespace)
+ *	without the terminating NUL.
+ */
+ssize_t
+parser_get_next_line(FILE *fp, char **linep, size_t *linecap, size_t *linenum)
+{
+	for (;;) {
+		ssize_t len = getline(linep, linecap, fp);
+		if (len == -1)
+			return (-1);
+		(*linenum)++;
+		strip_space(*linep);
+		if (**linep != 0 && **linep == '#')
+			continue;
+		return (strlen(*linep));
+	}
+}
+
+/*
+ * Breaks up a line into components delimited by a character.
+ *
+ * @param line The input line to break up. The buffer will be modified
+ *	to insert NULs in between the components so that they can each
+ *	be treated as a separate string.
+ * @param delim The delimiter character (e.g. ',').
+ * @param comps A list of pointers that will be set to point to the
+ *	start of each substring.
+ * @param capacity The component capacity of `comps'. If more input
+ *	components are encountered than is space in `comps', the array
+ *	is not overflown.
+ *
+ * @return The number of components in the input string (at least 1).
+ *	If the `comps' array was too small, returns the number of
+ *	components that would have been needed to process the input
+ *	string fully as a negative value.
+ */
+ssize_t
 explode_line(char *line, char delim, char **comps, size_t capacity)
 {
-	size_t i = 1;
+	ssize_t	i = 1;
+	bool_t	toomany = B_FALSE;
 
 	ASSERT(capacity != 0);
 	comps[0] = line;
 	for (char *p = line; *p != 0; p++) {
 		if (*p == delim) {
-			if (i >= capacity)
-				return ((size_t)-1);
 			*p = 0;
-			comps[i++] = p + 1;
+			if (i < (ssize_t)capacity)
+				comps[i] = p + 1;
+			else
+				toomany = B_TRUE;
+			i++;
 		}
 	}
 
-	return (i);
+	return (toomany ? -i : i);
 }
 
+/*
+ * Removes all leading & trailing whitespace from a line.
+ */
 void
-strip_newline(char *line)
+strip_space(char *line)
 {
-	size_t n = strlen(line);
+	char	*p;
+	size_t	len = strlen(line);
 
-	if (n >= 2 && line[n - 2] == '\r')
-		/* cut off trailing CRLF */
-		line[n - 2] = 0;
-	else if (n >= 1 && line[n - 1] == '\n')
-		/* cut off trailing LF */
-		line[n - 1] = 0;
+	/* strip leading whitespace */
+	for (p = line; *p && isspace(*p); p++)
+		;
+	if (p != line)
+		memmove(line, p, (p + len) - p + 1);
+
+	for (p = line + len - 1; p >= line && isspace(*p); p--)
+		;
+	p[1] = 0;
 }
 
 void

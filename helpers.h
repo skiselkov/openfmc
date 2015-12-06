@@ -28,6 +28,7 @@
 
 #include <stdarg.h>
 #include <assert.h>
+#include <stdio.h>
 
 #include "airac.h"
 #include "types.h"
@@ -151,9 +152,11 @@ bool_t is_valid_ndb_freq(double freq_khz);
 bool_t is_valid_tacan_freq(double freq_mhz);
 bool_t is_valid_rwy_ID(const char *rwy_ID);
 
-/* string processing helpers */
-size_t explode_line(char *line, char delim, char **comps, size_t capcity);
-void strip_newline(char *line);
+/* CSV file & string processing helpers */
+ssize_t parser_get_next_line(FILE *fp, char **linep, size_t *linecap,
+    size_t *linenum);
+ssize_t explode_line(char *line, char delim, char **comps, size_t capacity);
+void strip_space(char *line);
 void append_format(char **str, size_t *sz, const char *format, ...)
     PRINTF_ATTR(3);
 
@@ -168,9 +171,10 @@ void append_format(char **str, size_t *sz, const char *format, ...)
  * return x rounded up to the nearest power-of-2.
  */
 #define	P2ROUNDUP(x)	(-(-(x) & -(1 << highbit64(x))))
-#if	!defined(MIN) && !defined(MAX)
+#if	!defined(MIN) && !defined(MAX) && !defined(AVG)
 #define	MIN(x, y)	((x) < (y) ? (x) : (y))
 #define	MAX(x, y)	((x) > (y) ? (x) : (y))
+#define	AVG(x, y)	(((x) + (y)) / 2)
 #endif	/* MIN or MAX */
 
 #ifdef	__cplusplus

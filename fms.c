@@ -94,7 +94,7 @@ navdata_get_valid(const char *navdata_dir, unsigned *cyclep, time_t *fromp,
 	while ((line_len = getline(&line, &line_cap, arpt_fp)) != -1) {
 		unsigned cycle;
 
-		strip_newline(line);
+		strip_space(line);
 		if (explode_line(line, ',', comps, 5) != 5 ||
 		    strcmp(comps[0], "X") != 0)
 			continue;

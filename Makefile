@@ -2,7 +2,7 @@ all : openfmc
 
 OBJS=wmm.o GeomagnetismLibrary.o list.o \
     helpers.o htbl.o geom.o err.o log.o \
-    airac.o route.o fms.o \
+    perf.o airac.o route.o fms.o \
     openfmc.o
 
 DEPS=$(patsubst %.o, %.d, $(OBJS))
