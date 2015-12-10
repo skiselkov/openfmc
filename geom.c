@@ -28,9 +28,10 @@
 #include <string.h>
 #include <stdio.h>
 
-#include "geom.h"
+#include "math.h"
 #include "helpers.h"
 #include "wmm.h"
+#include "geom.h"
 
 #if	1
 #include <stdio.h>
@@ -46,9 +47,6 @@
 #define	PRINT_GEO3(p)
 #define	DEBUG_PRINT(...)
 #endif
-
-#define	POW3(x)	((x) * (x) * (x))
-#define	POW2(x)	((x) * (x))
 
 /*
  * The WGS84 ellipsoid parameters.
@@ -1205,4 +1203,126 @@ geo2lcc(geo_pos2_t pos, const lcc_t *lcc)
 	result.y = lcc->rho0 - rho * cos(lcc->n * (lat - lcc->reflat));
 
 	return (result);
+}
+
+/*
+ * Allocates a new generic Bezier curve structure with n_pts points.
+ */
+bezier_t *
+bezier_alloc(size_t n_pts)
+{
+	bezier_t *curve = malloc(sizeof (*curve));
+
+	curve->n_pts = n_pts;
+	curve->pts = calloc(sizeof (vect2_t), n_pts);
+
+	return (curve);
+}
+
+/*
+ * Frees a generic Bezier curve previous allocated with bezier_alloc.
+ */
+void
+bezier_free(bezier_t *curve)
+{
+	free(curve->pts);
+	free(curve);
+}
+
+/*
+ * Calculates the value of a function defined by a set of quadratic bezier
+ * curve segments.
+ *
+ * @param x Function input value.
+ * @param func The set of quadratic bezier curve defining the function.
+ *	Please note that since this is a function, curve segments may
+ *	not overlap. This is to guarantee that at any point 'x' the
+ *	function resolves to one value.
+ *
+ * @return The function value at point 'x'. If the point is beyond the
+ *	edges of the bezier curve segments describing the function, the
+ *	'y' value of the first or last curve point is returned, i.e.
+ *	beyond the curve boundaries, the function is assumed to be flat.
+ */
+double
+quad_bezier_func_get(double x, const bezier_t *func)
+{
+	ASSERT(func->n_pts >= 3 || func->n_pts % 3 == 2);
+	/* Check boundary conditions */
+	if (x < func->pts[0].x)
+		return (func->pts[0].y);
+	else if (x > func->pts[func->n_pts - 1].x)
+		return (func->pts[func->n_pts - 1].y);
+
+	/* Point lies on a curve segment */
+	for (size_t i = 0; i + 2 < func->n_pts; i += 2) {
+		if (func->pts[i].x <= x) {
+			vect2_t p0 = func->pts[i], p1 = func->pts[i + 1];
+			vect2_t p2 = func->pts[i + 2];
+			double y, t, ts[2];
+			unsigned n;
+
+			/*
+			 * Quadratic Bezier curves are defined as follows:
+			 *
+			 * B(t) = (1-t)^2.P0 + 2(1-t)t.P1 + t^2.P2
+			 *
+			 * Where 't' is a number 0.0 - 1.0, increasing along
+			 * curve as it progresses from P0 to P2 (P{0,1,2} are
+			 * 2D vectors). However, since we are using the curves
+			 * as functions, we first need to find which 't' along
+			 * the curve corresponds to our 'x' input.
+			 * Geometrically, quadratic Bezier curves are defined
+			 * as a set of points `P' which satisfy:
+			 *
+			 * 1) let `A' be a point that is on the line between
+			 *    P0 and P1. Its distance from P0 is `t' times
+			 *    the distance of P1 from P0.
+			 * 2) let `B' be a point that is on the line between
+			 *    P1 and P2. Its distance from P1 is `t' times
+			 *    the distance of P2 from P1.
+			 * 3) `P' is a point that is on a line between A and B.
+			 *    Its distance from A is `t' times the distance
+			 *    of B from A.
+			 *
+			 * The x coordinate of `P' corresponds to the input
+			 * `x' argument. Transforming this into an analytical
+			 * representation and simplifying to only consider
+			 * the X axis, we get (here 'a', 'b' represent the
+			 * respective 2D vector's X coordinate only):
+			 *
+			 * a = t(p1 - p0) + p0
+			 * b = t(p2 - p1) + p1
+			 * x = t(b - a) + a
+			 * x = t(t(p2 - p1) + p1 - t(p1 - p0) + p0) +
+			 *     + t(p1 - p0) + p0
+			 *
+			 * Rearranging, we get the following quadratic equation:
+			 *
+			 * 0 = (p2 - 2.p1 + p0)t^2 + 2(p1 - p0)t + p0 - x
+			 *
+			 * The solution we're interested in is only the one
+			 * between 0.0 - 1.0 (inclusive). We then take that
+			 * value and use it in the bezier curve equation at
+			 * the top to obtain the function value at point 'x'.
+			 */
+			ASSERT(p0.x < p2.x);
+			ASSERT(p0.x <= p1.x && p1.x <= p2.x);
+			n = quadratic_solve(p2.x - 2 * p1.x + p0.x,
+			    2 * (p1.x - p0.x), p0.x - x, ts);
+			ASSERT(n != 0);
+			if (ts[0] >= 0 && ts[0] <= 1.0) {
+				t = ts[0];
+			} else {
+				ASSERT(n == 2);
+				t = ts[1];
+			}
+			ASSERT(t >= 0.0 && t <= 1.0);
+			y = POW2(1 - t) * p0.y + 2 * (1 - t) * t * p1.y +
+			    POW2(t) * p2.y;
+
+			return (y);
+		}
+	}
+	assert(0);
 }

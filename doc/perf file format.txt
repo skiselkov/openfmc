@@ -1,0 +1,62 @@
+# This is a comment, everything after the initial # sign is ignored
+# up to the next line
+
+# File version
+VERSION,1
+
+ACFTTYPE,<acftname>
+
+ENGTYPE,<engtype>
+
+# Maximum engine thrust in Kilonewtons
+MAXTHR,123.5
+
+# Reference zero fuel weight. This is not the same as operating empty weight
+# It's only an estimate of a typical zero fuel weight (i.e. OEW + payload)
+# of the aircraft on a typical mission. This is used in place of actual ZFW
+# when ZFW is unavailable and the FMC needs to do performance calculations
+# which depends on it. In metric tons.
+REFZFW,42.5
+
+# Maximum allowable fuel load in metric tons.
+MAXFUEL,30
+
+# Maximum allowable gross weight (OEW + payload + fuel) in metric tons.
+MAXGW,85
+
+# MAXTHR fraction as a function of effective air density (in kg/m^3)
+THRDENS,<numentries>
+<alt>,<value>
+<alt>,<value>
+<alt>,<value>
+... <numentries> many lines ...
+
+# MAXTHR fraction as a function of ISA deviation (in deg C)
+THRISA,<numentries>
+<isadev>,<value>
+<isadev>,<value>
+<isadev>,<value>
+... <numentries> many lines ...
+
+# Specific fuel consumption (in kg/hr) as a function of engine thrust
+# (in Kilonewtons)
+SFCTHR,<numentries>
+<isadev>,<value>
+<isadev>,<value>
+<isadev>,<value>
+... <numentries> many lines ...
+
+# Specific fuel consumption fraction as a function of effective
+# air density (in kg/m^3)
+SFCDENS,<numentries>
+<isadev>,<value>
+<isadev>,<value>
+<isadev>,<value>
+... <numentries> many lines ...
+
+# Specific fuel consumption fraction as a function of ISA deviation (in deg C)
+SFCISA,<numentries>
+<isadev>,<value>
+<isadev>,<value>
+<isadev>,<value>
+... <numentries> many lines ...

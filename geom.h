@@ -65,6 +65,11 @@ typedef struct {
 	double	r;	/* mean radius in meters */
 } ellip_t;
 
+typedef struct {
+	size_t	n_pts;
+	vect2_t	*pts;
+} bezier_t;
+
 /*
  * Unit conversions
  */
@@ -230,6 +235,13 @@ typedef struct {
 
 lcc_t lcc_init(double reflat, double reflon, double stdpar1, double stdpar2);
 vect2_t geo2lcc(geo_pos2_t pos, const lcc_t *lcc);
+
+/*
+ *  Bezier curve functions.
+ */
+bezier_t *bezier_alloc(size_t num_pts);
+void bezier_free(bezier_t *curve);
+double quad_bezier_func_get(double x, const bezier_t *func);
 
 #ifdef	__cplusplus
 }

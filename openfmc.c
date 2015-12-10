@@ -42,7 +42,7 @@
 
 #define	IMGH		1200
 #define	IMGW		1200
-#define	FONTSZ		16
+#define	FONTSZ		14
 #define	REFLON		0
 #define	CHANNELS	4
 #define	BPP		8
@@ -892,6 +892,150 @@ test_magvar(void)
 	    expct_var_test_2017_5, pos_test, 2017.5);
 }
 
+void
+test_perf(void)
+{
+	double		ktas = 500;
+	double		oat = -50;
+	double		alt = 35000;
+	double		qnh = 1050;
+	acft_perf_t	*acft;
+	flt_perf_t	flt;
+
+	acft = acft_perf_parse("doc/perf_sample.csv");
+	if (acft == NULL)
+		exit(EXIT_FAILURE);
+	flt.thr_derate = 1.0;
+
+	acft_perf_destroy(acft);
+
+	printf("INPUTS:\n"
+	    "  KTAS:\t\t%6.0lf KT\n"
+	    "  OAT:\t\t%6.1lf deg C\n"
+	    "  QNH:\t\t%6.1lf hPa\n"
+	    "  ALT:\t\t%6.0lf ft\n"
+	    "-------------------------\n", ktas, oat, qnh, alt);
+
+	double press = alt2press(alt, qnh);
+
+	printf("alt2press:\t%6.1lf hPa\n"
+	    "press2alt:\t%6.0lf ft\n", press, press2alt(press, qnh));
+
+	double fl = alt2fl(alt, qnh);
+	printf("alt2fl:\t\t%6.0lf FL\n"
+	    "fl2alt:\t\t%6.0lf ft\n", fl, fl2alt(fl, qnh));
+
+	double mach = ktas2mach(ktas, oat);
+	double a0 = speed_sound(oat), dens = air_density(press, oat),
+	    Pd = dyn_press(ktas, press, oat), Pi = impact_press(mach, press);
+
+	printf("speed of sound:\t%6.1lf m/s\n"
+	    "air density:\t%6.3lf kg/m^3\n"
+	    "impact press:\t%6.1lf hPa\n"
+	    "dynamic press:\t%6.1lf hPa\n", a0, dens, Pi, Pd);
+
+	double isadev = sat2isadev(fl, oat);
+	printf("sat2isadev:\t%6.1lf deg C\n"
+	    "isadev2sat:\t%6.1lf deg C\n", isadev, isadev2sat(fl, isadev));
+
+	printf("ktas2mach:\t%6.3lf\n"
+	    "mach2ktas:\t%6.1lf KT\n", mach, mach2ktas(mach, oat));
+
+	double kcas = ktas2kcas(ktas, press, oat);
+	printf("ktas2kcas:\t%6.1lf KT\n"
+	    "kcas2ktas:\t%6.1lf KT\n", kcas, kcas2ktas(kcas, press, oat));
+
+	double keas = mach2keas(mach, press);
+	printf("mach2keas:\t%6.1lf KT\n"
+	    "keas2mach:\t%6.3lf\n", keas, keas2mach(keas, press));
+
+	double tat = sat2tat(oat, mach);
+	printf("sat2tat:\t%6.2lf deg C\n"
+	    "tat2sat:\t%6.2lf deg C\n", tat, tat2sat(tat, mach));
+}
+
+void
+test_math(void)
+{
+	bezier_t		bez;
+	vect2_t			pts[3];
+	png_bytep		rows[IMGH];
+	uint8_t			*img;
+	cairo_surface_t		*surface;
+	cairo_t			*cr;
+	char			buf[32];
+	cairo_text_extents_t	ext;
+
+	surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, IMGW, IMGH);
+	cr = cairo_create(surface);
+	img = cairo_image_surface_get_data(surface);
+
+	prep_png_img(img, rows, IMGW, IMGH);
+
+	pts[0] = VECT2(0, 0);
+	pts[1] = VECT2(3, 3);
+	pts[2] = VECT2(4, 0);
+
+	bez.n_pts = 3;
+	bez.pts = pts;
+
+
+#define	OFFSET		100
+#define	FACT		250
+#define	CAIRO_X(x)	((x * FACT) + OFFSET)
+#define	CAIRO_Y(y)	(IMGH - ((y * FACT) + OFFSET))
+#define	NUMPTS		20
+#define	LIM(x)		(x + (x / NUMPTS / 2))
+
+	cairo_set_line_width(cr, 2);
+	cairo_set_source_rgb(cr, 1, 1, 1);
+	cairo_set_font_size(cr, FONTSZ);
+	for (double x = 0.0; x < LIM(4.0); x += (4.0 / NUMPTS)) {
+		cairo_move_to(cr, CAIRO_X(x),
+		    CAIRO_Y(quad_bezier_func_get(x, &bez)));
+		cairo_line_to(cr, CAIRO_X(x), CAIRO_Y(((x - pts[0].x) /
+		    (pts[2].x - pts[0].x) * (pts[2].y - pts[0].y) + pts[0].y)));
+		cairo_stroke(cr);
+
+		snprintf(buf, sizeof (buf), "x=%.1lf", x);
+		cairo_text_extents(cr, buf, &ext);
+		cairo_move_to(cr, CAIRO_X(x) - ext.width / 2, CAIRO_Y(0) +
+		    2 * ext.height);
+		cairo_show_text(cr, buf);
+	}
+	cairo_stroke(cr);
+
+	cairo_move_to(cr, CAIRO_X(pts[0].x), CAIRO_Y(pts[0].y));
+	cairo_line_to(cr, CAIRO_X(pts[1].x), CAIRO_Y(pts[1].y));
+	cairo_line_to(cr, CAIRO_X(pts[2].x), CAIRO_Y(pts[2].y));
+	cairo_close_path(cr);
+	cairo_stroke(cr);
+
+	cairo_set_line_width(cr, 4);
+
+	cairo_set_source_rgb(cr, 1, 0, 0);
+	for (double x = 0.0; x < LIM(4.0); x += (4.0 / NUMPTS)) {
+		double y = quad_bezier_func_get(x, &bez);
+		if (x == 0.0)
+			cairo_move_to(cr, CAIRO_X(pts[0].x), CAIRO_Y(pts[0].y));
+		else
+			cairo_line_to(cr, CAIRO_X(x), CAIRO_Y(y));
+	}
+	cairo_stroke(cr);
+
+#undef	OFFSET
+#undef	FACT
+#undef	CAIRO_X
+#undef	CAIRO_Y
+#undef	NUMPTS
+#undef	LIM
+
+	xlate_png_byteorder(img, IMGW, IMGH);
+	write_png_img("test.png", rows, IMGW, IMGH);
+
+	cairo_destroy(cr);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -924,8 +1068,10 @@ main(int argc, char **argv)
 //	test_lcc(40, 30, 50);
 //	test_fpp();
 //	test_sph_xlate();
-	test_route(argv[optind]);
+//	test_route(argv[optind]);
 //	test_magvar();
+	test_perf();
+//	test_math();
 
 
 	return (0);
