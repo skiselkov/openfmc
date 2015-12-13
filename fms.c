@@ -121,7 +121,7 @@ navdata_get_valid(const char *navdata_dir, unsigned *cyclep, time_t *fromp,
 		}
 		/* If the months are disordered, roll over end year */
 		if (tm_start.tm_mon > tm_end.tm_mon)
-			tm_end.tm_year++;
+			tm_start.tm_year--;
 		*fromp = timegm(&tm_start);
 		*top = timegm(&tm_end);
 		break;

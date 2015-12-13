@@ -802,7 +802,7 @@ test_route(char *navdata_dir)
 			    navdb->airac_cycle,
 			    tm_start.tm_mday, mon1, tm_start.tm_year % 100,
 			    tm_end.tm_mday, mon2, tm_end.tm_year % 100,
-			    !navdb_is_current(navdb) ? "NOT " : "",
+			    navdb_is_current(navdb) ? "" : "NOT ",
 			    navdb->valid_from, navdb->valid_to);
 			freelocale(loc);
 		}
@@ -1036,6 +1036,38 @@ test_math(void)
 	cairo_destroy(cr);
 }
 
+void
+test_route_seg(void)
+{
+	list_t seglist;
+	route_seg_t rs1, rs2;
+
+	rs1 = (route_seg_t){
+		.type = ROUTE_SEG_TYPE_DIRECT,
+		.direct.start = GEO_POS3(0, 0, 0),
+		.direct.end = GEO_POS3(0, 1, 0),
+		.speed_start = 150,
+		.speed_end = 150,
+		.join_type = ROUTE_SEG_JOIN_ARC_TRACK
+	};
+	rs2 = (route_seg_t){
+		.type = ROUTE_SEG_TYPE_DIRECT,
+		.direct.start = GEO_POS3(0, 1, 0),
+		.direct.end = GEO_POS3(1, 1, 0),
+		.speed_start = 150,
+		.speed_end = 150,
+		.join_type = ROUTE_SEG_JOIN_ARC_TRACK
+	};
+
+	list_create(&seglist, sizeof (route_seg_t), offsetof(route_seg_t,
+	    route_segs_node));
+
+	list_insert_tail(&seglist, &rs1);
+	list_insert_tail(&seglist, &rs2);
+
+	route_seg_join(&seglist, &rs1, &rs2);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -1068,11 +1100,11 @@ main(int argc, char **argv)
 //	test_lcc(40, 30, 50);
 //	test_fpp();
 //	test_sph_xlate();
-//	test_route(argv[optind]);
+	test_route(argv[optind]);
 //	test_magvar();
-	test_perf();
+//	test_perf();
 //	test_math();
-
+//	test_route_seg();
 
 	return (0);
 }

@@ -40,8 +40,8 @@ extern "C" {
 #define	FAH2KELVIN(f)	(((f) + 459.67) * 0.5555555555)
 #define	KELVIN2FAH(k)	(((k) * 1.8) - 459.67)
 
-#define	KTS2MPS(k)	(NM2MET(k) / 3600)	/* knots to m.s^-1 */
-#define	MPS2KTS(k)	(MET2NM(k) * 3600)	/* m.s^-1 to knots */
+#define	KT2MPS(k)	(NM2MET(k) / 3600)	/* knots to m/s */
+#define	MPS2KT(k)	(MET2NM(k) * 3600)	/* m/s to knots */
 
 typedef struct {
 	int	spd;
@@ -86,9 +86,14 @@ typedef struct {
 } acft_perf_t;
 
 typedef struct {
-	double	crz_lvl;
-	double	crz_tas;
-	double	thr_derate;	/* fraction of eng_max_thr */
+	double		crz_lvl;
+	double		crz_tas;
+	double		thr_derate;	/* fraction of eng_max_thr */
+
+	vect2_t		heading;
+	geo_pos3_t	position;
+
+	double		gw;		/* Gross Weight */
 } flt_perf_t;
 
 acft_perf_t *acft_perf_parse(const char *filename);

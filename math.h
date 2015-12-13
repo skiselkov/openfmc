@@ -34,6 +34,7 @@ extern "C" {
 #define	POW2(x)	((x) * (x))
 
 unsigned quadratic_solve(double a, double b, double c, double x[2]);
+double fx_lin(double x, double x1, double y1, double x2, double y2);
 
 #ifdef	__cplusplus
 }

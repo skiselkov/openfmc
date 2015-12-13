@@ -123,6 +123,7 @@ double vect2_abs(vect2_t a);
 vect3_t vect3_set_abs(vect3_t a, double abs);
 vect2_t vect2_set_abs(vect2_t a, double abs);
 vect3_t vect3_unit(vect3_t a, double *l);
+vect2_t vect2_unit(vect2_t a, double *l);
 
 vect3_t vect3_add(vect3_t a, vect3_t b);
 vect2_t vect2_add(vect2_t a, vect2_t b);
@@ -133,6 +134,10 @@ vect2_t vect2_scmul(vect2_t a, double b);
 double vect3_dotprod(vect3_t a, vect3_t b);
 vect3_t vect3_xprod(vect3_t a, vect3_t b);
 vect3_t vect3_mean(vect3_t a, vect3_t b);
+
+vect2_t vect2_norm(vect2_t v, bool_t right);
+vect2_t vect2_rot(vect2_t v, double angle);
+vect2_t vect2_inv(vect2_t v);
 
 /*
  * Spherical, geodesic and ECEF coordinate conversion.

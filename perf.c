@@ -33,20 +33,24 @@
 #include "helpers.h"
 #include "perf.h"
 
-#define	ISA_SL_TEMP		15.0	/* ISA seal level emperature in degC */
-#define	ISA_SL_TEMP_K		288.15	/* ISA seal level emperature in degC */
+/*
+ * Physical constants.
+ */
+#define	EARTH_GRAVITY	9.80665		/* Earth surface grav. acceleration */
+#define	DRY_AIR_MOL	0.0289644	/* Molar mass of dry air */
+#define	GAMMA		1.4		/* Specific heat ratio of dry air */
+#define	R_univ		8.31447		/* Universal gas constant */
+#define	R_spec		287.058		/* Specific gas constant of dry air */
+
+/*
+ * ISA (International Standard Atmosphere) parameters.
+ */
+#define	ISA_SL_TEMP_C		15.0	/* ISA sea level temp in degrees C */
+#define	ISA_SL_TEMP_K		288.15	/* ISA sea level temp in Kelvin */
 #define	ISA_SL_PRESS		1013.25	/* ISA sea level pressure in hPa */
-#define	ISA_ELR_PER_1000	1.98	/* ISA environmental lapse rate */
-#define	ISA_TLR_PER_M		0.0065	/* ISA temperature lapse rate K/m */
-
-#define	CONST_P_SPEC_HEAT	1007	/* Constant pressure specific heat */
-#define	EARTH_GRAVITY		9.80665	/* Earth surface grav. acceleration */
-#define	DRY_AIR_MOL		0.0289644	/* Molar mass of dry air */
-
-#define	GAMMA			1.4	/* Specific heat ratio for dry air */
-#define	SPEED_SOUND_ISA		340.3	/* Speed of sound at 15 degrees C */
-#define	R_univ			8.31447	/* Universal gas constant */
-#define	R_spec			287.058	/* Specific gas constant of dry air */
+#define	ISA_TLR_PER_1000FT	1.98	/* ISA temp lapse rate per 1000ft */
+#define	ISA_TLR_PER_1M		0.0065	/* ISA temp lapse rate per 1 meter */
+#define	ISA_SPEED_SOUND		340.3	/* Speed of sound at 15 degrees C */
 
 #define	ACFT_PERF_MIN_VERSION	1
 #define	ACFT_PERF_MAX_VERSION	1
@@ -332,7 +336,7 @@ eng_max_thr_avg(const flt_perf_t *flt, acft_perf_t *acft, double alt1,
 double
 ktas2mach(double ktas, double oat)
 {
-	return (KTS2MPS(ktas) / speed_sound(oat));
+	return (KT2MPS(ktas) / speed_sound(oat));
 }
 
 /*
@@ -346,7 +350,7 @@ ktas2mach(double ktas, double oat)
 double
 mach2ktas(double mach, double oat)
 {
-	return (MPS2KTS(mach * speed_sound(oat)));
+	return (MPS2KT(mach * speed_sound(oat)));
 }
 
 /*
@@ -362,7 +366,7 @@ double
 ktas2kcas(double ktas, double pressure, double oat)
 {
 	double qc = impact_press(ktas2mach(ktas, oat), pressure);
-	return (MPS2KTS(SPEED_SOUND_ISA *
+	return (MPS2KT(ISA_SPEED_SOUND *
 	    sqrt(5 * (pow(qc / ISA_SL_PRESS + 1, 0.2857142857) - 1))));
 }
 
@@ -388,8 +392,8 @@ kcas2ktas(double kcas, double pressure, double oat)
 	 * Where P0 is pressure at sea level, cas is calibrated airspeed
 	 * in m.s^-1 and a0 speed of sound at ISA temperature.
 	 */
-	qc = ISA_SL_PRESS * (pow((POW2(KTS2MPS(kcas)) / (5 *
-	    POW2(SPEED_SOUND_ISA))) + 1, 3.5) - 1);
+	qc = ISA_SL_PRESS * (pow((POW2(KT2MPS(kcas)) / (5 *
+	    POW2(ISA_SPEED_SOUND))) + 1, 3.5) - 1);
 
 	/*
 	 * Next take the impact pressure equation and solve for Mach number:
@@ -418,7 +422,7 @@ kcas2ktas(double kcas, double pressure, double oat)
 double
 mach2keas(double mach, double press)
 {
-	return (MPS2KTS(SPEED_SOUND_ISA * mach * sqrt(press / ISA_SL_PRESS)));
+	return (MPS2KT(ISA_SPEED_SOUND * mach * sqrt(press / ISA_SL_PRESS)));
 }
 
 /*
@@ -441,7 +445,7 @@ keas2mach(double keas, double press)
 	 * Where Ve is equivalent airspeed in m.s^-1, P is local static
 	 * pressure and P0 is ISA sea level pressure (in hPa).
 	 */
-	return (KTS2MPS(keas) / (SPEED_SOUND_ISA * sqrt(press / ISA_SL_PRESS)));
+	return (KT2MPS(keas) / (ISA_SPEED_SOUND * sqrt(press / ISA_SL_PRESS)));
 }
 
 /*
@@ -455,8 +459,8 @@ keas2mach(double keas, double press)
 double
 alt2press(double alt, double qnh)
 {
-	return (qnh * pow(1 - (ISA_TLR_PER_M * FEET2MET(alt)) / ISA_SL_TEMP_K,
-	    (EARTH_GRAVITY * DRY_AIR_MOL) / (R_univ * ISA_TLR_PER_M)));
+	return (qnh * pow(1 - (ISA_TLR_PER_1M * FEET2MET(alt)) / ISA_SL_TEMP_K,
+	    (EARTH_GRAVITY * DRY_AIR_MOL) / (R_univ * ISA_TLR_PER_1M)));
 }
 
 /*
@@ -471,8 +475,8 @@ double
 press2alt(double press, double qnh)
 {
 	return (MET2FEET((ISA_SL_TEMP_K * (1 - pow(press / qnh,
-	    (R_univ * ISA_TLR_PER_M) / (EARTH_GRAVITY * DRY_AIR_MOL)))) /
-	    ISA_TLR_PER_M));
+	    (R_univ * ISA_TLR_PER_1M) / (EARTH_GRAVITY * DRY_AIR_MOL)))) /
+	    ISA_TLR_PER_1M));
 }
 
 /*
@@ -542,7 +546,7 @@ tat2sat(double tat, double mach)
 double
 sat2isadev(double fl, double sat)
 {
-	return (sat - (ISA_SL_TEMP - ((fl / 10) * ISA_ELR_PER_1000)));
+	return (sat - (ISA_SL_TEMP_C - ((fl / 10) * ISA_TLR_PER_1000FT)));
 }
 
 /*
@@ -556,7 +560,7 @@ sat2isadev(double fl, double sat)
 double
 isadev2sat(double fl, double isadev)
 {
-	return (isadev + ISA_SL_TEMP - ((fl / 10) * ISA_ELR_PER_1000));
+	return (isadev + ISA_SL_TEMP_C - ((fl / 10) * ISA_TLR_PER_1000FT));
 }
 
 /*
@@ -628,5 +632,5 @@ impact_press(double mach, double pressure)
 double
 dyn_press(double ktas, double press, double oat)
 {
-	return (0.5 * air_density(press, oat) * POW2(KTS2MPS(ktas)) / 100);
+	return (0.5 * air_density(press, oat) * POW2(KT2MPS(ktas)) / 100);
 }

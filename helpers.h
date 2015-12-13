@@ -140,6 +140,17 @@ is_valid_hdg(double hdg)
 	return (hdg >= 0.0 && hdg <= 360.0);
 }
 
+static inline double
+rel_hdg(double hdg1, double hdg2, bool_t *cw)
+{
+	ASSERT(is_valid_hdg(hdg1) && is_valid_hdg(hdg2));
+	hdg1 -= 180;
+	hdg2 -= 180;
+	if (cw != NULL)
+		*cw = (hdg1 < hdg2);
+	return (hdg1 < hdg2 ? hdg2 - hdg1 : hdg1 - hdg2);
+}
+
 static inline bool_t
 is_valid_arc_radius(double radius)
 {

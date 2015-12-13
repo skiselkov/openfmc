@@ -260,6 +260,38 @@ vect3_mean(vect3_t a, vect3_t b)
 }
 
 /*
+ * Rotates vector `v' by 90 degrees either to the right or left. This is
+ * faster than doing full trigonometric calculations in vect2_rotate.
+ */
+vect2_t
+vect2_norm(vect2_t v, bool_t right)
+{
+	if (right)
+		return (VECT2(v.y, -v.x));
+	else
+		return (VECT2(-v.y, v.x));
+}
+
+/*
+ * Rotates vector `v' by `a' degrees to the right.
+ */
+vect2_t
+vect2_rot(vect2_t v, double a)
+{
+	double sin_a = sin(DEG2RAD(a)), cos_a = cos(DEG2RAD(a));
+	return (VECT2(v.x * cos_a - v.y * sin_a, v.x * sin_a + v.y * cos_a));
+}
+
+/*
+ * Inverts vector `v' to point in the opposite direction.
+ */
+vect2_t
+vect2_inv(vect2_t v)
+{
+	return (VECT2(-v.x, -v.y));
+}
+
+/*
  * Converts surface coordinates on an Earth-sized spheroid into 3-space
  * coordinate vector in ECEF space. Please note that this considers the
  * Earth to be a perfect sphere and hence cannot be used for very precise
