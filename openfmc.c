@@ -906,6 +906,7 @@ test_perf(void)
 	if (acft == NULL)
 		exit(EXIT_FAILURE);
 	flt.thr_derate = 1.0;
+	UNUSED(flt);
 
 	acft_perf_destroy(acft);
 
@@ -1036,36 +1037,310 @@ test_math(void)
 	cairo_destroy(cr);
 }
 
+#define	BASELAT	0
+#define	BASELON	0
+#define	P1	(GEO_POS3(BASELAT - 0.08, BASELON - 0.20, 0))
+#define	P2	(GEO_POS3(BASELAT - 0.08, BASELON + 0.20, 0))
+#define	P3	(GEO_POS3(BASELAT + 0.00, BASELON - 0.05, 0))
+#define	P4	(GEO_POS3(BASELAT + 0.08, BASELON + 0.00, 0))
+#define	P5	(GEO_POS3(BASELAT + 0.16, BASELON - 0.20, 0))
+#define	P6	(GEO_POS2(BASELAT + 0.16, BASELON - 0.05))
+#define	P7	(GEO_POS3(BASELAT + 0.16, BASELON + 0.10, 0))
+#define	P8	(GEO_POS3(BASELAT + 0.16, BASELON + 0.25, 0))
+#define	SPD1	300
+#define	SPD2	500
+#define	SPD3	700
+#define	CW	B_TRUE
+
+#define	HOFFSET		600
+#define	VOFFSET		400
+#define	FACT		0.02
+#define	CAIRO_X(x)	((x * FACT) + HOFFSET)
+#define	CAIRO_Y(y)	(IMGH - ((y * FACT) + VOFFSET))
+#define	STAR_SZ		(VECT2(50, 50))
+#define	CROSS_SZ	(VECT2(20, 20))
+#define	CAIRO_VECT2(v)	(VECT2(CAIRO_X((v).x), CAIRO_Y((v).y)))
+
+#define	DRAW_SEG_GUIDES	0
+
+static void
+draw_star_outline(cairo_t *cr, vect2_t pos, vect2_t sz)
+{
+	vect2_t stem_sz = VECT2(sz.x / 5, sz.y / 5);
+	cairo_move_to(cr, pos.x - stem_sz.x / 2, pos.y - stem_sz.y / 2);
+	cairo_line_to(cr, pos.x - sz.x / 2, pos.y);
+	cairo_line_to(cr, pos.x - stem_sz.x / 2, pos.y + stem_sz.y / 2);
+	cairo_line_to(cr, pos.x, pos.y + sz.y / 2);
+	cairo_line_to(cr, pos.x + stem_sz.x / 2, pos.y + stem_sz.y / 2);
+	cairo_line_to(cr, pos.x + sz.x / 2, pos.y);
+	cairo_line_to(cr, pos.x + stem_sz.x / 2, pos.y - stem_sz.y / 2);
+	cairo_line_to(cr, pos.x, pos.y - sz.y / 2);
+	cairo_close_path(cr);
+}
+
+static void
+draw_star(cairo_t *cr, vect2_t pos, vect2_t sz)
+{
+	cairo_set_source_rgb(cr, 0, 0, 0);
+	draw_star_outline(cr, pos, sz);
+	cairo_fill(cr);
+	cairo_set_source_rgb(cr, 1, 1, 1);
+	draw_star_outline(cr, pos, sz);
+	cairo_stroke(cr);
+}
+
+#if	DRAW_SEG_GUIDES
+
+static void
+draw_cross(cairo_t *cr, vect2_t pos, vect2_t sz)
+{
+	cairo_set_source_rgb(cr, 0.67, 0.67, 0.67);
+	cairo_move_to(cr, pos.x - sz.x / 2, pos.y);
+	cairo_line_to(cr, pos.x + sz.x / 2, pos.y);
+	cairo_stroke(cr);
+	cairo_move_to(cr, pos.x, pos.y - sz.y / 2);
+	cairo_line_to(cr, pos.x, pos.y + sz.y / 2);
+	cairo_stroke(cr);
+	cairo_set_source_rgb(cr, 1, 1, 1);
+}
+
+static void
+draw_seg(cairo_t *cr, route_seg_t *rs, const fpp_t *fpp)
+{
+	if (rs->type == ROUTE_SEG_TYPE_DIRECT) {
+		vect2_t end = geo2fpp(GEO3_TO_GEO2(rs->direct.end), fpp);
+		cairo_line_to(cr, CAIRO_X(end.x), CAIRO_Y(end.y));
+	} else {
+		vect2_t start, center, end;
+		double hdg1, hdg2, angle1, angle2;
+
+		start = geo2fpp(GEO3_TO_GEO2(rs->arc.start), fpp);
+		center = geo2fpp(rs->arc.center, fpp);
+		end = geo2fpp(GEO3_TO_GEO2(rs->arc.end), fpp);
+		hdg1 = dir2hdg(vect2_sub(start, center));
+		hdg2 = dir2hdg(vect2_sub(end, center));
+		angle1 = DEG2RAD(hdg1) - M_PI / 2;
+		angle2 = DEG2RAD(hdg2) - M_PI / 2;
+		if (!rs->arc.cw) {
+			double tmp = angle1;
+			angle1 = angle2;
+			angle2 = tmp;
+		}
+
+		cairo_stroke(cr);
+		cairo_arc(cr, CAIRO_X(center.x), CAIRO_Y(center.y),
+		    vect2_abs(vect2_sub(start, center)) * FACT,
+		    angle1, angle2);
+		cairo_stroke(cr);
+		cairo_move_to(cr, CAIRO_X(end.x), CAIRO_Y(end.y));
+	}
+}
+#endif	/* DRAW_SEG_GUIDES */
+
 void
 test_route_seg(void)
 {
-	list_t seglist;
-	route_seg_t rs1, rs2;
+	list_t			seglist;
+	route_seg_t		*rs1, *rs2, *rs3, *rs4, *rs5, *rs6;
+	png_bytep		rows[IMGH];
+	uint8_t			*img;
+	cairo_surface_t		*surface;
+	cairo_t			*cr;
+	fpp_t			fpp;
+	vect2_t			pos;
+#if	DRAW_SEG_GUIDES
+	double			dashes[2] = {5, 5};
+#endif
 
-	rs1 = (route_seg_t){
-		.type = ROUTE_SEG_TYPE_DIRECT,
-		.direct.start = GEO_POS3(0, 0, 0),
-		.direct.end = GEO_POS3(0, 1, 0),
-		.speed_start = 150,
-		.speed_end = 150,
-		.join_type = ROUTE_SEG_JOIN_ARC_TRACK
-	};
-	rs2 = (route_seg_t){
-		.type = ROUTE_SEG_TYPE_DIRECT,
-		.direct.start = GEO_POS3(0, 1, 0),
-		.direct.end = GEO_POS3(1, 1, 0),
-		.speed_start = 150,
-		.speed_end = 150,
-		.join_type = ROUTE_SEG_JOIN_ARC_TRACK
-	};
+	rs1 = calloc(sizeof (*rs1), 1);
+	rs1->type = ROUTE_SEG_TYPE_DIRECT;
+	rs1->direct.start = P1;
+	rs1->direct.end = P2;
+	rs1->speed_start = SPD1;
+	rs1->speed_end = SPD1;
+	rs1->join_type = ROUTE_SEG_JOIN_ARC_TRACK;
+
+	rs2 = calloc(sizeof (*rs2), 1);
+	rs2->type = ROUTE_SEG_TYPE_DIRECT;
+	rs2->direct.start = P2;
+	rs2->direct.end = P3;
+	rs2->speed_start = SPD1;
+	rs2->speed_end = SPD2;
+	rs2->join_type = ROUTE_SEG_JOIN_ARC_TRACK;
+
+	rs3 = calloc(sizeof (*rs3), 1);
+	rs3->type = ROUTE_SEG_TYPE_DIRECT;
+	rs3->direct.start = P3;
+	rs3->direct.end = P4;
+	rs3->speed_start = SPD2;
+	rs3->speed_end = SPD2;
+	rs3->join_type = ROUTE_SEG_JOIN_ARC_TRACK;
+
+	rs4 = calloc(sizeof (*rs4), 1);
+	rs4->type = ROUTE_SEG_TYPE_DIRECT;
+	rs4->direct.start = P4;
+	rs4->direct.end = P5;
+	rs4->speed_start = SPD3;
+	rs4->speed_end = SPD3;
+	rs4->join_type = ROUTE_SEG_JOIN_ARC_TRACK;
+
+	rs5 = calloc(sizeof (*rs5), 1);
+	rs5->type = ROUTE_SEG_TYPE_ARC;
+	rs5->arc.start = P5;
+	rs5->arc.end = P7;
+	rs5->arc.center = P6;
+	rs5->arc.cw = CW;
+	rs5->speed_start = SPD3;
+	rs5->speed_end = SPD3;
+	rs5->join_type = ROUTE_SEG_JOIN_ARC_TRACK;
+
+	rs6 = calloc(sizeof (*rs6), 1);
+	rs6->type = ROUTE_SEG_TYPE_DIRECT;
+	rs6->direct.start = P7;
+	rs6->direct.end = P8;
+	rs6->speed_start = SPD3;
+	rs6->speed_end = SPD3;
+	rs6->join_type = ROUTE_SEG_JOIN_ARC_TRACK;
 
 	list_create(&seglist, sizeof (route_seg_t), offsetof(route_seg_t,
 	    route_segs_node));
 
-	list_insert_tail(&seglist, &rs1);
-	list_insert_tail(&seglist, &rs2);
+	list_insert_tail(&seglist, rs1);
+	list_insert_tail(&seglist, rs2);
+	list_insert_tail(&seglist, rs3);
+	list_insert_tail(&seglist, rs4);
+	list_insert_tail(&seglist, rs5);
+	list_insert_tail(&seglist, rs6);
 
-	route_seg_join(&seglist, &rs1, &rs2);
+	surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, IMGW, IMGH);
+	cr = cairo_create(surface);
+	img = cairo_image_surface_get_data(surface);
+
+	prep_png_img(img, rows, IMGW, IMGH);
+	fpp = gnomo_fpp_init(GEO_POS2(BASELAT, BASELON), 0, &wgs84, B_FALSE);
+
+#if	DRAW_SEG_GUIDES
+	cairo_set_source_rgb(cr, 0.67, 0.67, 0.67);
+	cairo_set_line_width(cr, 1);
+	pos = geo2fpp(GEO3_TO_GEO2(((route_seg_t *)list_head(
+	    &seglist))->direct.start), &fpp);
+	cairo_move_to(cr, CAIRO_X(pos.x), CAIRO_Y(pos.y));
+	for (route_seg_t *rs = list_head(&seglist); rs;
+	    rs = list_next(&seglist, rs))
+		draw_seg(cr, rs, &fpp);
+	cairo_stroke(cr);
+#endif
+
+	cairo_set_line_width(cr, 3);
+	cairo_set_source_rgb(cr, 1, 1, 1);
+
+	for (route_seg_t *rs = list_head(&seglist); rs;
+	    rs = list_next(&seglist, rs)) {
+		route_seg_t *rs_next = list_next(&seglist, rs);
+		if (rs_next != NULL) {
+			rs = route_seg_join(&seglist, rs, rs_next, NM2MET(.3));
+		}
+	}
+
+	for (route_seg_t *rs = list_head(&seglist); rs;
+	    rs = list_next(&seglist, rs)) {
+		if (rs->type == ROUTE_SEG_TYPE_DIRECT) {
+			vect2_t start, end;
+			start = geo2fpp(GEO3_TO_GEO2(rs->direct.start), &fpp);
+			end = geo2fpp(GEO3_TO_GEO2(rs->direct.end), &fpp);
+
+#if	DRAW_SEG_GUIDES
+			cairo_set_line_width(cr, 2);
+			draw_cross(cr, CAIRO_VECT2(start), CROSS_SZ);
+			draw_cross(cr, CAIRO_VECT2(end), CROSS_SZ);
+			cairo_set_line_width(cr, 3);
+#endif
+			cairo_move_to(cr, CAIRO_X(start.x), CAIRO_Y(start.y));
+			cairo_line_to(cr, CAIRO_X(end.x), CAIRO_Y(end.y));
+			cairo_stroke(cr);
+		} else {
+			vect2_t start, end, center;
+			double hdg1, hdg2, angle1, angle2;
+
+			start = geo2fpp(GEO3_TO_GEO2(rs->arc.start), &fpp);
+			end = geo2fpp(GEO3_TO_GEO2(rs->arc.end), &fpp);
+			center = geo2fpp(rs->arc.center, &fpp);
+#if	DRAW_SEG_GUIDES
+			cairo_set_line_width(cr, 2);
+			draw_cross(cr, CAIRO_VECT2(center), CROSS_SZ);
+			draw_cross(cr, CAIRO_VECT2(start), CROSS_SZ);
+			draw_cross(cr, CAIRO_VECT2(end), CROSS_SZ);
+			cairo_set_line_width(cr, 3);
+#endif
+			hdg1 = dir2hdg(vect2_sub(start, center));
+			hdg2 = dir2hdg(vect2_sub(end, center));
+			angle1 = DEG2RAD(hdg1) - M_PI / 2;
+			angle2 = DEG2RAD(hdg2) - M_PI / 2;
+			if (!rs->arc.cw) {
+				double tmp = angle1;
+				angle1 = angle2;
+				angle2 = tmp;
+			}
+
+			cairo_arc(cr, CAIRO_X(center.x), CAIRO_Y(center.y),
+			    vect2_abs(vect2_sub(start, center)) * FACT,
+			    angle1, angle2);
+			cairo_stroke(cr);
+
+#if	DRAW_SEG_GUIDES
+			cairo_set_line_width(cr, 1);
+			cairo_set_dash(cr, dashes, 2, 0);
+			cairo_set_source_rgb(cr, 0.67, 0.67, 0.67);
+			cairo_move_to(cr, CAIRO_X(center.x), CAIRO_Y(center.y));
+			cairo_line_to(cr, CAIRO_X(start.x), CAIRO_Y(start.y));
+			cairo_stroke(cr);
+			cairo_move_to(cr, CAIRO_X(center.x), CAIRO_Y(center.y));
+			cairo_line_to(cr, CAIRO_X(end.x), CAIRO_Y(end.y));
+			cairo_stroke(cr);
+			cairo_set_line_width(cr, 3);
+			cairo_set_source_rgb(cr, 1, 1, 1);
+			cairo_set_dash(cr, NULL, 0, 0);
+#endif
+		}
+	}
+
+	cairo_set_source_rgb(cr, 1, 1, 1);
+	cairo_set_line_width(cr, 2);
+	pos = geo2fpp(GEO3_TO_GEO2(P1), &fpp);
+	draw_star(cr, CAIRO_VECT2(pos), STAR_SZ);
+	pos = geo2fpp(GEO3_TO_GEO2(P2), &fpp);
+	draw_star(cr, CAIRO_VECT2(pos), STAR_SZ);
+	pos = geo2fpp(GEO3_TO_GEO2(P3), &fpp);
+	draw_star(cr, CAIRO_VECT2(pos), STAR_SZ);
+	pos = geo2fpp(GEO3_TO_GEO2(P4), &fpp);
+	draw_star(cr, CAIRO_VECT2(pos), STAR_SZ);
+	pos = geo2fpp(GEO3_TO_GEO2(P5), &fpp);
+	draw_star(cr, CAIRO_VECT2(pos), STAR_SZ);
+	pos = geo2fpp(GEO3_TO_GEO2(P7), &fpp);
+	draw_star(cr, CAIRO_VECT2(pos), STAR_SZ);
+	pos = geo2fpp(GEO3_TO_GEO2(P8), &fpp);
+	draw_star(cr, CAIRO_VECT2(pos), STAR_SZ);
+
+	xlate_png_byteorder(img, IMGW, IMGH);
+	write_png_img("/tmp/test.png", rows, IMGW, IMGH);
+
+	cairo_destroy(cr);
+#undef	OFFSET
+#undef	FACT
+#undef	CAIRO_X
+#undef	CAIRO_Y
+}
+
+void
+fuck_shit(void)
+{
+	unsigned n;
+	vect2_t vs[2] = {NULL_VECT2, NULL_VECT2};
+
+	n = circ2circ_isect(ZERO_VECT2, 1, VECT2(0.999, 0), 2, vs);
+	printf("n: %d\n", n);
+	PRINT_VECT2(vs[0]);
+	PRINT_VECT2(vs[1]);
 }
 
 int
@@ -1073,23 +1348,6 @@ main(int argc, char **argv)
 {
 	UNUSED(argc);
 	UNUSED(argv);
-
-	char opt;
-	const char *dump = "";
-
-	while ((opt = getopt(argc, argv, "d:")) != -1) {
-		switch (opt) {
-		case 'd':
-			dump = optarg;
-			break;
-		case '?':
-		default:
-			fprintf(stderr, "Usage: %s [-d <ICAO|awyname|awyfix"
-			    "|wpt|navaid] <navdata_dir>\n",
-			    argv[0]);
-			return (1);
-		}
-	}
 
 	if (argc - optind != 1) {
 		fprintf(stderr, "Missing navdata_dir argument\n");
@@ -1100,11 +1358,13 @@ main(int argc, char **argv)
 //	test_lcc(40, 30, 50);
 //	test_fpp();
 //	test_sph_xlate();
-	test_route(argv[optind]);
+//	test_route(argv[optind]);
 //	test_magvar();
 //	test_perf();
 //	test_math();
-//	test_route_seg();
+	test_route_seg();
+
+//	fuck_shit();
 
 	return (0);
 }

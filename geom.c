@@ -33,21 +33,6 @@
 #include "wmm.h"
 #include "geom.h"
 
-#if	1
-#include <stdio.h>
-#define	PRINT_VECT2(v)	printf(#v "(%f, %f)\n", v.x, v.y)
-#define	PRINT_VECT3(v)	printf(#v "(%f, %f, %f)\n", v.x, v.y, v.z)
-#define	PRINT_GEO2(p)	printf(#p "(%f, %f)\n", p.lat, p.lon)
-#define	PRINT_GEO3(p)	printf(#p "(%f, %f, %f)\n", p.lat, p.lon, p.elev)
-#define	DEBUG_PRINT(...)	printf(__VA_ARGS__)
-#else
-#define	PRINT_VECT2(v)
-#define	PRINT_VECT3(v)
-#define	PRINT_GEO2(p)
-#define	PRINT_GEO3(p)
-#define	DEBUG_PRINT(...)
-#endif
-
 /*
  * The WGS84 ellipsoid parameters.
  */
@@ -91,6 +76,33 @@ matrix_mul(const double *x, const double *y, double *z,
 				    y[i * ycols + col];
 			}
 		}
+	}
+}
+
+/*
+ * Determines whether an angle is part of an arc.
+ *
+ * @param angle_x Angle who's membership of the arc to examine (in degrees).
+ * @param angle1 Start angle of the arc (in degrees).
+ * @param angle2 End angle of the arc (in degrees).
+ * @param cw Flag indicating whether the arc progresses clockwise or
+ *	counter clockwise from angle1 to angle2.
+ *
+ * @return B_TRUE if angle_x is on the arc, B_FALSE if it is not.
+ */
+bool_t
+is_on_arc(double angle_x, double angle1, double angle2, bool_t cw)
+{
+	if (cw) {
+		if (angle1 < angle2)
+			return (angle_x >= angle1 && angle_x <= angle2);
+		else
+			return (angle_x >= angle1 || angle_x <= angle2);
+	} else {
+		if (angle1 < angle2)
+			return (angle_x <= angle1 || angle_x >= angle2);
+		else
+			return (angle_x <= angle1 && angle_x >= angle2);
 	}
 }
 
@@ -261,7 +273,7 @@ vect3_mean(vect3_t a, vect3_t b)
 
 /*
  * Rotates vector `v' by 90 degrees either to the right or left. This is
- * faster than doing full trigonometric calculations in vect2_rotate.
+ * faster than doing full trigonometric calculations in vect2_rot.
  */
 vect2_t
 vect2_norm(vect2_t v, bool_t right)
@@ -278,15 +290,15 @@ vect2_norm(vect2_t v, bool_t right)
 vect2_t
 vect2_rot(vect2_t v, double a)
 {
-	double sin_a = sin(DEG2RAD(a)), cos_a = cos(DEG2RAD(a));
+	double sin_a = sin(DEG2RAD(-a)), cos_a = cos(DEG2RAD(-a));
 	return (VECT2(v.x * cos_a - v.y * sin_a, v.x * sin_a + v.y * cos_a));
 }
 
 /*
- * Inverts vector `v' to point in the opposite direction.
+ * Negates vector `v' to point in the opposite direction.
  */
 vect2_t
-vect2_inv(vect2_t v)
+vect2_neg(vect2_t v)
 {
 	return (VECT2(-v.x, -v.y));
 }
@@ -554,25 +566,27 @@ vect2sph_isect(vect3_t v, vect3_t o, vect3_t c, double r, bool_t confined,
 			 * if the caller requested it.
 			 */
 			if (i != NULL)
-				i[0] = vect3_add(vect3_scmul(l, i1_d), o);
+				i[intersects] = vect3_add(vect3_scmul(l, i1_d),
+				    o);
 			intersects++;
 		} else {
 			/* Solution lies outside of line between o1 & o2 */
 			i1_d = NAN;
 			if (i != NULL)
-				i[0] = NULL_VECT3;
+				i[intersects] = NULL_VECT3;
 		}
 
 		/* ditto for the second intersect */
 		i2_d = -l_dot_o_min_c + sqrt_tmp;
 		if ((i2_d >= 0 && i2_d <= d) || !confined) {
 			if (i != NULL)
-				i[1] = vect3_add(vect3_scmul(l, i2_d), o);
+				i[intersects] = vect3_add(vect3_scmul(l, i2_d),
+				    o);
 			intersects++;
 		} else {
 			i2_d = NAN;
 			if (i != NULL)
-				i[1] = NULL_VECT3;
+				i[intersects] = NULL_VECT3;
 		}
 
 		return (intersects);
@@ -586,8 +600,7 @@ vect2sph_isect(vect3_t v, vect3_t o, vect3_t c, double r, bool_t confined,
 		i1_d = -l_dot_o_min_c;
 		if ((i1_d >= 0 && i1_d <= d) || !confined) {
 			if (i != NULL)
-				i[0] = vect3_add(vect3_scmul(l, i1_d),
-				    o);
+				i[0] = vect3_add(vect3_scmul(l, i1_d), o);
 			return (1);
 		} else {
 			if (i != NULL)
@@ -653,7 +666,7 @@ vect2_t
 vect2vect_isect(vect2_t a, vect2_t oa, vect2_t b, vect2_t ob, bool_t confined)
 {
 	vect2_t p1, p2, p3, p4, r;
-	double det;
+	double ca, cb, det;
 
 	if (VECT2_PARALLEL(a, b))
 		return (NULL_VECT2);
@@ -666,27 +679,56 @@ vect2vect_isect(vect2_t a, vect2_t oa, vect2_t b, vect2_t ob, bool_t confined)
 	p3 = ob;
 	p4 = vect2_add(ob, b);
 
-	det = ((p1.x * p3.y) - (p1.x * p4.y) - (p2.x * p3.y) + (p2.x * p4.y) -
-	    (p1.y * p3.x) + (p1.y * p4.x) + (p2.y * p3.x) - (p2.y * p4.x));
+	det = (p1.x - p2.x) * (p3.y - p4.y) - (p1.y - p2.y) * (p3.x - p4.x);
 	ASSERT(det != 0.0);
-	r.y = ((p1.x * p2.y * p3.x) - (p1.x * p2.y * p4.x) -
-	    (p1.y * p2.x * p3.x) + (p1.y * p2.x * p4.x) -
-	    (p1.x * p3.x * p4.y) + (p1.x * p3.y * p4.x) +
-	    (p2.x * p3.x * p4.y) - (p2.x * p3.y * p4.x)) / -det;
-	r.x = ((p1.x * p2.y * p3.y) - (p1.x * p2.y * p4.y) -
-	    (p1.y * p2.x * p3.y) + (p1.y * p2.x * p4.y) -
-	    (p1.y * p3.x * p4.y) + (p1.y * p3.y * p4.x) +
-	    (p2.y * p3.x * p4.y) - (p2.y * p3.y * p4.x)) / -det;
+	ca = p1.x * p2.y - p1.y * p2.x;
+	cb = p3.x * p4.y - p3.y * p4.x;
+	r.x = (ca * (p3.x - p4.x) - cb * (p1.x - p2.x)) / det;
+	r.y = (ca * (p3.y - p4.y) - cb * (p1.y - p2.y)) / det;
 
 	if (confined) {
-		if (r.x < MIN(p1.x, p2.x) || r.x > MAX(p1.x, p2.x) ||
-		    r.x < MIN(p3.x, p4.x) || r.x > MAX(p3.x, p4.x) ||
-		    r.y < MIN(p1.y, p2.y) || r.x > MAX(p1.y, p2.y) ||
-		    r.y < MIN(p3.y, p4.y) || r.x > MAX(p3.y, p4.y))
+#define	ROUND_ERR	0.000000001
+		if (r.x < MIN(p1.x, p2.x) - ROUND_ERR ||
+		    r.x > MAX(p1.x, p2.x) + ROUND_ERR ||
+		    r.x < MIN(p3.x, p4.x) - ROUND_ERR ||
+		    r.x > MAX(p3.x, p4.x) + ROUND_ERR ||
+		    r.y < MIN(p1.y, p2.y) - ROUND_ERR ||
+		    r.y > MAX(p1.y, p2.y) + ROUND_ERR ||
+		    r.y < MIN(p3.y, p4.y) - ROUND_ERR ||
+		    r.y > MAX(p3.y, p4.y) + ROUND_ERR)
 			return (NULL_VECT2);
+#undef	ROUND_ERR
 	}
 
 	return (r);
+}
+
+unsigned
+circ2circ_isect(vect2_t ca, double ra, vect2_t cb, double rb, vect2_t i[2])
+{
+	double a, d, h;
+	vect2_t ca_cb, p2, ca_p2;
+
+	ca_cb = vect2_sub(cb, ca);
+	d = vect2_abs(ca_cb);
+	if ((d == 0 && ra == rb) || d > ra + rb ||
+	    d + MIN(ra, rb) < MAX(ra, rb))
+		return (0);
+	a = (POW2(ra) - POW2(rb) + POW2(d)) / (2 * d);
+	h = sqrt(POW2(ra) - POW2(a));
+	ca_p2 = vect2_set_abs(ca_cb, a);
+	p2 = vect2_add(ca, ca_p2);
+
+	if (h == 0) {
+		i[0] = p2;
+		return (1);
+	} else {
+		i[0] = vect2_add(p2, vect2_set_abs(vect2_norm(ca_p2, B_FALSE),
+		    h));
+		i[1] = vect2_add(p2, vect2_set_abs(vect2_norm(ca_p2, B_TRUE),
+		    h));
+		return (2);
+	}
 }
 
 /*
@@ -707,7 +749,13 @@ hdg2dir(double truehdg)
 double
 dir2hdg(vect2_t dir)
 {
-	return (RAD2DEG(asin(dir.x / vect2_abs(dir))));
+	if (dir.x >= 0 && dir.y >= 0)
+		return (RAD2DEG(asin(dir.x / vect2_abs(dir))));
+	if (dir.x < 0 && dir.y >= 0)
+		return (360 + RAD2DEG(asin(dir.x / vect2_abs(dir))));
+	if (dir.x >= 0 && dir.y < 0)
+		return (180 - RAD2DEG(asin(dir.x / vect2_abs(dir))));
+	return (180 - RAD2DEG(asin(dir.x / vect2_abs(dir))));
 }
 
 /*

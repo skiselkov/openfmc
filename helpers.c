@@ -31,6 +31,23 @@
 
 #include "helpers.h"
 
+double
+rel_hdg(double hdg1, double hdg2)
+{
+	ASSERT(is_valid_hdg(hdg1) && is_valid_hdg(hdg2));
+	if (hdg1 > hdg2) {
+		if (hdg1 > hdg2 + 180)
+			return (360 - hdg1 + hdg2);
+		else
+			return (-(hdg1 - hdg2));
+	} else {
+		if (hdg2 > hdg1 + 180)
+			return (-(360 - hdg2 + hdg1));
+		else
+			return (hdg2 - hdg1);
+	}
+}
+
 bool_t
 is_valid_vor_freq(double freq_mhz)
 {
