@@ -8,6 +8,12 @@ OBJS=wmm.o GeomagnetismLibrary.o list.o \
 DEPS=$(patsubst %.o, %.d, $(OBJS))
 CFLAGS=$(shell pkg-config --cflags cairo) $(shell pkg-config --cflags libpng) \
     -W -Wall -Werror -O0 -g
+
+# Silence GCC warnings about our CTASSERT
+ifeq ($(findstring gcc,$(COMPILE.c)),gcc)
+	CFLAGS += -Wno-unused-local-typedefs
+endif
+
 ifeq ($(debug),no)
 	CFLAGS += -O3
 else
