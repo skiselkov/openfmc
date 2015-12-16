@@ -1037,20 +1037,26 @@ test_math(void)
 	cairo_destroy(cr);
 }
 
-#define	BASELAT	0
-#define	BASELON	0
-#define	P1	(GEO_POS3(BASELAT - 0.08, BASELON - 0.20, 0))
-#define	P2	(GEO_POS3(BASELAT - 0.08, BASELON + 0.20, 0))
-#define	P3	(GEO_POS3(BASELAT + 0.00, BASELON - 0.05, 0))
-#define	P4	(GEO_POS3(BASELAT + 0.08, BASELON + 0.00, 0))
-#define	P5	(GEO_POS3(BASELAT + 0.16, BASELON - 0.20, 0))
-#define	P6	(GEO_POS2(BASELAT + 0.16, BASELON - 0.05))
-#define	P7	(GEO_POS3(BASELAT + 0.16, BASELON + 0.10, 0))
-#define	P8	(GEO_POS3(BASELAT + 0.16, BASELON + 0.25, 0))
-#define	SPD1	300
-#define	SPD2	500
-#define	SPD3	700
-#define	CW	B_TRUE
+#define	BASELAT		0
+#define	BASELON		0
+#define	P1		(GEO_POS3(BASELAT - 0.08, BASELON - 0.20, 0))
+#define	P2		(GEO_POS3(BASELAT - 0.08, BASELON + 0.20, 0))
+#define	P3		(GEO_POS3(BASELAT + 0.05, BASELON + 0.16, 0))
+#define	P4		(GEO_POS3(BASELAT + 0.15, BASELON - 0.00, 0))
+#define	P5		(GEO_POS3(BASELAT + 0.10, BASELON - 0.10, 0))
+#define	P6		(GEO_POS2(BASELAT + 0.25, BASELON - 0.10))
+#define	P7		(GEO_POS3(BASELAT + 0.25, BASELON + 0.05, 0))
+#define	P8		(GEO_POS2(BASELAT + 0.20, BASELON + 0.05))
+#define	P9		(GEO_POS3(BASELAT + 0.15, BASELON + 0.05, 0))
+#define	SPD1		200
+#define	SPD2		200
+#define	SPD3		300
+#define	CW1		B_FALSE
+#define	CW2		B_TRUE
+#define	RNP		NM2MET(1)
+
+#define	PROJLAT_OFF	0.06
+#define	PROJLON_OFF	0
 
 #define	HOFFSET		600
 #define	VOFFSET		400
@@ -1061,7 +1067,7 @@ test_math(void)
 #define	CROSS_SZ	(VECT2(20, 20))
 #define	CAIRO_VECT2(v)	(VECT2(CAIRO_X((v).x), CAIRO_Y((v).y)))
 
-#define	DRAW_SEG_GUIDES	0
+#define	DRAW_SEG_GUIDES	1
 
 static void
 draw_star_outline(cairo_t *cr, vect2_t pos, vect2_t sz)
@@ -1189,15 +1195,17 @@ test_route_seg(void)
 	rs5->arc.start = P5;
 	rs5->arc.end = P7;
 	rs5->arc.center = P6;
-	rs5->arc.cw = CW;
+	rs5->arc.cw = CW1;
 	rs5->speed_start = SPD3;
 	rs5->speed_end = SPD3;
 	rs5->join_type = ROUTE_SEG_JOIN_ARC_TRACK;
 
 	rs6 = calloc(sizeof (*rs6), 1);
-	rs6->type = ROUTE_SEG_TYPE_DIRECT;
-	rs6->direct.start = P7;
-	rs6->direct.end = P8;
+	rs6->type = ROUTE_SEG_TYPE_ARC;
+	rs6->arc.start = P7;
+	rs6->arc.center = P8;
+	rs6->arc.end = P9;
+	rs6->arc.cw = CW2;
 	rs6->speed_start = SPD3;
 	rs6->speed_end = SPD3;
 	rs6->join_type = ROUTE_SEG_JOIN_ARC_TRACK;
@@ -1217,7 +1225,8 @@ test_route_seg(void)
 	img = cairo_image_surface_get_data(surface);
 
 	prep_png_img(img, rows, IMGW, IMGH);
-	fpp = gnomo_fpp_init(GEO_POS2(BASELAT, BASELON), 0, &wgs84, B_FALSE);
+	fpp = gnomo_fpp_init(GEO_POS2(BASELAT + PROJLAT_OFF,
+	    BASELON + PROJLON_OFF), 0, &wgs84, B_FALSE);
 
 #if	DRAW_SEG_GUIDES
 	cairo_set_source_rgb(cr, 0.67, 0.67, 0.67);
@@ -1237,9 +1246,8 @@ test_route_seg(void)
 	for (route_seg_t *rs = list_head(&seglist); rs;
 	    rs = list_next(&seglist, rs)) {
 		route_seg_t *rs_next = list_next(&seglist, rs);
-		if (rs_next != NULL) {
-			rs = route_seg_join(&seglist, rs, rs_next, NM2MET(.3));
-		}
+		if (rs_next != NULL)
+			rs = route_seg_join(&seglist, rs, rs_next, RNP);
 	}
 
 	for (route_seg_t *rs = list_head(&seglist); rs;
@@ -1320,6 +1328,8 @@ test_route_seg(void)
 	draw_star(cr, CAIRO_VECT2(pos), STAR_SZ);
 	pos = geo2fpp(GEO3_TO_GEO2(P8), &fpp);
 	draw_star(cr, CAIRO_VECT2(pos), STAR_SZ);
+	pos = geo2fpp(GEO3_TO_GEO2(P9), &fpp);
+	draw_star(cr, CAIRO_VECT2(pos), STAR_SZ);
 
 	xlate_png_byteorder(img, IMGW, IMGH);
 	write_png_img("/tmp/test.png", rows, IMGW, IMGH);
@@ -1329,18 +1339,6 @@ test_route_seg(void)
 #undef	FACT
 #undef	CAIRO_X
 #undef	CAIRO_Y
-}
-
-void
-fuck_shit(void)
-{
-	unsigned n;
-	vect2_t vs[2] = {NULL_VECT2, NULL_VECT2};
-
-	n = circ2circ_isect(ZERO_VECT2, 1, VECT2(0.999, 0), 2, vs);
-	printf("n: %d\n", n);
-	PRINT_VECT2(vs[0]);
-	PRINT_VECT2(vs[1]);
 }
 
 int
@@ -1363,8 +1361,6 @@ main(int argc, char **argv)
 //	test_perf();
 //	test_math();
 	test_route_seg();
-
-//	fuck_shit();
 
 	return (0);
 }

@@ -33,6 +33,8 @@
 #include "wmm.h"
 #include "geom.h"
 
+#define	ROUND_ERROR	0.000000001
+
 /*
  * The WGS84 ellipsoid parameters.
  */
@@ -123,6 +125,15 @@ double
 vect2_abs(vect2_t a)
 {
 	return (sqrt(POW2(a.x) + POW2(a.y)));
+}
+
+/*
+ * Returns the distance between two points defined by vectors `a' and `b'.
+ */
+double
+vect2_dist(vect2_t a, vect2_t b)
+{
+	return (vect2_abs(vect2_sub(a, b)));
 }
 
 /*
@@ -687,17 +698,15 @@ vect2vect_isect(vect2_t a, vect2_t oa, vect2_t b, vect2_t ob, bool_t confined)
 	r.y = (ca * (p3.y - p4.y) - cb * (p1.y - p2.y)) / det;
 
 	if (confined) {
-#define	ROUND_ERR	0.000000001
-		if (r.x < MIN(p1.x, p2.x) - ROUND_ERR ||
-		    r.x > MAX(p1.x, p2.x) + ROUND_ERR ||
-		    r.x < MIN(p3.x, p4.x) - ROUND_ERR ||
-		    r.x > MAX(p3.x, p4.x) + ROUND_ERR ||
-		    r.y < MIN(p1.y, p2.y) - ROUND_ERR ||
-		    r.y > MAX(p1.y, p2.y) + ROUND_ERR ||
-		    r.y < MIN(p3.y, p4.y) - ROUND_ERR ||
-		    r.y > MAX(p3.y, p4.y) + ROUND_ERR)
+		if (r.x < MIN(p1.x, p2.x) - ROUND_ERROR ||
+		    r.x > MAX(p1.x, p2.x) + ROUND_ERROR ||
+		    r.x < MIN(p3.x, p4.x) - ROUND_ERROR ||
+		    r.x > MAX(p3.x, p4.x) + ROUND_ERROR ||
+		    r.y < MIN(p1.y, p2.y) - ROUND_ERROR ||
+		    r.y > MAX(p1.y, p2.y) + ROUND_ERROR ||
+		    r.y < MIN(p3.y, p4.y) - ROUND_ERROR ||
+		    r.y > MAX(p3.y, p4.y) + ROUND_ERROR)
 			return (NULL_VECT2);
-#undef	ROUND_ERR
 	}
 
 	return (r);
@@ -715,18 +724,23 @@ circ2circ_isect(vect2_t ca, double ra, vect2_t cb, double rb, vect2_t i[2])
 	    d + MIN(ra, rb) < MAX(ra, rb))
 		return (0);
 	a = (POW2(ra) - POW2(rb) + POW2(d)) / (2 * d);
-	h = sqrt(POW2(ra) - POW2(a));
+	if (POW2(ra) - POW2(a) < 0)
+		h = 0;
+	else
+		h = sqrt(POW2(ra) - POW2(a));
 	ca_p2 = vect2_set_abs(ca_cb, a);
 	p2 = vect2_add(ca, ca_p2);
 
 	if (h == 0) {
 		i[0] = p2;
+		ASSERT(!IS_NULL_VECT(i[0]));
 		return (1);
 	} else {
 		i[0] = vect2_add(p2, vect2_set_abs(vect2_norm(ca_p2, B_FALSE),
 		    h));
 		i[1] = vect2_add(p2, vect2_set_abs(vect2_norm(ca_p2, B_TRUE),
 		    h));
+		ASSERT(!IS_NULL_VECT(i[0]) && !IS_NULL_VECT(i[1]));
 		return (2);
 	}
 }
