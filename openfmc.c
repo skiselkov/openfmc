@@ -1041,19 +1041,20 @@ test_math(void)
 #define	BASELON		0
 #define	P1		(GEO_POS3(BASELAT - 0.08, BASELON - 0.20, 0))
 #define	P2		(GEO_POS3(BASELAT - 0.08, BASELON + 0.20, 0))
-#define	P3		(GEO_POS3(BASELAT + 0.05, BASELON + 0.16, 0))
-#define	P4		(GEO_POS3(BASELAT + 0.15, BASELON - 0.00, 0))
+#define	P3		(GEO_POS3(BASELAT + 0.05, BASELON + 0.20, 0))
+#define	P4		(GEO_POS3(BASELAT + 0.25, BASELON - 0.10, 0))
 #define	P5		(GEO_POS3(BASELAT + 0.10, BASELON - 0.10, 0))
 #define	P6		(GEO_POS2(BASELAT + 0.25, BASELON - 0.10))
 #define	P7		(GEO_POS3(BASELAT + 0.25, BASELON + 0.05, 0))
-#define	P8		(GEO_POS2(BASELAT + 0.20, BASELON + 0.05))
-#define	P9		(GEO_POS3(BASELAT + 0.15, BASELON + 0.05, 0))
-#define	SPD1		200
-#define	SPD2		200
+#define	P8		(GEO_POS2(BASELAT + 0.3, BASELON + 0.10))
+#define	P9		(GEO_POS3(BASELAT + 0.25, BASELON + 0.15, 0))
+#define	P10		(GEO_POS3(BASELAT + 0.18, BASELON + 0.25, 0))
+#define	SPD1		500
+#define	SPD2		400
 #define	SPD3		300
-#define	CW1		B_FALSE
+#define	CW1		B_TRUE
 #define	CW2		B_TRUE
-#define	RNP		NM2MET(1)
+#define	RNP		NM2MET(.3)
 
 #define	PROJLAT_OFF	0.06
 #define	PROJLON_OFF	0
@@ -1067,7 +1068,8 @@ test_math(void)
 #define	CROSS_SZ	(VECT2(20, 20))
 #define	CAIRO_VECT2(v)	(VECT2(CAIRO_X((v).x), CAIRO_Y((v).y)))
 
-#define	DRAW_SEG_GUIDES	1
+#define	DRAW_ROUTE	1
+#define	DRAW_SEG_GUIDES	0
 
 static void
 draw_star_outline(cairo_t *cr, vect2_t pos, vect2_t sz)
@@ -1095,8 +1097,7 @@ draw_star(cairo_t *cr, vect2_t pos, vect2_t sz)
 	cairo_stroke(cr);
 }
 
-#if	DRAW_SEG_GUIDES
-
+#if	DRAW_SEG_GUIDES && DRAW_ROUTE
 static void
 draw_cross(cairo_t *cr, vect2_t pos, vect2_t sz)
 {
@@ -1109,7 +1110,9 @@ draw_cross(cairo_t *cr, vect2_t pos, vect2_t sz)
 	cairo_stroke(cr);
 	cairo_set_source_rgb(cr, 1, 1, 1);
 }
+#endif	/* DRAW_SEG_GUIDES && DRAW_ROUTE */
 
+#if	DRAW_SEG_GUIDES
 static void
 draw_seg(cairo_t *cr, route_seg_t *rs, const fpp_t *fpp)
 {
@@ -1147,14 +1150,14 @@ void
 test_route_seg(void)
 {
 	list_t			seglist;
-	route_seg_t		*rs1, *rs2, *rs3, *rs4, *rs5, *rs6;
+	route_seg_t		*rs1, *rs2, *rs3, *rs4, *rs5, *rs6, *rs7;
 	png_bytep		rows[IMGH];
 	uint8_t			*img;
 	cairo_surface_t		*surface;
 	cairo_t			*cr;
 	fpp_t			fpp;
 	vect2_t			pos;
-#if	DRAW_SEG_GUIDES
+#if	DRAW_ROUTE && DRAW_SEG_GUIDES
 	double			dashes[2] = {5, 5};
 #endif
 
@@ -1164,7 +1167,7 @@ test_route_seg(void)
 	rs1->direct.end = P2;
 	rs1->speed_start = SPD1;
 	rs1->speed_end = SPD1;
-	rs1->join_type = ROUTE_SEG_JOIN_ARC_TRACK;
+	rs1->join_type = ROUTE_SEG_JOIN_TRACK;
 
 	rs2 = calloc(sizeof (*rs2), 1);
 	rs2->type = ROUTE_SEG_TYPE_DIRECT;
@@ -1172,7 +1175,7 @@ test_route_seg(void)
 	rs2->direct.end = P3;
 	rs2->speed_start = SPD1;
 	rs2->speed_end = SPD2;
-	rs2->join_type = ROUTE_SEG_JOIN_ARC_TRACK;
+	rs2->join_type = ROUTE_SEG_JOIN_TRACK;
 
 	rs3 = calloc(sizeof (*rs3), 1);
 	rs3->type = ROUTE_SEG_TYPE_DIRECT;
@@ -1180,15 +1183,15 @@ test_route_seg(void)
 	rs3->direct.end = P4;
 	rs3->speed_start = SPD2;
 	rs3->speed_end = SPD2;
-	rs3->join_type = ROUTE_SEG_JOIN_ARC_TRACK;
+	rs3->join_type = ROUTE_SEG_JOIN_DIRECT;
 
 	rs4 = calloc(sizeof (*rs4), 1);
 	rs4->type = ROUTE_SEG_TYPE_DIRECT;
 	rs4->direct.start = P4;
 	rs4->direct.end = P5;
-	rs4->speed_start = SPD3;
-	rs4->speed_end = SPD3;
-	rs4->join_type = ROUTE_SEG_JOIN_ARC_TRACK;
+	rs4->speed_start = SPD2;
+	rs4->speed_end = SPD2;
+	rs4->join_type = ROUTE_SEG_JOIN_TRACK;
 
 	rs5 = calloc(sizeof (*rs5), 1);
 	rs5->type = ROUTE_SEG_TYPE_ARC;
@@ -1198,7 +1201,7 @@ test_route_seg(void)
 	rs5->arc.cw = CW1;
 	rs5->speed_start = SPD3;
 	rs5->speed_end = SPD3;
-	rs5->join_type = ROUTE_SEG_JOIN_ARC_TRACK;
+	rs5->join_type = ROUTE_SEG_JOIN_TRACK;
 
 	rs6 = calloc(sizeof (*rs6), 1);
 	rs6->type = ROUTE_SEG_TYPE_ARC;
@@ -1208,7 +1211,15 @@ test_route_seg(void)
 	rs6->arc.cw = CW2;
 	rs6->speed_start = SPD3;
 	rs6->speed_end = SPD3;
-	rs6->join_type = ROUTE_SEG_JOIN_ARC_TRACK;
+	rs6->join_type = ROUTE_SEG_JOIN_TRACK;
+
+	rs7 = calloc(sizeof (*rs7), 1);
+	rs7->type = ROUTE_SEG_TYPE_DIRECT;
+	rs7->direct.start = P9;
+	rs7->direct.end = P10;
+	rs7->speed_start = SPD3;
+	rs7->speed_end = SPD3;
+	rs7->join_type = ROUTE_SEG_JOIN_SIMPLE;
 
 	list_create(&seglist, sizeof (route_seg_t), offsetof(route_seg_t,
 	    route_segs_node));
@@ -1219,6 +1230,7 @@ test_route_seg(void)
 	list_insert_tail(&seglist, rs4);
 	list_insert_tail(&seglist, rs5);
 	list_insert_tail(&seglist, rs6);
+	list_insert_tail(&seglist, rs7);
 
 	surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, IMGW, IMGH);
 	cr = cairo_create(surface);
@@ -1250,6 +1262,7 @@ test_route_seg(void)
 			rs = route_seg_join(&seglist, rs, rs_next, RNP);
 	}
 
+#if	DRAW_ROUTE
 	for (route_seg_t *rs = list_head(&seglist); rs;
 	    rs = list_next(&seglist, rs)) {
 		if (rs->type == ROUTE_SEG_TYPE_DIRECT) {
@@ -1262,7 +1275,7 @@ test_route_seg(void)
 			draw_cross(cr, CAIRO_VECT2(start), CROSS_SZ);
 			draw_cross(cr, CAIRO_VECT2(end), CROSS_SZ);
 			cairo_set_line_width(cr, 3);
-#endif
+#endif	/* DRAW_SEG_GUIDES */
 			cairo_move_to(cr, CAIRO_X(start.x), CAIRO_Y(start.y));
 			cairo_line_to(cr, CAIRO_X(end.x), CAIRO_Y(end.y));
 			cairo_stroke(cr);
@@ -1279,7 +1292,7 @@ test_route_seg(void)
 			draw_cross(cr, CAIRO_VECT2(start), CROSS_SZ);
 			draw_cross(cr, CAIRO_VECT2(end), CROSS_SZ);
 			cairo_set_line_width(cr, 3);
-#endif
+#endif	/* DRAW_SEG_GUIDES */
 			hdg1 = dir2hdg(vect2_sub(start, center));
 			hdg2 = dir2hdg(vect2_sub(end, center));
 			angle1 = DEG2RAD(hdg1) - M_PI / 2;
@@ -1308,9 +1321,10 @@ test_route_seg(void)
 			cairo_set_line_width(cr, 3);
 			cairo_set_source_rgb(cr, 1, 1, 1);
 			cairo_set_dash(cr, NULL, 0, 0);
-#endif
+#endif	/* DRAW_SEG_GUIDES */
 		}
 	}
+#endif	/* DRAW_ROUTE */
 
 	cairo_set_source_rgb(cr, 1, 1, 1);
 	cairo_set_line_width(cr, 2);
@@ -1326,9 +1340,9 @@ test_route_seg(void)
 	draw_star(cr, CAIRO_VECT2(pos), STAR_SZ);
 	pos = geo2fpp(GEO3_TO_GEO2(P7), &fpp);
 	draw_star(cr, CAIRO_VECT2(pos), STAR_SZ);
-	pos = geo2fpp(GEO3_TO_GEO2(P8), &fpp);
-	draw_star(cr, CAIRO_VECT2(pos), STAR_SZ);
 	pos = geo2fpp(GEO3_TO_GEO2(P9), &fpp);
+	draw_star(cr, CAIRO_VECT2(pos), STAR_SZ);
+	pos = geo2fpp(GEO3_TO_GEO2(P10), &fpp);
 	draw_star(cr, CAIRO_VECT2(pos), STAR_SZ);
 
 	xlate_png_byteorder(img, IMGW, IMGH);
