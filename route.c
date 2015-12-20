@@ -3028,11 +3028,11 @@ calc_arc_radius(double speed, double turn_rate)
 #define	STD_INCTP_ANGLE	30
 #define	INTCP_SRCH_DIST	1e9
 
-static route_seg_t *rs_join_trk_reintcp(list_t *seglist, route_seg_t *rs1,
+static route_seg_t *rs_join_dir_reintcp_trk(list_t *seglist, route_seg_t *rs1,
     route_seg_t *rs2, const fpp_t *fpp, double r, double rnp, vect2_t p1,
     vect2_t p2, vect2_t p3, vect2_t leg1_dir, vect2_t leg2, double rhdg,
     bool_t cw);
-static route_seg_t *rs_join_dir_reintcp(list_t *seglist, route_seg_t *rs1,
+static route_seg_t *rs_join_dir_reintcp_dir(list_t *seglist, route_seg_t *rs1,
     route_seg_t *rs2, const fpp_t *fpp, double r, double rnp, vect2_t p1,
     vect2_t p2, vect2_t p3, double rhdg, bool_t cw);
 
@@ -3047,22 +3047,99 @@ point_is_on_arc(vect2_t p, vect2_t c, vect2_t s, vect2_t e, bool_t cw)
 	return (is_on_arc(p_angle, angle1, angle2, cw));
 }
 
+/*
+ * Joins a leg segment to a subsequent leg segment of type
+ * ROUTE_SEG_TYPE_DIRECT. This function performs several different
+ * types of joins automatically depending on the specific geometry
+ * of the required join:
+ *
+ * 1) If the difference between the outbound course from the first segment
+ *	and the inbound course to the second segment is less than
+ *	ARC_JOIN_THR, we simply mark the first segment as connected and
+ *	exit, because the connection is too shallow to require construction
+ *	of a connection arc.
+ *
+ * 2) If the course difference is greater than ARC_JOIN_THR, we attempt to
+ *	construct an arc which connects the first and second segments in
+ *	one turn. If such an arc deviates too far (above `rnp') from the
+ *	p2 point (the point where the two segments meet), we construct a
+ *	reintercept join instead. For a diagram of this join type, see
+ *	doc/join_types/dir2dir_arc.png and doc/join_types/arc2dir_arc.png.
+ *
+ * 3) Reintercept joins come in one of two varieties:
+ *
+ *	a) A track-join consists of one arc which intersects the second
+ *	   segment while approaching p2 up to a distance of `rnp' (in order
+ *	   meet the rnp requirement). It then turns back to the second
+ *	   segment an attempts to intersect with it at an angle of
+ *	   STD_INTCP_ANGLE. Then at the intersection point with the second
+ *	   segment we construct a second arc which smoothly rejoins the
+ *	   outbound second segment leg. For a diagram of this join type, see
+ *	   doc/join_types/dir2dir_reintcp_trk.png and
+ *	   doc/join_types/arc2dir_reintcp_trk.png.
+ *
+ *	   If the intersection of the reintercept portion with the second
+ *	   segment occurs beyond a point where a smooth rejoin of the
+ *	   second segment is possible, we instead continue the turn on the
+ *	   first arc and attempt to construct as sharp a turn as possible
+ *	   to rejoin the second leg segment before reaching its end. For
+ *	   the diagrams, see doc/join_types/dir2dir_reintcp_trk_fast.png and
+ *	   doc/join_types/arc2dir_reintcp_trk_fast.png.
+ *
+ *	   If there isn't enough room even for a `fast' join as described
+ *	   above, we degrade to a direct-to join (as described below).
+ *
+ *	b) A direct-to-join consists of one arc which intersects the
+ *	   second segment while approaching p2 up to a distance of `rnp'.
+ *	   It then turns directly towards the second segment's end point,
+ *	   instead of attempting to reintercept the original track of the
+ *	   second leg segment.
+ *
+ *	   If the second segment's endpoint is too close to the arc to be
+ *	   able to meet it in the turn, we do not attempt to create the
+ *	   arc and simply link the two segments together.
+ *
+ * @param seglist The segment list containing the route segments `rs1' and
+ *	`rs2'.
+ * @param rs1 The first route segment to connect.
+ * @param rs2 The second route segment to connect. It must immediately
+ *	follow `rs1' in `seglist'.
+ * @param r The turn radius of any applicable maneuvers in meters.
+ * @param rnp The maximum allowable deviation from the intersection of rs1
+ *	and rs2. Passing zero here means we must overfly the intersection.
+ * @param follow_track In case a simple arc to transition from rs1 to rs2
+ *	deviates too far from p2 (it would violate the `rnp' constraint),
+ *	this flag tells us whether we should construct a track-join which
+ *	rejoins rs2's track, or a direct-to-join.
+ */
 static route_seg_t *
 rs_join_dir(list_t *seglist, route_seg_t *rs1, route_seg_t *rs2,
     double r, double rnp, bool_t follow_track)
 {
-	vect2_t p1, p2, p3;
-	vect2_t dp1, dp2, c, i1, i2, p2_i2;
+	vect2_t p1, p2, p3, leg1_dir, leg2, dp1, dp2, c, i1, i2, p2_i2;
+	double rhdg, i1_spd, i2_spd, p2_i2_len, leg2_len;
 	geo_pos3_t i1_pos, i2_pos;
 	geo_pos2_t c_pos;
-	double rhdg, i1_spd, i2_spd, p2_i2_len, leg2_len;
-	route_seg_t *rs_join;
-	vect2_t leg1_dir, leg2;
+	route_seg_t *rs_arc;
 	fpp_t fpp;
-	bool_t rs1_remove = B_FALSE;
 
+	ASSERT(list_next(seglist, rs1) == rs2);
 	ASSERT(rs2->type == ROUTE_SEG_TYPE_DIRECT);
 
+	/*
+	 * In this function we use the following variables:
+	 *
+	 * *) p1, p2, p3: for dir2dir joins, p1-p2 is the first segment
+	 *	leg and p2-p3 is the second segment leg. For arc2dir joins,
+	 *	p1 and p2 define the first arc's center and endpoint (and
+	 *	their distance is its radius). p2-p3 again define the second
+	 *	segment's direct leg.
+	 * *) leg1_dir: the outbound direction from the first segment.
+	 * *) leg2: the second leg between p2 and p3. Since the second
+	 *	segment is always a direct, this represents the leg exactly
+	 *	(in the gnomonic projection space).
+	 * *) rs_arc: is the arc which joins the first and second segment.
+	 */
 	fpp = gnomo_fpp_init(GEO3_TO_GEO2(rs2->direct.start), 0, NULL, B_TRUE);
 	p2 = geo2fpp(GEO3_TO_GEO2(rs2->direct.start), &fpp);
 	p3 = geo2fpp(GEO3_TO_GEO2(rs2->direct.end), &fpp);
@@ -3091,7 +3168,6 @@ rs_join_dir(list_t *seglist, route_seg_t *rs1, route_seg_t *rs2,
 	dp2 = vect2_set_abs(vect2_norm(leg2, rhdg >= 0), r);
 	if (rs1->type == ROUTE_SEG_TYPE_DIRECT) {
 		vect2_t leg1 = vect2_sub(p2, p1);
-		double leg1_remainder;
 
 		/*
 		 * dp1 displaces leg1 in the same manner as dp2. Their
@@ -3105,10 +3181,7 @@ rs_join_dir(list_t *seglist, route_seg_t *rs1, route_seg_t *rs2,
 		i1 = vect2vect_isect(dp1, c, leg1, p1, B_FALSE);
 
 		/* Intersection is past our source point, do a reintcp join. */
-		leg1_remainder = vect2_dist(p1, p2) - vect2_dist(i1, p2);
-		if (leg1_remainder == 0)
-			rs1_remove = B_TRUE;
-		else if (leg1_remainder < 0)
+		if (vect2_dist(p1, p2) - vect2_dist(i1, p2) <= 0)
 			goto reintcp;
 	} else {
 		bool_t outer = (rs1->arc.cw && rhdg < 0) ||
@@ -3135,9 +3208,8 @@ rs_join_dir(list_t *seglist, route_seg_t *rs1, route_seg_t *rs2,
 
 		/* Check the intersection is on our arc or do a reinctp join. */
 		p0 = geo2fpp(GEO3_TO_GEO2(rs1->arc.start), &fpp);
-		if (VECT2_EQ(i1, p0))
-			rs1_remove = B_TRUE;
-		else if (!point_is_on_arc(i1, p1, p0, p2, rs1->arc.cw))
+		if (VECT2_EQ(i1, p0) ||
+		    !point_is_on_arc(i1, p1, p0, p2, rs1->arc.cw))
 			goto reintcp;
 	}
 	if (vect2_dist(c, p2) - r > rnp)
@@ -3173,23 +3245,17 @@ rs_join_dir(list_t *seglist, route_seg_t *rs1, route_seg_t *rs2,
 	c_pos = fpp2geo(c, &fpp);
 
 	/* Create new arc segment to join them and insert it */
-	rs_join = rs_new_arc(i1_pos, i2_pos, c_pos, rhdg >= 0, i1_spd, i2_spd,
+	rs_arc = rs_new_arc(i1_pos, i2_pos, c_pos, rhdg >= 0, i1_spd, i2_spd,
 	    ROUTE_SEG_JOIN_SIMPLE);
-	list_insert_after(seglist, rs1, rs_join);
+	list_insert_after(seglist, rs1, rs_arc);
 
 	/* Adjust rs1 and rs2 start/end points and speeds */
-	if (rs1_remove) {
-		list_remove(seglist, rs1);
-		free(rs1);
-		rs1 = rs_join;
-	} else {
-		if (rs1->type == ROUTE_SEG_TYPE_DIRECT)
-			rs1->direct.end = i1_pos;
-		else
-			rs1->arc.end = i1_pos;
-		rs1->speed_end = i1_spd;
-		rs1->join_type = ROUTE_SEG_JOIN_SIMPLE;
-	}
+	if (rs1->type == ROUTE_SEG_TYPE_DIRECT)
+		rs1->direct.end = i1_pos;
+	else
+		rs1->arc.end = i1_pos;
+	rs1->speed_end = i1_spd;
+	rs1->join_type = ROUTE_SEG_JOIN_SIMPLE;
 
 	rs2->direct.start = i2_pos;
 	rs2->speed_start = i2_spd;
@@ -3197,15 +3263,21 @@ rs_join_dir(list_t *seglist, route_seg_t *rs1, route_seg_t *rs2,
 	return (rs1);
 reintcp:
 	if (follow_track)
-		return (rs_join_trk_reintcp(seglist, rs1, rs2, &fpp, r, rnp,
+		return (rs_join_dir_reintcp_trk(seglist, rs1, rs2, &fpp, r, rnp,
 		    p1, p2, p3, leg1_dir, leg2, rhdg, rhdg >= 0));
 	else
-		return (rs_join_dir_reintcp(seglist, rs1, rs2, &fpp, r, rnp,
+		return (rs_join_dir_reintcp_dir(seglist, rs1, rs2, &fpp, r, rnp,
 		    p1, p2, p3, rhdg, rhdg >= 0));
 }
 
+/*
+ * This is a utility function called from rs_join_dir to perform
+ * a track-reintercept-join in case any of the simple-arc join constraints
+ * are violated. For a description of the arguments, see the internals
+ * of rs_join_dir.
+ */
 static route_seg_t *
-rs_join_trk_reintcp(list_t *seglist, route_seg_t *rs1, route_seg_t *rs2,
+rs_join_dir_reintcp_trk(list_t *seglist, route_seg_t *rs1, route_seg_t *rs2,
     const fpp_t *fpp, double r, double rnp, vect2_t p1, vect2_t p2, vect2_t p3,
     vect2_t leg1_dir, vect2_t leg2, double rhdg, bool_t cw)
 {
@@ -3215,8 +3287,6 @@ rs_join_trk_reintcp(list_t *seglist, route_seg_t *rs1, route_seg_t *rs2,
 	geo_pos2_t c1_pos;
 	bool_t rs1_remove = B_FALSE;
 	route_seg_t *rs_arc1, *rs_arc2;
-
-	UNUSED(p2_i1_len);
 
 	ASSERT(rs2->type == ROUTE_SEG_TYPE_DIRECT);
 
@@ -3373,8 +3443,8 @@ rs_join_trk_reintcp(list_t *seglist, route_seg_t *rs1, route_seg_t *rs2,
 			 * we can't reintcp from there, no help.
 			 */
 			if (rnp != 0) {
-				return (rs_join_trk_reintcp(seglist, rs1, rs2,
-				    fpp, r, 0, p1, p2, p3, leg1_dir, leg2,
+				return (rs_join_dir_reintcp_trk(seglist, rs1,
+				    rs2, fpp, r, 0, p1, p2, p3, leg1_dir, leg2,
 				    rhdg, cw));
 			} else {
 				goto errout;
@@ -3481,8 +3551,13 @@ errout:
 	return (rs1);
 }
 
+/*
+ * This is a utility function called from rs_join_dir to perform a
+ * direct-to-join in case any of the simple-arc join constraints are violated.
+ * For a description of the arguments, see the internals of rs_join_dir.
+ */
 static route_seg_t *
-rs_join_dir_reintcp(list_t *seglist, route_seg_t *rs1, route_seg_t *rs2,
+rs_join_dir_reintcp_dir(list_t *seglist, route_seg_t *rs1, route_seg_t *rs2,
     const fpp_t *fpp, double r, double rnp, vect2_t p1, vect2_t p2, vect2_t p3,
     double rhdg, bool_t cw)
 {
@@ -3490,9 +3565,9 @@ rs_join_dir_reintcp(list_t *seglist, route_seg_t *rs1, route_seg_t *rs2,
 	double p3_c_dist;
 	bool_t rs1_remove = B_FALSE;
 	route_seg_t *rs_arc;
-	unsigned n;
 	geo_pos3_t i1_pos, i2_pos;
 	geo_pos2_t c_pos;
+	unsigned n;
 
 	ASSERT(rs2->type == ROUTE_SEG_TYPE_DIRECT);
 
@@ -3700,20 +3775,19 @@ rs_join_arc(list_t *seglist, route_seg_t *rs1, route_seg_t *rs2,
 	 */
 
 	/* initial variable setup */
-	fpp = gnomo_fpp_init(GEO3_TO_GEO2(rs1->arc.start), 0, NULL, B_TRUE);
+	fpp = gnomo_fpp_init(GEO3_TO_GEO2(rs2->arc.start), 0, NULL, B_TRUE);
+	p2 = geo2fpp(GEO3_TO_GEO2(rs2->arc.start), &fpp);
+	p3 = geo2fpp(GEO3_TO_GEO2(rs2->arc.end), &fpp);
 	if (rs1->type == ROUTE_SEG_TYPE_DIRECT) {
 		p1 = geo2fpp(GEO3_TO_GEO2(rs1->direct.start), &fpp);
-		p2 = geo2fpp(GEO3_TO_GEO2(rs1->direct.end), &fpp);
 		leg1_dir = vect2_set_abs(vect2_sub(p2, p1), 1);
 	} else {
 		p1 = geo2fpp(rs1->arc.center, &fpp);
-		p2 = geo2fpp(GEO3_TO_GEO2(rs1->arc.end), &fpp);
 		leg1_dir = vect2_set_abs(vect2_norm(vect2_sub(p2, p1),
 		    rs1->arc.cw), 1);
 	}
 	c = geo2fpp(rs2->arc.center, &fpp);
 	g = vect2_dist(c, p2);
-	p3 = geo2fpp(GEO3_TO_GEO2(rs2->arc.end), &fpp);
 	cw = rs2->arc.cw;
 	rhdg = rel_hdg(dir2hdg(leg1_dir), dir2hdg(vect2_norm(vect2_sub(p2, c),
 	    cw)));
@@ -3809,7 +3883,11 @@ rs_join_arc(list_t *seglist, route_seg_t *rs1, route_seg_t *rs2,
 			c1_rhdg = rel_hdg(dir2hdg(vect2_sub(p2, p1)),
 			    dir2hdg(vect2_sub(vs[0], p1)));
 			if (n == 2 && ((rs1->arc.cw && c1_rhdg > 0) ||
-			    (!rs1->arc.cw && c1_rhdg < 0)))
+			    (!rs1->arc.cw && c1_rhdg < 0) ||
+			    (outer == outer1 && vect2_dist(vs[0], p2) >
+			    vect2_dist(vs[1], p2)) ||
+			    (outer != outer1 && vect2_dist(vs[0], p2) <
+			    vect2_dist(vs[1], p2))))
 				vs[0] = vs[1];
 			if (n > 0)
 				c1 = vs[0];
@@ -3869,7 +3947,7 @@ rs_join_arc(list_t *seglist, route_seg_t *rs1, route_seg_t *rs2,
 		geo_pos2_t c1_pos, c2_pos;
 		double c_p2_angle, c_p3_angle, c_i5_angle, intcp_angle;
 
-		/* Locate rs_arc's center and starting points c1 and i1 */
+		/* Locate rs_arc1's center and starting points c1 and i1 */
 		if (rs1->type == ROUTE_SEG_TYPE_DIRECT) {
 			/*
 			 * Try placing the first join arc rs_arc1 as far back

@@ -1042,15 +1042,15 @@ test_math(void)
 #define	P1		(GEO_POS3(BASELAT - 0.08, BASELON - 0.20, 0))
 #define	P2		(GEO_POS3(BASELAT - 0.08, BASELON + 0.20, 0))
 #define	P3		(GEO_POS3(BASELAT + 0.05, BASELON + 0.20, 0))
-#define	P4		(GEO_POS3(BASELAT + 0.25, BASELON - 0.10, 0))
+#define	P4		(GEO_POS3(BASELAT + 0.22, BASELON - 0.08, 0))
 #define	P5		(GEO_POS3(BASELAT + 0.10, BASELON - 0.10, 0))
 #define	P6		(GEO_POS2(BASELAT + 0.25, BASELON - 0.10))
 #define	P7		(GEO_POS3(BASELAT + 0.25, BASELON + 0.05, 0))
-#define	P8		(GEO_POS2(BASELAT + 0.3, BASELON + 0.10))
-#define	P9		(GEO_POS3(BASELAT + 0.25, BASELON + 0.15, 0))
+#define	P8		(GEO_POS2(BASELAT + 0.20, BASELON + 0.10))
+#define	P9		(GEO_POS3(BASELAT + 0.15, BASELON + 0.15, 0))
 #define	P10		(GEO_POS3(BASELAT + 0.18, BASELON + 0.25, 0))
-#define	SPD1		500
-#define	SPD2		400
+#define	SPD1		300
+#define	SPD2		250
 #define	SPD3		300
 #define	CW1		B_TRUE
 #define	CW2		B_TRUE
@@ -1069,7 +1069,7 @@ test_math(void)
 #define	CAIRO_VECT2(v)	(VECT2(CAIRO_X((v).x), CAIRO_Y((v).y)))
 
 #define	DRAW_ROUTE	1
-#define	DRAW_SEG_GUIDES	0
+#define	DRAW_SEG_GUIDES	1
 
 static void
 draw_star_outline(cairo_t *cr, vect2_t pos, vect2_t sz)
