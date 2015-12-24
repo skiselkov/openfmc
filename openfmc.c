@@ -1037,21 +1037,24 @@ test_math(void)
 	cairo_destroy(cr);
 }
 
+#define	DRAW_ROUTE	1
+#define	DRAW_SEG_GUIDES	1
+
 #define	BASELAT		0
 #define	BASELON		0
-#define	P1		(GEO_POS3(BASELAT - 0.08, BASELON - 0.20, 0))
-#define	P2		(GEO_POS3(BASELAT - 0.08, BASELON + 0.20, 0))
-#define	P3		(GEO_POS3(BASELAT + 0.05, BASELON + 0.20, 0))
-#define	P4		(GEO_POS3(BASELAT + 0.22, BASELON - 0.08, 0))
-#define	P5		(GEO_POS3(BASELAT + 0.10, BASELON - 0.10, 0))
+#define	P1		(GEO_POS2(BASELAT - 0.08, BASELON - 0.20))
+#define	P2		(GEO_POS2(BASELAT - 0.08, BASELON + 0.20))
+#define	P3		(GEO_POS2(BASELAT + 0.05, BASELON + 0.20))
+#define	P4		(GEO_POS2(BASELAT + 0.22, BASELON - 0.08))
+#define	P5		(GEO_POS2(BASELAT + 0.10, BASELON - 0.10))
 #define	P6		(GEO_POS2(BASELAT + 0.25, BASELON - 0.10))
-#define	P7		(GEO_POS3(BASELAT + 0.25, BASELON + 0.05, 0))
-#define	P8		(GEO_POS2(BASELAT + 0.20, BASELON + 0.10))
-#define	P9		(GEO_POS3(BASELAT + 0.15, BASELON + 0.15, 0))
-#define	P10		(GEO_POS3(BASELAT + 0.18, BASELON + 0.25, 0))
+#define	P7		(GEO_POS2(BASELAT + 0.25, BASELON + 0.05))
+#define	P8		(GEO_POS2(BASELAT + 0.24, BASELON + 0.10))
+#define	P9		(GEO_POS2(BASELAT + 0.23, BASELON + 0.15))
+#define	P10		(GEO_POS2(BASELAT + 0.25, BASELON + 0.20))
 #define	SPD1		300
 #define	SPD2		250
-#define	SPD3		300
+#define	SPD3		250
 #define	CW1		B_TRUE
 #define	CW2		B_TRUE
 #define	RNP		NM2MET(.3)
@@ -1067,9 +1070,6 @@ test_math(void)
 #define	STAR_SZ		(VECT2(50, 50))
 #define	CROSS_SZ	(VECT2(20, 20))
 #define	CAIRO_VECT2(v)	(VECT2(CAIRO_X((v).x), CAIRO_Y((v).y)))
-
-#define	DRAW_ROUTE	1
-#define	DRAW_SEG_GUIDES	1
 
 static void
 draw_star_outline(cairo_t *cr, vect2_t pos, vect2_t sz)
@@ -1165,32 +1165,24 @@ test_route_seg(void)
 	rs1->type = ROUTE_SEG_TYPE_DIRECT;
 	rs1->direct.start = P1;
 	rs1->direct.end = P2;
-	rs1->speed_start = SPD1;
-	rs1->speed_end = SPD1;
 	rs1->join_type = ROUTE_SEG_JOIN_TRACK;
 
 	rs2 = calloc(sizeof (*rs2), 1);
 	rs2->type = ROUTE_SEG_TYPE_DIRECT;
 	rs2->direct.start = P2;
 	rs2->direct.end = P3;
-	rs2->speed_start = SPD1;
-	rs2->speed_end = SPD2;
 	rs2->join_type = ROUTE_SEG_JOIN_TRACK;
 
 	rs3 = calloc(sizeof (*rs3), 1);
 	rs3->type = ROUTE_SEG_TYPE_DIRECT;
 	rs3->direct.start = P3;
 	rs3->direct.end = P4;
-	rs3->speed_start = SPD2;
-	rs3->speed_end = SPD2;
 	rs3->join_type = ROUTE_SEG_JOIN_DIRECT;
 
 	rs4 = calloc(sizeof (*rs4), 1);
 	rs4->type = ROUTE_SEG_TYPE_DIRECT;
 	rs4->direct.start = P4;
 	rs4->direct.end = P5;
-	rs4->speed_start = SPD2;
-	rs4->speed_end = SPD2;
 	rs4->join_type = ROUTE_SEG_JOIN_TRACK;
 
 	rs5 = calloc(sizeof (*rs5), 1);
@@ -1199,8 +1191,6 @@ test_route_seg(void)
 	rs5->arc.end = P7;
 	rs5->arc.center = P6;
 	rs5->arc.cw = CW1;
-	rs5->speed_start = SPD3;
-	rs5->speed_end = SPD3;
 	rs5->join_type = ROUTE_SEG_JOIN_TRACK;
 
 	rs6 = calloc(sizeof (*rs6), 1);
@@ -1209,16 +1199,12 @@ test_route_seg(void)
 	rs6->arc.center = P8;
 	rs6->arc.end = P9;
 	rs6->arc.cw = CW2;
-	rs6->speed_start = SPD3;
-	rs6->speed_end = SPD3;
 	rs6->join_type = ROUTE_SEG_JOIN_TRACK;
 
 	rs7 = calloc(sizeof (*rs7), 1);
 	rs7->type = ROUTE_SEG_TYPE_DIRECT;
 	rs7->direct.start = P9;
 	rs7->direct.end = P10;
-	rs7->speed_start = SPD3;
-	rs7->speed_end = SPD3;
 	rs7->join_type = ROUTE_SEG_JOIN_SIMPLE;
 
 	list_create(&seglist, sizeof (route_seg_t), offsetof(route_seg_t,
@@ -1259,7 +1245,7 @@ test_route_seg(void)
 	    rs = list_next(&seglist, rs)) {
 		route_seg_t *rs_next = list_next(&seglist, rs);
 		if (rs_next != NULL)
-			rs = route_seg_join(&seglist, rs, rs_next, RNP);
+			rs = route_seg_join(&seglist, rs, rs_next, RNP, SPD1);
 	}
 
 #if	DRAW_ROUTE

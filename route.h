@@ -97,18 +97,16 @@ typedef struct {
 	route_seg_type_t		type;
 	union {
 		struct {
-			geo_pos3_t	start;
-			geo_pos3_t	end;
+			geo_pos2_t	start;
+			geo_pos2_t	end;
 		} direct;
 		struct {
-			geo_pos3_t	start;
-			geo_pos3_t	end;
+			geo_pos2_t	start;
+			geo_pos2_t	end;
 			geo_pos2_t	center;
 			bool_t		cw;
 		} arc;
 	};
-	double				speed_start;
-	double				speed_end;
 	route_seg_join_type_t		join_type;
 	list_node_t			route_segs_node;
 } route_seg_t;
@@ -240,6 +238,6 @@ void route_l_set_spd_lim(route_t *route, const route_leg_t *x_rl, spd_lim_t l);
 spd_lim_t route_l_get_spd_lim(const route_leg_t *rl);
 
 route_seg_t *route_seg_join(list_t *seglist, route_seg_t *rs1,
-    route_seg_t *rs2, double wpt_rnp);
+    route_seg_t *rs2, double wpt_rnp, double spd);
 
 #endif	/* _OPENFMC_ROUTE_H_ */
