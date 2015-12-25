@@ -32,6 +32,7 @@ extern "C" {
 
 #define	POW3(x)	((x) * (x) * (x))
 #define	POW2(x)	((x) * (x))
+#define	ROUND_ERROR	1e-10
 
 unsigned quadratic_solve(double a, double b, double c, double x[2]);
 double fx_lin(double x, double x1, double y1, double x2, double y2);

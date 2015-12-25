@@ -52,9 +52,32 @@
 #define	ISA_TLR_PER_1M		0.0065	/* ISA temp lapse rate per 1 meter */
 #define	ISA_SPEED_SOUND		340.3	/* Speed of sound at 15 degrees C */
 
+/* Calculates gravitational force for weight `w' in kg on Earth */
+#define	W2F(w)			((w) * EARTH_GRAVITY)
+
 #define	ACFT_PERF_MIN_VERSION	1
 #define	ACFT_PERF_MAX_VERSION	1
 #define	MAX_LINE_COMPS		2
+
+#define	APPROX_ITERATIONS	3
+
+/*
+ * Converts an altitude in feel to a static air temperature at ISA conditions.
+ */
+static inline double
+alt2isaoat(double alt)
+{
+	return (ISA_SL_TEMP_C - FEET2MET(alt) * ISA_TLR_PER_1M);
+}
+
+/*
+ * Converts an altitude in feel to a static air pressure at ISA conditions.
+ */
+static inline double
+alt2isapress(double alt)
+{
+	return (alt2press(alt, ISA_SL_PRESS));
+}
 
 /*
  * Parses a set of bezier curve points from the input CSV file. Used to parse
@@ -323,6 +346,35 @@ eng_max_thr_avg(const flt_perf_t *flt, acft_perf_t *acft, double alt1,
 	    flt->thr_derate;
 
 	return (thr);
+}
+
+static inline double
+calc_energy(double mass, double alt, double spd)
+{
+	double v = KT2MPS(spd), h = FEET2MET(alt);
+	return (mass * EARTH_GRAVITY * h + 0.5 * mass * POW2(v));
+}
+
+double
+accelclb2dist(const flt_perf_t *flt, const acft_perf_t *acft, double fuel,
+    double alt1, double spd1, double alt2, double spd2, bool_t accel_first)
+{
+	double e, burn;
+	double spd = spd1;
+
+	UNUSED(spd2);
+	UNUSED(accel_first);
+
+	burn = 0;
+	e = calc_energy(flt->gw + fuel, alt1, spd1);
+
+	for (double alt = alt1; alt <= alt2;) {
+		double dp, lift, cl;
+		dp = dyn_press(spd, alt2isapress(alt), alt2isaoat(alt));
+		lift = W2F(flt->gw + fuel - burn);
+		cl = lift / (dp * acft->wing_area);
+	}
+	return (0);
 }
 
 /*

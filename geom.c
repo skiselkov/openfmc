@@ -33,8 +33,6 @@
 #include "wmm.h"
 #include "geom.h"
 
-#define	ROUND_ERROR	0.000000001
-
 /*
  * The WGS84 ellipsoid parameters.
  */

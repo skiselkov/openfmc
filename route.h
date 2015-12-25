@@ -31,6 +31,7 @@
 #include "fms.h"
 #include "airac.h"
 #include "err.h"
+#include "perf.h"
 
 typedef struct route_s route_t;
 
@@ -168,7 +169,7 @@ void route_destroy(route_t *route);
 /*
  * Updating & copying routes
  */
-void route_update(route_t *route);
+void route_update(route_t *route, acft_perf_t *acft, flt_perf_t *flt);
 bool_t route_update_needed(const route_t *route);
 route_t *route_copy(const route_t *route);
 

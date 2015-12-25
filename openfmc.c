@@ -1356,11 +1356,11 @@ main(int argc, char **argv)
 //	test_lcc(40, 30, 50);
 //	test_fpp();
 //	test_sph_xlate();
-//	test_route(argv[optind]);
+	test_route(argv[optind]);
 //	test_magvar();
 //	test_perf();
 //	test_math();
-	test_route_seg();
+//	test_route_seg();
 
 	return (0);
 }

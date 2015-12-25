@@ -46,15 +46,15 @@ quadratic_solve(double a, double b, double c, double x[2])
 	}
 
 	tmp = POW2(b) - 4 * a * c;
-	if (tmp < 0) {
-		return (0);
-	} else if (tmp == 0) {
-		x[0] = -b / (2 * a);
-		return (1);
-	} else {
+	if (tmp > ROUND_ERROR) {
 		x[0] = (-b + sqrt(tmp)) / (2 * a);
 		x[1] = (-b - sqrt(tmp)) / (2 * a);
 		return (2);
+	} else if (tmp > -ROUND_ERROR) {
+		x[0] = -b / (2 * a);
+		return (1);
+	} else {
+		return (0);
 	}
 }
 

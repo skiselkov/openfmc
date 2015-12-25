@@ -1590,17 +1590,15 @@ route_destroy(route_t *route)
 	free(route);
 }
 
-/*
-void
-route_update(route_t *route, perf_t *perf)
+/*void
+route_update(route_t *route, acft_perf_t *acft, flt_perf_t *flt)
 {
 	geo_pos3_t	cur_pos;
 	vect2_t		cur_flt_dir;
 	double		cur_spd;
 
 	cur_pos = route_first_start_pos(route, NULL, NULL);
-}
-*/
+}*/
 
 /*
  * Returns B_TRUE if the route needs to be route_update'd, B_FALSE if not.

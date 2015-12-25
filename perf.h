@@ -83,6 +83,9 @@ typedef struct {
 	 * of ISA temperature deviation in degrees C.
 	 */
 	bezier_t	*sfc_isa_curve;
+
+	bezier_t	*cl_curve;
+	double		wing_area;
 } acft_perf_t;
 
 typedef struct {
@@ -93,14 +96,25 @@ typedef struct {
 	vect2_t		heading;
 	geo_pos3_t	position;
 
-	double		gw;		/* Gross Weight */
+	double		gw;		/* Gross Weight in kg */
 } flt_perf_t;
+
+/* Type of acceleration-climb */
+typedef enum {
+	ACCELCLB_ACCEL_THEN_CLB,
+	ACCELCLB_ACCEL_AND_CLB,
+	ACCELCLB_CLB_THEN_ACCEL
+} accelclb_t;
 
 acft_perf_t *acft_perf_parse(const char *filename);
 void acft_perf_destroy(acft_perf_t *perf);
 
 double eng_max_thr_avg(const flt_perf_t *flt, acft_perf_t *acft, double alt1,
     double alt2, double ktas, double qnh, double isadev, double tp_alt);
+
+double accelclb2dist(const flt_perf_t *flt, const acft_perf_t *acft,
+    double fuel, double alt1, double spd1, double alt2, double spd2,
+    accelclb_t type);
 
 double alt2press(double alt, double qnh);
 double press2alt(double press, double qnh);
