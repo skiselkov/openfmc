@@ -271,8 +271,8 @@ vect2_t geo2lcc(geo_pos2_t pos, const lcc_t *lcc);
  */
 bezier_t *bezier_alloc(size_t num_pts);
 void bezier_free(bezier_t *curve);
-double quad_bezier_func_get(double x, const bezier_t *func);
-double quad_bezier_func_get_inv(double y, const bezier_t *func);
+double quad_bezier_func(double x, const bezier_t *func);
+double *quad_bezier_func_inv(double y, const bezier_t *func, size_t *n_xs);
 
 #ifdef	__cplusplus
 }

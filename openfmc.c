@@ -973,9 +973,13 @@ test_math(void)
 
 	prep_png_img(img, rows, IMGW, IMGH);
 
-	pts[0] = VECT2(0, 0);
-	pts[1] = VECT2(3, 3);
-	pts[2] = VECT2(4, 0);
+#define	BEZ_PT1	VECT2(0, 0)
+#define	BEZ_PT2	VECT2(3, 3)
+#define	BEZ_PT3	VECT2(4, .5)
+
+	pts[0] = BEZ_PT1;
+	pts[1] = BEZ_PT2;
+	pts[2] = BEZ_PT3;
 
 	bez.n_pts = 3;
 	bez.pts = pts;
@@ -988,12 +992,30 @@ test_math(void)
 #define	NUMPTS		20
 #define	LIM(x)		(x + (x / NUMPTS / 2))
 
+	cairo_set_font_size(cr, FONTSZ);
+
+	cairo_set_antialias(cr, CAIRO_ANTIALIAS_NONE);
+	cairo_set_line_width(cr, 1);
+	cairo_set_source_rgb(cr, 1, 1, 1);
+
+	for (double y = 0.0; y <= 3.0; y += 0.25) {
+		cairo_move_to(cr, CAIRO_X(0), CAIRO_Y(y));
+		cairo_line_to(cr, CAIRO_X(4), CAIRO_Y(y));
+		cairo_stroke(cr);
+
+		snprintf(buf, sizeof (buf), "y=%.2lf", y);
+		cairo_text_extents(cr, buf, &ext);
+		cairo_move_to(cr, CAIRO_X(0) - ext.width - 10, CAIRO_Y(y) +
+		    ext.height / 2);
+		cairo_show_text(cr, buf);
+	}
+
+	cairo_set_antialias(cr, CAIRO_ANTIALIAS_DEFAULT);
 	cairo_set_line_width(cr, 2);
 	cairo_set_source_rgb(cr, 1, 1, 1);
-	cairo_set_font_size(cr, FONTSZ);
 	for (double x = 0.0; x < LIM(4.0); x += (4.0 / NUMPTS)) {
 		cairo_move_to(cr, CAIRO_X(x),
-		    CAIRO_Y(quad_bezier_func_get(x, &bez)));
+		    CAIRO_Y(quad_bezier_func(x, &bez)));
 		cairo_line_to(cr, CAIRO_X(x), CAIRO_Y(((x - pts[0].x) /
 		    (pts[2].x - pts[0].x) * (pts[2].y - pts[0].y) + pts[0].y)));
 		cairo_stroke(cr);
@@ -1016,13 +1038,31 @@ test_math(void)
 
 	cairo_set_source_rgb(cr, 1, 0, 0);
 	for (double x = 0.0; x < LIM(4.0); x += (4.0 / NUMPTS)) {
-		double y = quad_bezier_func_get(x, &bez);
+		double y = quad_bezier_func(x, &bez);
 		if (x == 0.0)
 			cairo_move_to(cr, CAIRO_X(pts[0].x), CAIRO_Y(pts[0].y));
 		else
 			cairo_line_to(cr, CAIRO_X(x), CAIRO_Y(y));
 	}
 	cairo_stroke(cr);
+
+#define	SRCH_Y	.75
+#define	LINELEN	20
+	double *xs;
+	size_t n_xs;
+	xs = quad_bezier_func_inv(SRCH_Y, &bez, &n_xs);
+	cairo_set_source_rgb(cr, 0, 1, 0);
+	if (n_xs == SIZE_MAX)
+		n_xs = 0;
+	for (unsigned i = 0; i < n_xs; i++) {
+		cairo_show_text(cr, buf);
+		cairo_move_to(cr, CAIRO_X(xs[i]) - LINELEN, CAIRO_Y(SRCH_Y));
+		cairo_line_to(cr, CAIRO_X(xs[i]) + LINELEN, CAIRO_Y(SRCH_Y));
+		cairo_stroke(cr);
+		cairo_move_to(cr, CAIRO_X(xs[i]), CAIRO_Y(SRCH_Y) - LINELEN);
+		cairo_line_to(cr, CAIRO_X(xs[i]), CAIRO_Y(SRCH_Y) + LINELEN);
+		cairo_stroke(cr);
+	}
 
 #undef	OFFSET
 #undef	FACT
@@ -1032,7 +1072,7 @@ test_math(void)
 #undef	LIM
 
 	xlate_png_byteorder(img, IMGW, IMGH);
-	write_png_img("test.png", rows, IMGW, IMGH);
+	write_png_img("/tmp/test.png", rows, IMGW, IMGH);
 
 	cairo_destroy(cr);
 }
@@ -1356,10 +1396,10 @@ main(int argc, char **argv)
 //	test_lcc(40, 30, 50);
 //	test_fpp();
 //	test_sph_xlate();
-	test_route(argv[optind]);
+//	test_route(argv[optind]);
 //	test_magvar();
 //	test_perf();
-//	test_math();
+	test_math();
 //	test_route_seg();
 
 	return (0);

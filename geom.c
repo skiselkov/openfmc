@@ -1337,7 +1337,7 @@ bezier_free(bezier_t *curve)
  *	beyond the curve boundaries, the function is assumed to be flat.
  */
 double
-quad_bezier_func_get(double x, const bezier_t *func)
+quad_bezier_func(double x, const bezier_t *func)
 {
 	ASSERT(func->n_pts >= 3 || func->n_pts % 3 == 2);
 	/* Check boundary conditions */
@@ -1389,7 +1389,7 @@ quad_bezier_func_get(double x, const bezier_t *func)
 			 * x = t(t(p2 - p1) + p1 - t(p1 - p0) + p0) +
 			 *     + t(p1 - p0) + p0
 			 *
-			 * Rearranging, we get the following quadratic equation:
+			 * Rearranging, we obtain this quadratic equation:
 			 *
 			 * 0 = (p2 - 2.p1 + p0)t^2 + 2(p1 - p0)t + p0 - x
 			 *
@@ -1417,4 +1417,69 @@ quad_bezier_func_get(double x, const bezier_t *func)
 		}
 	}
 	assert(0);
+}
+
+/*
+ * Calculates the value of a function `g' defined as the inverse of a function
+ * `f' which is defined by a set of quadratic bezier curve segments:
+ * g(f(x)) = x
+ * IOW, this function is the inverse of quad_bezier_func, i.e. it looks for
+ * an unknown `x' input to quad_bezier_func that produces a known `y' output.
+ * Please note that the `func' argument of quad_bezier_func need not be a
+ * bijective function definition, so quad_bezier_func_inv can return multiple
+ * `x' values that all map to the given `y' value. As a special case, if the
+ * `func' definition includes a constant portion (i.e. a potentially infinite
+ * number of `x' values corresponds to a given `y' value),
+ * quad_bezier_func_inv returns NULL and sets n_xs to SIZE_MAX;
+ *
+ * @param y Output value of the function `func' for which to look for a
+ *	suitable `x' input value.
+ * @param func The set of quadratic bezier curve defining the function with
+ *	the same constraints as in quad_bezier_func.
+ * @param n_xs Output parameter which will be filled with the number of
+ *	`x' input points returned.
+ *
+ * @return An array of `x' values corresponding to the `y' argument. The
+ *	number of elements in this array is filled in `n_xs'. Caller is
+ *	responsible for freeing this array.
+ */
+double *
+quad_bezier_func_inv(double y, const bezier_t *func, size_t *n_xs)
+{
+	double *xs = NULL;
+	size_t num_xs = 0;
+
+	for (size_t i = 0; i + 2 < func->n_pts; i += 2) {
+		vect2_t p0 = func->pts[i], p1 = func->pts[i + 1];
+		vect2_t p2 = func->pts[i + 2];
+		double t, ts[2];
+		unsigned n;
+
+		if (p0.y == p1.y && p1.y == p2.y) {
+			/* infinite number of results */
+			free(xs);
+			*n_xs = SIZE_MAX;
+			return (NULL);
+		}
+
+		/*
+		 * This quadratic equation is essentially the same as in
+		 * quad_bezier_func, except we used the `y' coordinates to
+		 * derive `t' and then calculate a corresponding `x' value.
+		 */
+		n = quadratic_solve(p2.y - 2 * p1.y + p0.y, 2 * (p1.y - p0.y),
+		    p0.y - y, ts);
+		for (unsigned i = 0; i < n; i++) {
+			t = ts[i];
+			if (t < 0.0 || t > 1.0)
+				continue;
+			num_xs++;
+			xs = realloc(xs, num_xs * sizeof (*xs));
+			xs[num_xs - 1] = POW2(1 - t) * p0.x +
+			    2 * (1 - t) * t * p1.x + POW2(t) * p2.x;
+		}
+	}
+
+	*n_xs = num_xs;
+	return (xs);
 }

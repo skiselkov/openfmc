@@ -341,8 +341,8 @@ eng_max_thr_avg(const flt_perf_t *flt, acft_perf_t *acft, double alt1,
 	/*
 	 * Derive engine performance.
 	 */
-	thr = quad_bezier_func_get(D, acft->thr_dens_curve) *
-	    quad_bezier_func_get(isadev, acft->thr_isa_curve) *
+	thr = quad_bezier_func(D, acft->thr_dens_curve) *
+	    quad_bezier_func(isadev, acft->thr_isa_curve) *
 	    flt->thr_derate;
 
 	return (thr);
