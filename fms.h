@@ -89,7 +89,7 @@ void fms_navdb_close(fms_navdb_t *navdb);
 bool_t navdb_is_current(const fms_navdb_t *navdb);
 bool_t navdata_is_current(const char *navdata_dir);
 
-fix_t *fms_wpt_name_decode(const char *name, fms_t *fms, size_t *num,
+wpt_t *fms_wpt_name_decode(const char *name, fms_t *fms, size_t *num,
     bool_t *is_wpt_seq);
 
 #endif	/* _OPENFMC_FMS_H_ */

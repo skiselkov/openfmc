@@ -34,7 +34,7 @@
 #include "log.h"
 #include "fms.h"
 
-static fix_t *geofix(geo_pos2_t pos, const char *namefmt, ...) PRINTF_ATTR(2);
+static wpt_t *geowpt(geo_pos2_t pos, const char *namefmt, ...) PRINTF_ATTR(2);
 
 /*
  * Retrieves the time/date validity of a navigation database.
@@ -371,42 +371,42 @@ navdata_is_current(const char *navdata_dir)
 }
 
 /*
- * Looks up a fix by name in the FMS nav database. The databases we search are:
+ * Looks up a wpt by name in the FMS nav database. The databases we search are:
  *	1. The waypoint (FIX) database.
  *	2. The navaid (VOR/NDB) database.
  *	3. The airport database.
  * The search is performed in this order and the result is a union of all
  * found candidates.
  *
- * @param fixname Name of fix to look for.
+ * @param wptname Name of wpt to look for.
  * @param fms FMS object containing our navigational databases.
- * @param num_fixes Return parameter which will be filled with the number of
- *	matching fix_t structures returned by the function.
+ * @param num_wpts Return parameter which will be filled with the number of
+ *	matching wpt_t structures returned by the function.
  *
- * @return A malloc'd array of fix_t structures containing the fixes matching
- *	the provided fix name. Returns NULL if no fixes match.
+ * @return A malloc'd array of wpt_t structures containing the wpts matching
+ *	the provided wpt name. Returns NULL if no wpts match.
  */
-static fix_t *
-fms_lookup_wpt_by_name(const char *fixname, const fms_t *fms, size_t *num_fixes)
+static wpt_t *
+fms_lookup_wpt_by_name(const char *wptname, const fms_t *fms, size_t *num_wpts)
 {
 	char name[NAV_NAME_LEN];
-	fix_t *fixes = NULL;
+	wpt_t *wpts = NULL;
 	size_t i = 0, n = 0;
 	const list_t *list;
 	regmatch_t pmatch[2];
 
 	memset(name, 0, sizeof (name));
-	strlcpy(name, fixname, sizeof (name));
+	strlcpy(name, wptname, sizeof (name));
 
 	/* Try matching a FIX. */
 	list = htbl_lookup_multi(&fms->navdb->wptdb->by_name, name);
 	if (list != NULL) {
 		n += list_count(list);
-		fixes = realloc(fixes, n * sizeof (*fixes));
+		wpts = realloc(wpts, n * sizeof (*wpts));
 		for (const void *mv = list_head(list); mv != NULL;
 		    mv = list_next(list, mv)) {
-			fix_t *fix = HTBL_VALUE_MULTI(mv);
-			memcpy(&fixes[i], fix, sizeof (*fixes));
+			wpt_t *wpt = HTBL_VALUE_MULTI(mv);
+			memcpy(&wpts[i], wpt, sizeof (*wpts));
 			i++;
 		}
 	}
@@ -414,58 +414,58 @@ fms_lookup_wpt_by_name(const char *fixname, const fms_t *fms, size_t *num_fixes)
 	list = htbl_lookup_multi(&fms->navdb->navaiddb->by_id, name);
 	if (list != NULL) {
 		n += list_count(list);
-		fixes = realloc(fixes, n * sizeof (*fixes));
+		wpts = realloc(wpts, n * sizeof (*wpts));
 		for (const void *mv = list_head(list); mv != NULL;
 		    mv = list_next(list, mv)) {
 			navaid_t *navaid = HTBL_VALUE_MULTI(mv);
-			memcpy(fixes[i].name, name, sizeof (name));
-			memcpy(fixes[i].icao_country_code,
+			memcpy(wpts[i].name, name, sizeof (name));
+			memcpy(wpts[i].icao_country_code,
 			    navaid->icao_country_code,
 			    sizeof (navaid->icao_country_code));
-			fixes[i].pos = GEO3_TO_GEO2(navaid->pos);
+			wpts[i].pos = GEO3_TO_GEO2(navaid->pos);
 			i++;
 		}
 	}
 	/* Try matching an airport name. */
 	if (regexec(fms->regex.arpticao, name, 2, pmatch, 0) == 0) {
-		airport_t *arpt = airport_open(fixname, fms->navdb->navdata_dir,
+		airport_t *arpt = airport_open(wptname, fms->navdb->navdata_dir,
 		    fms->navdb->wptdb, fms->navdb->navaiddb);
 		if (arpt != NULL) {
 			n++;
-			fixes = realloc(fixes, n * sizeof (*fixes));
-			memcpy(fixes[i].name, name, sizeof (name));
-			fixes[i].pos = GEO3_TO_GEO2(arpt->refpt);
+			wpts = realloc(wpts, n * sizeof (*wpts));
+			memcpy(wpts[i].name, name, sizeof (name));
+			wpts[i].pos = GEO3_TO_GEO2(arpt->refpt);
 			airport_close(arpt);
 			i++;
 		}
 	}
 
 	ASSERT(i == n);
-	*num_fixes = n;
+	*num_wpts = n;
 
-	return (fixes);
+	return (wpts);
 }
 
 /*
- * Constructs a geographical fix with a custom printf-style name specification.
+ * Constructs a geographical wpt with a custom printf-style name specification.
  *
- * @param pos The geodetic fix position.
- * @param namefmt The printf format for the fix name.
+ * @param pos The geodetic wpt position.
+ * @param namefmt The printf format for the wpt name.
  * @param ... The remaining parameters for printf according to namefmt.
  */
-static fix_t *
-geofix(geo_pos2_t pos, const char *namefmt, ...)
+static wpt_t *
+geowpt(geo_pos2_t pos, const char *namefmt, ...)
 {
-	fix_t *fix = calloc(sizeof (*fix), 1);
+	wpt_t *wpt = calloc(sizeof (*wpt), 1);
 	va_list ap;
 	int n;
 
 	va_start(ap, namefmt);
-	n = vsnprintf(fix->name, sizeof (fix->name), namefmt, ap);
-	ASSERT(n > 0 && (unsigned)n < sizeof (fix->name));
+	n = vsnprintf(wpt->name, sizeof (wpt->name), namefmt, ap);
+	ASSERT(n > 0 && (unsigned)n < sizeof (wpt->name));
 	va_end(ap);
-	fix->pos = pos;
-	return (fix);
+	wpt->pos = pos;
+	return (wpt);
 }
 
 #define	GET_MATCH(str, i, param, minlen, maxlen) \
@@ -507,7 +507,7 @@ parse_latlon(const char *str, const regex_t *regex, int *lat, int *lon)
 }
 
 /*
- * Decodes a waypoint name as entered by the user and looks up the fixes
+ * Decodes a waypoint name as entered by the user and looks up the wpts
  * it can describe.
  *
  * @param name Waypoint name as entered by the user. This must conform to
@@ -535,8 +535,8 @@ parse_latlon(const char *str, const regex_t *regex, int *lat, int *lon)
  *	8) Airport ICAO code
  * @param 
  */
-fix_t *
-fms_wpt_name_decode(const char *name, fms_t *fms, size_t *num_fixes,
+wpt_t *
+fms_wpt_name_decode(const char *name, fms_t *fms, size_t *num_wpts,
     bool_t *is_wpt_seq)
 {
 #define	MAX_MATCHES	7
@@ -546,36 +546,36 @@ fms_wpt_name_decode(const char *name, fms_t *fms, size_t *num_fixes,
 	*is_wpt_seq = B_FALSE;
 
 	if (parse_latlon(name, fms->regex.geo_nw_blw100, &latdeg, &londeg)) {
-		*num_fixes = 1;
-		return (geofix(GEO_POS2(latdeg, -londeg), "%s", name));
+		*num_wpts = 1;
+		return (geowpt(GEO_POS2(latdeg, -londeg), "%s", name));
 	}
 	if (parse_latlon(name, fms->regex.geo_nw_abv100, &latdeg, &londeg)) {
-		*num_fixes = 1;
-		return (geofix(GEO_POS2(latdeg, -londeg - 100), "%s", name));
+		*num_wpts = 1;
+		return (geowpt(GEO_POS2(latdeg, -londeg - 100), "%s", name));
 	}
 	if (parse_latlon(name, fms->regex.geo_ne_blw100, &latdeg, &londeg)) {
-		*num_fixes = 1;
-		return (geofix(GEO_POS2(latdeg, londeg), "%s", name));
+		*num_wpts = 1;
+		return (geowpt(GEO_POS2(latdeg, londeg), "%s", name));
 	}
 	if (parse_latlon(name, fms->regex.geo_ne_abv100, &latdeg, &londeg)) {
-		*num_fixes = 1;
-		return (geofix(GEO_POS2(latdeg, londeg + 100), "%s", name));
+		*num_wpts = 1;
+		return (geowpt(GEO_POS2(latdeg, londeg + 100), "%s", name));
 	}
 	if (parse_latlon(name, fms->regex.geo_sw_blw100, &latdeg, &londeg)) {
-		*num_fixes = 1;
-		return (geofix(GEO_POS2(-latdeg, -londeg), "%s", name));
+		*num_wpts = 1;
+		return (geowpt(GEO_POS2(-latdeg, -londeg), "%s", name));
 	}
 	if (parse_latlon(name, fms->regex.geo_sw_abv100, &latdeg, &londeg)) {
-		*num_fixes = 1;
-		return (geofix(GEO_POS2(-latdeg, -londeg - 100), "%s", name));
+		*num_wpts = 1;
+		return (geowpt(GEO_POS2(-latdeg, -londeg - 100), "%s", name));
 	}
 	if (parse_latlon(name, fms->regex.geo_se_blw100, &latdeg, &londeg)) {
-		*num_fixes = 1;
-		return (geofix(GEO_POS2(-latdeg, londeg), "%s", name));
+		*num_wpts = 1;
+		return (geowpt(GEO_POS2(-latdeg, londeg), "%s", name));
 	}
 	if (parse_latlon(name, fms->regex.geo_se_abv100, &latdeg, &londeg)) {
-		*num_fixes = 1;
-		return (geofix(GEO_POS2(-latdeg, londeg + 100), "%s", name));
+		*num_wpts = 1;
+		return (geowpt(GEO_POS2(-latdeg, londeg + 100), "%s", name));
 	}
 
 	if (regexec(fms->regex.geo_long, name, 5, pmatch, 0) == 0) {
@@ -589,8 +589,8 @@ fms_wpt_name_decode(const char *name, fms_t *fms, size_t *num_fixes,
 		lat = (NS[0] == 'N' ? atof(latstr) : -atof(latstr));
 		lon = (EW[0] == 'E' ? atof(lonstr) : -atof(lonstr));
 
-		*num_fixes = 1;
-		return (geofix(GEO_POS2(lat, lon), "%s", name));
+		*num_wpts = 1;
+		return (geowpt(GEO_POS2(lat, lon), "%s", name));
 	}
 
 	if (regexec(fms->regex.geo_detailed, name, 7, pmatch, 0) == 0) {
@@ -612,21 +612,21 @@ fms_wpt_name_decode(const char *name, fms_t *fms, size_t *num_fixes,
 		else
 			lon = -atof(lonstr) - (atof(lonmin) / 0.6);
 
-		*num_fixes = 1;
-		return (geofix(GEO_POS2(lat, lon), "%s%s%s%s", NS, latstr, EW,
+		*num_wpts = 1;
+		return (geowpt(GEO_POS2(lat, lon), "%s%s%s%s", NS, latstr, EW,
 		    lonstr));
 	}
 
 	/*
-	 * This needs to come after geo pos fix scanning, because it covers
-	 * them as well, but not all geographical fixes are in our wptdb.
+	 * This needs to come after geo pos wpt scanning, because it covers
+	 * them as well, but not all geographical wpts are in our wptdb.
 	 */
 	if (regexec(fms->regex.wptname, name, 2, pmatch, 0) == 0)
-		return (fms_lookup_wpt_by_name(name, fms, num_fixes));
+		return (fms_lookup_wpt_by_name(name, fms, num_wpts));
 
 	if (regexec(fms->regex.radial_dme, name, 4, pmatch, 0) == 0) {
 		char wptname[6], radialstr[4], diststr[4];
-		fix_t *fixes;
+		wpt_t *wpts;
 		size_t num;
 		unsigned radial, dist;
 
@@ -638,30 +638,30 @@ fms_wpt_name_decode(const char *name, fms_t *fms, size_t *num_fixes,
 		if (!is_valid_hdg(radial) || dist == 0)
 			goto errout;
 
-		fixes = fms_lookup_wpt_by_name(wptname, fms, &num);
-		if (fixes == NULL)
+		wpts = fms_lookup_wpt_by_name(wptname, fms, &num);
+		if (wpts == NULL)
 			goto errout;
 
 		/* go through all results, displace & rewrite their names */
 		for (size_t i = 0; i < num; i++) {
-			VERIFY(snprintf(fixes[i].name, sizeof (fixes[i].name),
+			VERIFY(snprintf(wpts[i].name, sizeof (wpts[i].name),
 			    "%s%02d", wptname, fms->wpt_seq_num) <
-			    (long)sizeof (fixes[i].name));
-			fixes[i].pos = geo_displace_mag(&wgs84, fms->navdb->wmm,
-			    fixes[i].pos, radial, dist);
+			    (long)sizeof (wpts[i].name));
+			wpts[i].pos = geo_displace_mag(&wgs84, fms->navdb->wmm,
+			    wpts[i].pos, radial, dist);
 		}
 		fms->wpt_seq_num++;
 
-		*num_fixes = num;
-		return (fixes);
+		*num_wpts = num;
+		return (wpts);
 	}
 
 	if (regexec(fms->regex.radial_isect, name, 5, pmatch, 0) == 0) {
 		char wpt1name[6], radial1str[4], wpt2name[6], radial2str[4];
 		unsigned radial1, radial2;
-		fix_t *tmp_fixes1, *tmp_fixes2;
-		size_t num_fixes1, num_fixes2, num = 0;
-		fix_t *fixes;
+		wpt_t *tmp_wpts1, *tmp_wpts2;
+		size_t num_wpts1, num_wpts2, num = 0;
+		wpt_t *wpts;
 
 		GET_MATCH(name, 1, wpt1name, 1, 5);
 		GET_MATCH(name, 2, radial1str, 3, 3);
@@ -673,53 +673,53 @@ fms_wpt_name_decode(const char *name, fms_t *fms, size_t *num_fixes,
 		    radial1 == radial2)
 			goto errout;
 
-		tmp_fixes1 = fms_lookup_wpt_by_name(wpt1name, fms, &num_fixes1);
-		if (tmp_fixes1 == NULL)
+		tmp_wpts1 = fms_lookup_wpt_by_name(wpt1name, fms, &num_wpts1);
+		if (tmp_wpts1 == NULL)
 			goto errout;
-		tmp_fixes2 = fms_lookup_wpt_by_name(wpt2name, fms, &num_fixes2);
-		if (tmp_fixes2 == NULL) {
-			free (tmp_fixes1);
+		tmp_wpts2 = fms_lookup_wpt_by_name(wpt2name, fms, &num_wpts2);
+		if (tmp_wpts2 == NULL) {
+			free (tmp_wpts1);
 			goto errout;
 		}
 
 #define	WPT_ISECT_MAXRNG	1000000
-		fixes = calloc(sizeof (*fixes), num_fixes1 * num_fixes2);
-		for (size_t i = 0; i < num_fixes1; i++) {
+		wpts = calloc(sizeof (*wpts), num_wpts1 * num_wpts2);
+		for (size_t i = 0; i < num_wpts1; i++) {
 			vect3_t pos1_v = geo2ecef(GEO2_TO_GEO3(
-			    tmp_fixes1[i].pos, 0), &wgs84);
-			for (size_t j = 0; j < num_fixes2; j++) {
+			    tmp_wpts1[i].pos, 0), &wgs84);
+			for (size_t j = 0; j < num_wpts2; j++) {
 				vect3_t pos2_v = geo2ecef(GEO2_TO_GEO3(
-				    tmp_fixes2[j].pos, 0), &wgs84);
+				    tmp_wpts2[j].pos, 0), &wgs84);
 
 				if (vect3_abs(vect3_sub(pos2_v, pos1_v)) >
 				    WPT_ISECT_MAXRNG)
 					continue;
-				fixes[num].pos = geo_mag_radial_isect(&wgs84,
-				    fms->navdb->wmm, tmp_fixes1[i].pos, radial1,
-				    tmp_fixes2[j].pos, radial2);
-				VERIFY(snprintf(fixes[num].name,
-				    sizeof (fixes[num].name), "%s%02d",
+				wpts[num].pos = geo_mag_radial_isect(&wgs84,
+				    fms->navdb->wmm, tmp_wpts1[i].pos, radial1,
+				    tmp_wpts2[j].pos, radial2);
+				VERIFY(snprintf(wpts[num].name,
+				    sizeof (wpts[num].name), "%s%02d",
 				    wpt1name, fms->wpt_seq_num) <
-				    (long)sizeof (fixes[num].name));
+				    (long)sizeof (wpts[num].name));
 				num++;
 			}
 		}
 
-		free(tmp_fixes1);
-		free(tmp_fixes2);
+		free(tmp_wpts1);
+		free(tmp_wpts2);
 
 		if (num == 0) {
-			free(fixes);
+			free(wpts);
 			goto errout;
 		}
 		fms->wpt_seq_num++;
 
-		*num_fixes = num;
-		return (fixes);
+		*num_wpts = num;
+		return (wpts);
 	}
 
 errout:
-	*num_fixes = 0;
+	*num_wpts = 0;
 	return (NULL);
 #undef	MAX_MATCHES
 }

@@ -61,7 +61,7 @@
 		} \
 	} while (0)
 
-const fix_t null_fix = {
+const wpt_t null_wpt = {
 	.name = "\000\000\000\000\000\000\000",
 	.icao_country_code = "\000\000",
 	.pos = NULL_GEO_POS2
@@ -264,7 +264,7 @@ parse_airway_seg_line(const char *line, airway_seg_t *seg)
 	if (!geo_pos2_from_str(comps[2], comps[3], &seg->endpt[0].pos) ||
 	    !geo_pos2_from_str(comps[5], comps[6], &seg->endpt[1].pos)) {
 		openfmc_log(OPENFMC_LOG_ERR, "Error parsing airway segment: "
-		    "segment fix positions invalid.");
+		    "segment wpt positions invalid.");
 		goto errout;
 	}
 
@@ -294,10 +294,10 @@ parse_airway_segs(FILE *fp, airway_t *awy, const char *filename,
 
 		/* Check that adjacent airway segments are connected */
 		if (nsegs > 0 && memcmp(&awy->segs[nsegs - 1].endpt[1],
-		    &awy->segs[nsegs].endpt[0], sizeof (fix_t)) != 0) {
+		    &awy->segs[nsegs].endpt[0], sizeof (wpt_t)) != 0) {
 			openfmc_log(OPENFMC_LOG_ERR, "%s:%lu: error parsing "
-			    "airway \"%s\": segment #%lu (fix %s) and #%lu "
-			    "(fix %s) aren't connected.", filename, *line_num,
+			    "airway \"%s\": segment #%lu (wpt %s) and #%lu "
+			    "(wpt %s) aren't connected.", filename, *line_num,
 			    awy->name, nsegs - 1,
 			    awy->segs[nsegs - 1].endpt[1].name, nsegs,
 			    awy->segs[nsegs].endpt[0].name);
@@ -427,7 +427,7 @@ airway_db_dump_awy(const void *k, const airway_t *awy, db_dump_info_t *info)
 	UNUSED(k);
 	append_format(info->result, info->result_sz,
 	    "  %s (%u):\n"
-	    "    fix 1        lat         lon     fix 2        lat "
+	    "    wpt 1        lat         lon     wpt 2        lat "
 	    "        lon\n"
 	    "    ----- ---------- -----------     ----- ---------- "
 	    "-----------\n", awy->name, awy->num_segs);
@@ -488,27 +488,27 @@ airway_db_dump(const airway_db_t *db, bool_t by_awy_name)
  * matching:
  *	1) awyname: Airway name. This argument is mandatory. If the airway
  *	   doesn't exist, returns NULL.
- *	2) start_fix: Starting section fix. This is optional.
+ *	2) start_wpt: Starting section wpt. This is optional.
  *	   In addition to the airway name matching, this will also check
- *	   that the airway contains this exact fix as the starting
- *	   fix in one of its segments.
- *	3) end_fix_name: Ending section fix name. This is optional. In
+ *	   that the airway contains this exact wpt as the starting
+ *	   wpt in one of its segments.
+ *	3) end_wpt_name: Ending section wpt name. This is optional. In
  *	   addition to conditions #1 and #2 (if not NULL), also checks that
- *	   the section start fix is followed by the appropriate airway
- *	   segment end fix.
+ *	   the section start wpt is followed by the appropriate airway
+ *	   segment end wpt.
  * Using all three arguments you can choose the direction of bidirectional
  * airways (which appear in the database as two airway_t's with the same
- * name but fix order reversed).
+ * name but wpt order reversed).
  */
 const airway_t *
 airway_db_lookup(const airway_db_t *db, const char *awyname,
-    const fix_t *start_fix, const char *end_fix_name, const fix_t **endfixpp)
+    const wpt_t *start_wpt, const char *end_wpt_name, const wpt_t **endfixpp)
 {
 	const list_t *awy_list;
 
 	/* null fixes will never match anything, so don't even bother */
-	if ((start_fix && IS_NULL_FIX(start_fix)) ||
-	    (end_fix_name != NULL && *end_fix_name == 0)) {
+	if ((start_wpt && IS_NULL_WPT(start_wpt)) ||
+	    (end_wpt_name != NULL && *end_wpt_name == 0)) {
 		if (endfixpp != NULL)
 			*endfixpp = NULL;
 		return (NULL);
@@ -528,20 +528,20 @@ airway_db_lookup(const airway_db_t *db, const char *awyname,
 
 		ASSERT(awy != NULL);
 		ASSERT(strcmp(awy->name, awyname) == 0);
-		if (start_fix != NULL) {
-			/* Look for the start fix */
+		if (start_wpt != NULL) {
+			/* Look for the start wpt */
 			for (; i < awy->num_segs; i++) {
-				if (FIX_EQ(&awy->segs[i].endpt[0], start_fix))
+				if (WPT_EQ(&awy->segs[i].endpt[0], start_wpt))
 					break;
 			}
 			if (i == awy->num_segs)
 				continue;
 		}
-		if (end_fix_name != NULL) {
-			/* Look for the end fix */
+		if (end_wpt_name != NULL) {
+			/* Look for the end wpt */
 			for (; i < awy->num_segs; i++) {
 				if (strcmp(awy->segs[i].endpt[1].name,
-				    end_fix_name) == 0)
+				    end_wpt_name) == 0)
 					break;
 			}
 			if (i == awy->num_segs)
@@ -561,21 +561,21 @@ airway_db_lookup(const airway_db_t *db, const char *awyname,
 }
 
 /*
- * Given a 1st airway name, 1st airway section start fix name and a 2nd airway
- * name, looks for an airway segment end fix following the start fix on airway
- * #1 that is also an airway segment start fix on airway #2.
+ * Given a 1st airway name, 1st airway section start wpt name and a 2nd airway
+ * name, looks for an airway segment end wpt following the start wpt on airway
+ * #1 that is also an airway segment start wpt on airway #2.
  */
-const fix_t *
+const wpt_t *
 airway_db_lookup_awy_intersection(const airway_db_t *db, const char *awy1_name,
-    const char *awy1_start_fix_name, const char *awy2_name)
+    const char *awy1_start_wpt_name, const char *awy2_name)
 {
 	const list_t *awy1_list;
 
-	if (awy1_start_fix_name != NULL && *awy1_start_fix_name == 0)
+	if (awy1_start_wpt_name != NULL && *awy1_start_wpt_name == 0)
 		return (NULL);
 
 	ASSERT(awy1_name != NULL);
-	ASSERT(awy1_start_fix_name != NULL);
+	ASSERT(awy1_start_wpt_name != NULL);
 	awy1_list = htbl_lookup_multi(&db->by_awy_name, awy1_name);
 	if (awy1_list == NULL)
 		return (NULL);
@@ -586,10 +586,10 @@ airway_db_lookup_awy_intersection(const airway_db_t *db, const char *awy1_name,
 
 		ASSERT(awy1 != NULL);
 		ASSERT(strcmp(awy1->name, awy1_name) == 0);
-		/* Look for the start fix */
+		/* Look for the start wpt */
 		for (i = 0; i < awy1->num_segs; i++) {
 			if (strcmp(awy1->segs[i].endpt[0].name,
-			    awy1_start_fix_name) == 0)
+			    awy1_start_wpt_name) == 0)
 				break;
 		}
 		if (i == awy1->num_segs)
@@ -611,17 +611,17 @@ airway_db_lookup_awy_intersection(const airway_db_t *db, const char *awy1_name,
 }
 
 /*
- * Checks if `fix' is a starting fix on any segment of airway `awy'.
+ * Checks if `wpt' is a starting wpt on any segment of airway `awy'.
  */
 bool_t
-airway_db_fix_on_awy(const airway_db_t *db, const fix_t *fix,
+airway_db_fiwpt_on_awy(const airway_db_t *db, const wpt_t *wpt,
     const char *awyname)
 {
 	const list_t *awy_list;
 
-	ASSERT(fix != NULL);
+	ASSERT(wpt != NULL);
 	ASSERT(awyname != NULL);
-	awy_list = htbl_lookup_multi(&db->by_fix_name, fix->name);
+	awy_list = htbl_lookup_multi(&db->by_fix_name, wpt->name);
 	if (awy_list == NULL)
 		return (B_FALSE);
 	for (const void *mv = list_head(awy_list); mv != NULL;
@@ -630,9 +630,9 @@ airway_db_fix_on_awy(const airway_db_t *db, const fix_t *fix,
 
 		if (strcmp(awy->name, awyname) != 0)
 			continue;
-		/* look for the exact start fix (incl geo pos) */
+		/* look for the exact start wpt (incl geo pos) */
 		for (unsigned i = 0; i < awy->num_segs; i++) {
-			if (memcmp(&awy->segs[i].endpt[0], fix, sizeof (*fix))
+			if (memcmp(&awy->segs[i].endpt[0], wpt, sizeof (*wpt))
 			    == 0)
 				return (B_TRUE);
 		}
@@ -641,7 +641,7 @@ airway_db_fix_on_awy(const airway_db_t *db, const fix_t *fix,
 }
 
 static bool_t
-parse_waypoint_line(const char *line, fix_t *wpt)
+parse_waypoint_line(const char *line, wpt_t *wpt)
 {
 	char	line_copy[128];
 	char	*comps[4];
@@ -676,7 +676,7 @@ waypoint_db_open(const char *navdata_dir)
 	size_t		line_cap = 0, line_num = 0;
 	char		*line = NULL;
 	uint64_t	num_wpts = 0;
-	fix_t		*wpt = NULL;
+	wpt_t		*wpt = NULL;
 
 	/* Open Waypoints.txt */
 	wpts_fname = malloc(strlen(navdata_dir) +
@@ -751,12 +751,12 @@ waypoint_db_close(waypoint_db_t *db)
 }
 
 static void
-waypoint_db_dump_cb(const void *k, const fix_t *fix, db_dump_info_t *info)
+waypoint_db_dump_cb(const void *k, const wpt_t *wpt, db_dump_info_t *info)
 {
 	UNUSED(k);
 	append_format(info->result, info->result_sz,
 	    "  %5s %2s %10.6lf %11.6lf\n",
-	    fix->name, fix->icao_country_code, fix->pos.lat, fix->pos.lon);
+	    wpt->name, wpt->icao_country_code, wpt->pos.lat, wpt->pos.lon);
 }
 
 char *
@@ -946,8 +946,8 @@ navaid_db_dump(const navaid_db_t *db)
 }
 
 /*
- * Locates the nearest fix named `name' to `refpt' in `db' and returns it
- * as a fix for usage in procedure segments. This function allows searching
+ * Locates the nearest wpt named `name' to `refpt' in `db' and returns it
+ * as a wpt for usage in procedure segments. This function allows searching
  * either for waypoint fixes or radio navaids - pass the appropriate *db
  * argument and set the other to NULL. Only one type of database can be
  * searched at a time. When searching for navaids, further navaid type
@@ -987,7 +987,7 @@ find_nearest(const char *name, geo_pos3_t refpt, const waypoint_db_t *wptdb,
 		double		dist;
 
 		if (usewptdb) {
-			fix_t *wpt = HTBL_VALUE_MULTI(v);
+			wpt_t *wpt = HTBL_VALUE_MULTI(v);
 			/* use the airport refpt's elev as approximation */
 			pos = GEO2_TO_GEO3(wpt->pos, refpt.elev);
 		} else {
@@ -1007,7 +1007,7 @@ find_nearest(const char *name, geo_pos3_t refpt, const waypoint_db_t *wptdb,
 }
 
 static bool_t
-proc_navaid_lookup(const char *name, fix_t *fix, const airport_t *arpt,
+proc_navaid_lookup(const char *name, wpt_t *wpt, const airport_t *arpt,
     const waypoint_db_t *wptdb, const navaid_db_t *navdb, navaid_type_t type)
 {
 	geo_pos2_t	fix_pos = NULL_GEO_POS2, navaid_pos = NULL_GEO_POS2;
@@ -1019,8 +1019,8 @@ proc_navaid_lookup(const char *name, fix_t *fix, const airport_t *arpt,
 		navaid_pos = find_nearest(name, arpt->refpt, NULL, navdb, type);
 
 	if (IS_NULL_GEO_POS(fix_pos) && IS_NULL_GEO_POS(navaid_pos)) {
-		openfmc_log(OPENFMC_LOG_ERR, "Error looking up fix/navaid "
-		    "\"%s\" for arpt %s procedure: no fix/navaid of type %s "
+		openfmc_log(OPENFMC_LOG_ERR, "Error looking up wpt/navaid "
+		    "\"%s\" for arpt %s procedure: no wpt/navaid of type %s "
 		    "found.", name, arpt->icao, navaid_type_name(type));
 		return (B_FALSE);
 	} else if (!IS_NULL_GEO_POS(fix_pos) && IS_NULL_GEO_POS(navaid_pos)) {
@@ -1042,9 +1042,9 @@ proc_navaid_lookup(const char *name, fix_t *fix, const airport_t *arpt,
 			pos = navaid_pos;
 	}
 
-	memset(fix, 0, sizeof (*fix));
-	(void) strlcpy(fix->name, name, sizeof (fix->name));
-	fix->pos = pos;
+	memset(wpt, 0, sizeof (*wpt));
+	(void) strlcpy(wpt->name, name, sizeof (wpt->name));
+	wpt->pos = pos;
 
 	return (B_TRUE);
 }
@@ -1342,12 +1342,12 @@ parse_alt_spd_term(char *comps[3], alt_lim_t *alt, spd_lim_t *spd)
 }
 
 static bool_t
-parse_proc_seg_fix(char *comps[3], fix_t *fix)
+parse_proc_seg_wpt(char *comps[3], wpt_t *wpt)
 {
-	if (strlen(comps[0]) > sizeof (fix->name) - 1)
+	if (strlen(comps[0]) > sizeof (wpt->name) - 1)
 		return (B_FALSE);
-	if (!geo_pos2_from_str(comps[1], comps[2], &fix->pos) ||
-	    !STRLCPY_CHECK(fix->name, comps[0]))
+	if (!geo_pos2_from_str(comps[1], comps[2], &wpt->pos) ||
+	    !STRLCPY_CHECK(wpt->name, comps[0]))
 		return (B_FALSE);
 	return (B_TRUE);
 }
@@ -1376,7 +1376,7 @@ parse_AF_seg(char **comps, size_t num_comps, navproc_seg_t *seg,
 	seg->leg_cmd.dme_arc.radius = atof(comps[7]);
 	seg->leg_cmd.dme_arc.end_radial = atof(comps[8]);
 	if ((dir != 1 && dir != 2) ||
-	    !parse_proc_seg_fix(&comps[1], &seg->term_cond.fix) ||
+	    !parse_proc_seg_wpt(&comps[1], &seg->term_cond.fix) ||
 	    !is_valid_hdg(seg->leg_cmd.dme_arc.start_radial) ||
 	    !is_valid_arc_radius(seg->leg_cmd.dme_arc.radius) ||
 	    !is_valid_hdg(seg->leg_cmd.dme_arc.end_radial) ||
@@ -1446,8 +1446,8 @@ dump_spd_constr(const spd_lim_t *spd, char desc[16])
 	char spd_lim_desc[32]; \
 	dump_spd_constr((spd), spd_lim_desc)
 
-#define	FIX_PRINTF_ARG(fix) \
-	(fix)->name, (fix)->pos.lat, (fix)->pos.lon
+#define	FIX_PRINTF_ARG(wpt) \
+	(wpt)->name, (wpt)->pos.lat, (wpt)->pos.lon
 
 static void
 dump_AF_seg(char **result, size_t *result_sz, const navproc_seg_t *seg)
@@ -1539,7 +1539,7 @@ parse_CF_seg(char **comps, size_t num_comps, navproc_seg_t *seg,
 	}
 	if (!is_valid_hdg(seg->leg_cmd.navaid_crs.crs) ||
 	    !is_valid_turn(seg->leg_cmd.navaid_crs.turn) ||
-	    !parse_proc_seg_fix(&comps[1], &seg->term_cond.fix) ||
+	    !parse_proc_seg_wpt(&comps[1], &seg->term_cond.fix) ||
 	    !parse_alt_spd_term(&comps[10], &seg->alt_lim, &seg->spd_lim))
 		return (B_FALSE);
 	return (B_TRUE);
@@ -1613,7 +1613,7 @@ parse_DF_TF_seg(char **comps, size_t num_comps, navproc_seg_t *seg,
 		CHECK_NUM_COMPS(18, TF);
 	seg->type = is_DF ? NAVPROC_SEG_TYPE_DIR_TO_FIX :
 	    NAVPROC_SEG_TYPE_TRK_TO_FIX;
-	if (!parse_proc_seg_fix(&comps[1], &seg->term_cond.fix) ||
+	if (!parse_proc_seg_wpt(&comps[1], &seg->term_cond.fix) ||
 	    !parse_alt_spd_term(&comps[is_DF ? 8 : 10], &seg->alt_lim,
 	    &seg->spd_lim))
 		return (B_FALSE);
@@ -1637,7 +1637,7 @@ parse_FA_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
 	CHECK_NUM_COMPS(17, FA);
 	seg->type = NAVPROC_SEG_TYPE_FIX_TO_ALT;
 	seg->leg_cmd.fix_crs.crs = atof(comps[8]);
-	if (!parse_proc_seg_fix(&comps[1], &seg->leg_cmd.fix_crs.fix) ||
+	if (!parse_proc_seg_wpt(&comps[1], &seg->leg_cmd.fix_crs.fix) ||
 	    !is_valid_hdg(seg->leg_cmd.fix_crs.crs) ||
 	    !parse_alt_spd_term(&comps[9], &seg->term_cond.alt,
 	    &seg->spd_lim) ||
@@ -1666,7 +1666,7 @@ parse_FC_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
 
 	seg->leg_cmd.fix_crs.crs = atof(comps[8]);
 	seg->term_cond.dist = atof(comps[9]);
-	if (!parse_proc_seg_fix(&comps[1], &seg->leg_cmd.fix_crs.fix) ||
+	if (!parse_proc_seg_wpt(&comps[1], &seg->leg_cmd.fix_crs.fix) ||
 	    !is_valid_hdg(seg->leg_cmd.fix_crs.crs) ||
 	    !parse_alt_spd_term(&comps[10], &seg->alt_lim, &seg->spd_lim))
 		return (B_FALSE);
@@ -1693,7 +1693,7 @@ parse_FD_seg(char **comps, size_t num_comps, navproc_seg_t *seg,
 
 	seg->term_cond.dme.dist = atof(comps[7]);
 	seg->leg_cmd.fix_crs.crs = atof(comps[8]);
-	if (!parse_proc_seg_fix(&comps[1], &seg->leg_cmd.fix) ||
+	if (!parse_proc_seg_wpt(&comps[1], &seg->leg_cmd.fix) ||
 	    !parse_alt_spd_term(&comps[10], &seg->alt_lim, &seg->spd_lim) ||
 	    !proc_navaid_lookup(comps[5], &seg->term_cond.dme.navaid,
 	    arpt, NULL, db, NAVAID_TYPE_ANY))
@@ -1719,7 +1719,7 @@ parse_FM_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
 	CHECK_NUM_COMPS(17, FM);
 	seg->type = NAVPROC_SEG_TYPE_FIX_TO_MANUAL;
 	seg->leg_cmd.fix_crs.crs = atof(comps[8]);
-	if (!parse_proc_seg_fix(&comps[1], &seg->leg_cmd.fix_crs.fix) ||
+	if (!parse_proc_seg_wpt(&comps[1], &seg->leg_cmd.fix_crs.fix) ||
 	    !is_valid_hdg(seg->leg_cmd.fix_crs.crs) ||
 	    !parse_alt_spd_term(&comps[9], &seg->alt_lim, &seg->spd_lim))
 		return (B_FALSE);
@@ -1752,7 +1752,7 @@ parse_HA_HF_HM_seg(char **comps, size_t num_comps, navproc_seg_t *seg,
 	seg->leg_cmd.hold.turn_right = atoi(comps[4]);
 	seg->leg_cmd.hold.inbd_crs = atof(comps[8]);
 	seg->leg_cmd.hold.leg_len = atof(comps[9]);
-	if (!parse_proc_seg_fix(&comps[1], &seg->leg_cmd.hold.fix) ||
+	if (!parse_proc_seg_wpt(&comps[1], &seg->leg_cmd.hold.wpt) ||
 	    (seg->leg_cmd.hold.turn_right != 1 &&
 	    seg->leg_cmd.hold.turn_right != 2) ||
 	    !parse_alt_spd_term(&comps[10], &seg->alt_lim, &seg->spd_lim) ||
@@ -1764,7 +1764,7 @@ parse_HA_HF_HM_seg(char **comps, size_t num_comps, navproc_seg_t *seg,
 	if (type == NAVPROC_SEG_TYPE_HOLD_TO_ALT)
 		seg->term_cond.alt = seg->alt_lim;
 	else if (type == NAVPROC_SEG_TYPE_HOLD_TO_FIX)
-		seg->term_cond.fix = seg->leg_cmd.hold.fix;
+		seg->term_cond.fix = seg->leg_cmd.hold.wpt;
 	/* change turn flag from 1-2 to 0-1 */
 	seg->leg_cmd.hold.turn_right--;
 	return (B_TRUE);
@@ -1778,7 +1778,7 @@ dump_HA_HF_HM_seg(char **result, size_t *result_sz, const navproc_seg_t *seg)
 		DUMP_ALT_LIM(&seg->term_cond.alt);
 		append_format(result, result_sz,
 		    "\tHA,F:%s(%lfx%lf),IC:%.01lf,L:%.01lf,R:%d%s%s\n",
-		    FIX_PRINTF_ARG(&seg->leg_cmd.hold.fix),
+		    FIX_PRINTF_ARG(&seg->leg_cmd.hold.wpt),
 		    seg->leg_cmd.hold.inbd_crs, seg->leg_cmd.hold.leg_len,
 		    seg->leg_cmd.hold.turn_right, alt_lim_desc, spd_lim_desc);
 	} else {
@@ -1786,7 +1786,7 @@ dump_HA_HF_HM_seg(char **result, size_t *result_sz, const navproc_seg_t *seg)
 		append_format(result, result_sz,
 		    "\t%s,F:%s(%lfx%lf),IC:%.01lf,L:%.01lf,R:%d%s%s\n",
 		    seg->type == NAVPROC_SEG_TYPE_HOLD_TO_FIX ? "HF" : "HM",
-		    FIX_PRINTF_ARG(&seg->leg_cmd.hold.fix),
+		    FIX_PRINTF_ARG(&seg->leg_cmd.hold.wpt),
 		    seg->leg_cmd.hold.inbd_crs, seg->leg_cmd.hold.leg_len,
 		    seg->leg_cmd.hold.turn_right, alt_lim_desc, spd_lim_desc);
 	}
@@ -1797,7 +1797,7 @@ parse_IF_seg(char **comps, size_t num_comps, navproc_seg_t *seg)
 {
 	CHECK_NUM_COMPS(15, IF);
 	seg->type = NAVPROC_SEG_TYPE_INIT_FIX;
-	if (!parse_proc_seg_fix(&comps[1], &seg->leg_cmd.fix) ||
+	if (!parse_proc_seg_wpt(&comps[1], &seg->leg_cmd.fix) ||
 	    !parse_alt_spd_term(&comps[7], &seg->alt_lim, &seg->spd_lim))
 		return (B_FALSE);
 	return (B_TRUE);
@@ -1825,7 +1825,7 @@ parse_PI_seg(char **comps, size_t num_comps, navproc_seg_t *seg,
 	seg->leg_cmd.proc_turn.max_excrs_dist = atof(comps[7]);
 	seg->leg_cmd.proc_turn.outbd_radial = atof(comps[8]);
 	seg->leg_cmd.proc_turn.max_excrs_time = atof(comps[9]);
-	if (!parse_proc_seg_fix(&comps[1], &seg->leg_cmd.proc_turn.startpt) ||
+	if (!parse_proc_seg_wpt(&comps[1], &seg->leg_cmd.proc_turn.startpt) ||
 	    (turn_dir != 1 && turn_dir != 2) ||
 	    !is_valid_hdg(seg->leg_cmd.proc_turn.outbd_turn_hdg) ||
 	    !is_valid_hdg(seg->leg_cmd.proc_turn.outbd_radial) ||
@@ -1868,10 +1868,10 @@ parse_RF_seg(char **comps, size_t num_comps, navproc_seg_t *seg,
 	/* change CW flag from 1-2 to 0-1 */
 	seg->leg_cmd.radius_arc.cw--;
 	seg->leg_cmd.radius_arc.radius = atof(comps[7]);
-	if (!parse_proc_seg_fix(&comps[1], &seg->term_cond.fix) ||
+	if (!parse_proc_seg_wpt(&comps[1], &seg->term_cond.fix) ||
 	    !is_valid_arc_radius(seg->leg_cmd.radius_arc.radius) ||
 	    !parse_alt_spd_term(&comps[8], &seg->alt_lim, &seg->spd_lim) ||
-	    !proc_navaid_lookup(comps[5], &seg->leg_cmd.radius_arc.ctr_fix,
+	    !proc_navaid_lookup(comps[5], &seg->leg_cmd.radius_arc.ctr_wpt,
 	    arpt, db, NULL, NAVAID_TYPE_ANY))
 		return (B_FALSE);
 
@@ -1885,7 +1885,7 @@ dump_RF_seg(char **result, size_t *result_sz, const navproc_seg_t *seg)
 	DUMP_SPD_LIM(&seg->spd_lim);
 	append_format(result, result_sz,
 	    "\tRF,F:%s(%lfx%lf),r:%.01lf,cw:%d,F:%s(%lfx%lf)%s%s\n",
-	    FIX_PRINTF_ARG(&seg->leg_cmd.radius_arc.ctr_fix),
+	    FIX_PRINTF_ARG(&seg->leg_cmd.radius_arc.ctr_wpt),
 	    seg->leg_cmd.radius_arc.radius, seg->leg_cmd.radius_arc.cw,
 	    FIX_PRINTF_ARG(&seg->term_cond.fix), alt_lim_desc, spd_lim_desc);
 }
@@ -2166,7 +2166,7 @@ navproc_seg_type2str(navproc_seg_type_t type)
 }
 
 /*
- * Returns the initial fix of a navproc_seg_t. Not all navproc segments have
+ * Returns the initial wpt of a navproc_seg_t. Not all navproc segments have
  * an initial point, so the passed seg must be one of:
  *	NAVPROC_SEG_TYPE_CRS_TO_FIX (with a non-NULL navaid set)
  *	NAVPROC_SEG_TYPE_FIX_TO_ALT
@@ -2178,12 +2178,12 @@ navproc_seg_type2str(navproc_seg_type_t type)
  *	NAVPROC_SEG_TYPE_HOLD_TO_ALT
  *	NAVPROC_SEG_TYPE_HOLD_TO_FIX
  *	NAVPROC_SEG_TYPE_HOLD_TO_MANUAL
- * Navproc segments not of this type will return null_fix instead.
+ * Navproc segments not of this type will return null_wpt instead.
  * All non-SID procedures must start with a navproc seg that has a definite
- * fix (otherwise it can't be connected to a preceding navproc_t).
+ * wpt (otherwise it can't be connected to a preceding navproc_t).
  */
-const fix_t *
-navproc_seg_get_start_fix(const navproc_seg_t *seg)
+const wpt_t *
+navproc_seg_get_start_wpt(const navproc_seg_t *seg)
 {
 	switch (seg->type) {
 	case NAVPROC_SEG_TYPE_CRS_TO_FIX:
@@ -2200,18 +2200,18 @@ navproc_seg_get_start_fix(const navproc_seg_t *seg)
 	case NAVPROC_SEG_TYPE_HOLD_TO_ALT:
 	case NAVPROC_SEG_TYPE_HOLD_TO_FIX:
 	case NAVPROC_SEG_TYPE_HOLD_TO_MANUAL:
-		return (&seg->leg_cmd.hold.fix);
+		return (&seg->leg_cmd.hold.wpt);
 	default:
-		return (&null_fix);
+		return (&null_wpt);
 	}
 }
 
 /*
- * Returns a pointer to the end fix of a particular navproc segment. If the
- * segment doesn't end in a fix, returns `null_fix' instead.
+ * Returns a pointer to the end wpt of a particular navproc segment. If the
+ * segment doesn't end in a wpt, returns `null_wpt' instead.
  */
-const fix_t *
-navproc_seg_get_end_fix(const navproc_seg_t *seg)
+const wpt_t *
+navproc_seg_get_end_wpt(const navproc_seg_t *seg)
 {
 	switch (seg->type) {
 	case NAVPROC_SEG_TYPE_ARC_TO_FIX:
@@ -2226,19 +2226,19 @@ navproc_seg_get_end_fix(const navproc_seg_t *seg)
 	case NAVPROC_SEG_TYPE_HOLD_TO_ALT:
 	case NAVPROC_SEG_TYPE_HOLD_TO_FIX:
 	case NAVPROC_SEG_TYPE_HOLD_TO_MANUAL:
-		ASSERT(!IS_NULL_FIX(&seg->leg_cmd.hold.fix));
-		return (&seg->leg_cmd.hold.fix);
+		ASSERT(!IS_NULL_WPT(&seg->leg_cmd.hold.wpt));
+		return (&seg->leg_cmd.hold.wpt);
 	default:
-		return (&null_fix);
+		return (&null_wpt);
 	}
 }
 
 /*
- * Sets the end fix of `seg' to `fix'. If the seg is of a type that doesn't
+ * Sets the end wpt of `seg' to `wpt'. If the seg is of a type that doesn't
  * take fixes, causes an assertion failure.
  */
 void
-navproc_seg_set_end_fix(navproc_seg_t *seg, const fix_t *fix)
+navproc_seg_set_end_wpt(navproc_seg_t *seg, const wpt_t *wpt)
 {
 	switch (seg->type) {
 	case NAVPROC_SEG_TYPE_ARC_TO_FIX:
@@ -2247,15 +2247,15 @@ navproc_seg_set_end_fix(navproc_seg_t *seg, const fix_t *fix)
 	case NAVPROC_SEG_TYPE_RADIUS_ARC_TO_FIX:
 	case NAVPROC_SEG_TYPE_TRK_TO_FIX:
 	case NAVPROC_SEG_TYPE_HDG_TO_INTCP:
-		seg->term_cond.fix = *fix;
+		seg->term_cond.fix = *wpt;
 		break;
 	case NAVPROC_SEG_TYPE_INIT_FIX:
-		seg->leg_cmd.fix = *fix;
+		seg->leg_cmd.fix = *wpt;
 		break;
 	case NAVPROC_SEG_TYPE_HOLD_TO_ALT:
 	case NAVPROC_SEG_TYPE_HOLD_TO_FIX:
 	case NAVPROC_SEG_TYPE_HOLD_TO_MANUAL:
-		seg->leg_cmd.hold.fix = *fix;
+		seg->leg_cmd.hold.wpt = *wpt;
 		break;
 	default:
 		assert(0);
@@ -2279,37 +2279,37 @@ navproc_seg_get_descr(const navproc_seg_t *seg)
 }
 
 /*
- * Returns the start fix of a procedure. All procedures have a definite start
- * fix defined as:
+ * Returns the start wpt of a procedure. All procedures have a definite start
+ * wpt defined as:
  *	1) the departure runway threshold for NAVPROC_TYPE_SID procedures
- *	2) the initial segment fix's start fix for all other procedure types
+ *	2) the initial segment wpt's start wpt for all other procedure types
  */
-fix_t
-navproc_get_start_fix(const navproc_t *proc)
+wpt_t
+navproc_get_start_wpt(const navproc_t *proc)
 {
-	fix_t fix;
+	wpt_t wpt;
 
 	switch (proc->type) {
 	case NAVPROC_TYPE_SID: {
-		CTASSERT(sizeof (fix.name) >= sizeof (proc->rwy->ID));
-		(void) strcpy(fix.name, proc->rwy->ID);
-		fix.pos = GEO3_TO_GEO2(proc->rwy->thr_pos);
+		CTASSERT(sizeof (wpt.name) >= sizeof (proc->rwy->ID));
+		(void) strcpy(wpt.name, proc->rwy->ID);
+		wpt.pos = GEO3_TO_GEO2(proc->rwy->thr_pos);
 		break;
 	}
 	default:
 		ASSERT(proc->num_segs != 0);
-		fix = *navproc_seg_get_start_fix(&proc->segs[0]);
-		ASSERT(!IS_NULL_FIX(&fix));
+		wpt = *navproc_seg_get_start_wpt(&proc->segs[0]);
+		ASSERT(!IS_NULL_WPT(&wpt));
 		break;
 	}
 
-	return (fix);
+	return (wpt);
 }
 
-const fix_t *
-navproc_get_end_fix(const navproc_t *proc)
+const wpt_t *
+navproc_get_end_wpt(const navproc_t *proc)
 {
-	return (navproc_seg_get_end_fix(&proc->segs[proc->num_segs - 1]));
+	return (navproc_seg_get_end_wpt(&proc->segs[proc->num_segs - 1]));
 }
 
 static int
@@ -2365,7 +2365,7 @@ parse_proc(FILE *fp, size_t *line_num, navproc_t *proc, airport_t *arpt,
 		goto errout;
 	}
 	if (proc->type != NAVPROC_TYPE_SID &&
-	    IS_NULL_FIX(navproc_seg_get_start_fix(&proc->segs[0]))) {
+	    IS_NULL_WPT(navproc_seg_get_start_wpt(&proc->segs[0]))) {
 		openfmc_log(OPENFMC_LOG_ERR, "Error parsing %s procedure "
 		    "\"%s\": procedure doesn't start with appropriate leg.",
 		    navproc_type_to_str[proc->type], proc->name);
@@ -2575,7 +2575,7 @@ airport_dump(const airport_t *arpt)
 
 	append_format(&result, &result_sz, "  Gates (%u):\n", arpt->num_gates);
 	for (unsigned i = 0; i < arpt->num_gates; i++) {
-		const fix_t *gate = &arpt->gates[i];
+		const wpt_t *gate = &arpt->gates[i];
 		append_format(&result, &result_sz, "    %s  [%lf x %lf]\n",
 		    gate->name, gate->pos.lat, gate->pos.lon);
 	}

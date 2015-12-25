@@ -49,19 +49,19 @@ typedef struct {
 	char		name[NAV_NAME_LEN];
 	char		icao_country_code[3];
 	geo_pos2_t	pos;
-} fix_t;
-const fix_t null_fix;
-#define	FIX_EQ(f1, f2)	\
+} wpt_t;
+const wpt_t null_wpt;
+#define	WPT_EQ(f1, f2)	\
 	(memcmp((f1)->name, (f2)->name, sizeof ((f1)->name)) == 0 && \
 	(f1)->pos.lat == (f2)->pos.lat && (f1)->pos.lon == (f2)->pos.lon && \
-	!IS_NULL_FIX((f1)))
-#define	FIX_EQ_POS(f1, f2) \
-	(!IS_NULL_FIX((f1)) && (f1)->pos.lat == (f2)->pos.lat && \
+	!IS_NULL_WPT((f1)))
+#define	WPT_EQ_POS(f1, f2) \
+	(!IS_NULL_WPT((f1)) && (f1)->pos.lat == (f2)->pos.lat && \
 	(f1)->pos.lon == (f2)->pos.lon)
-#define	IS_NULL_FIX(f)	(memcmp((f), &null_fix, sizeof (fix_t)) == 0)
+#define	IS_NULL_WPT(f)	(memcmp((f), &null_wpt, sizeof (wpt_t)) == 0)
 
 typedef struct {
-	fix_t		endpt[2];
+	wpt_t		endpt[2];
 } airway_seg_t;
 
 typedef struct {
@@ -85,11 +85,11 @@ char *airway_db_dump(const airway_db_t *db, bool_t by_awy_name);
 
 /* Airway lookup */
 const airway_t *airway_db_lookup(const airway_db_t *db, const char *awyname,
-    const fix_t *start_fix, const char *end_fix_name, const fix_t **endfixpp);
-const fix_t *airway_db_lookup_awy_intersection(const airway_db_t *db,
-    const char *awy1_name, const char *awy1_start_fix_name,
+    const wpt_t *start_wpt, const char *end_wpt_name, const wpt_t **endfixpp);
+const wpt_t *airway_db_lookup_awy_intersection(const airway_db_t *db,
+    const char *awy1_name, const char *awy1_start_wpt_name,
     const char *awy2_name);
-bool_t airway_db_fix_on_awy(const airway_db_t *db, const fix_t *fix,
+bool_t airway_db_wpt_on_awy(const airway_db_t *db, const wpt_t *wpt,
     const char *awyname);
 
 waypoint_db_t *waypoint_db_open(const char *navdata_dir);
@@ -211,7 +211,7 @@ typedef struct {
 			turn_t	turn;
 		} hdg;
 		struct {	/* FA, FC, FD, FM */
-			fix_t	fix;
+			wpt_t	fix;
 			double	crs;
 		} fix_crs;
 		/*
@@ -220,49 +220,49 @@ typedef struct {
 		 * definite fix.
 		 */
 		struct {	/* CF */
-			fix_t		navaid;
+			wpt_t		navaid;
 			double		crs;
 			turn_t		turn;
 		} navaid_crs;
 		struct {	/* AF */
-			fix_t		navaid;
+			wpt_t		navaid;
 			double		start_radial;
 			double		end_radial;
 			double		radius;
 		} dme_arc;
 		struct {	/* RF */
-			fix_t		ctr_fix;
+			wpt_t		ctr_wpt;
 			double		radius;
 			bool_t		cw;	/* clockwise or counter-CW */
 		} radius_arc;
-		fix_t			fix;	/* IF */
+		wpt_t			fix;	/* IF */
 		struct {	/* HA, HF, HM */
-			fix_t		fix;
+			wpt_t		wpt;
 			double		inbd_crs;
 			double		leg_len;
 			bool_t		turn_right;
 		} hold;
 		struct {	/* PI */
-			fix_t		startpt;
+			wpt_t		startpt;
 			double		outbd_radial;
 			double		outbd_turn_hdg;
 			double		max_excrs_dist;
 			double		max_excrs_time;
 			bool_t		turn_right;
-			fix_t		navaid;
+			wpt_t		navaid;
 		} proc_turn;
 	} leg_cmd;
 
 	/* Segment termination condition */
 	union {
-		fix_t			fix;	/* AF, CF, DF, RF, TF, VI */
+		wpt_t			fix;	/* AF, CF, DF, RF, TF, VI */
 		alt_lim_t		alt;	/* CA, FA, HA, VA */
 		struct {			/* CR, CI (optional), VR */
-			fix_t		navaid;
+			wpt_t		navaid;
 			double		radial;
 		} radial;
 		struct {			/* CD, FD */
-			fix_t		navaid;
+			wpt_t		navaid;
 			double		dist;
 		} dme;
 		double			dist;	/* FC */
@@ -297,13 +297,13 @@ typedef struct navproc_s {
 } navproc_t;
 
 const char *navproc_seg_type2str(navproc_seg_type_t type);
-const fix_t *navproc_seg_get_start_fix(const navproc_seg_t *seg);
-const fix_t *navproc_seg_get_end_fix(const navproc_seg_t *seg);
-void navproc_seg_set_end_fix(navproc_seg_t *seg, const fix_t *fix);
+const wpt_t *navproc_seg_get_start_wpt(const navproc_seg_t *seg);
+const wpt_t *navproc_seg_get_end_wpt(const navproc_seg_t *seg);
+void navproc_seg_set_end_wpt(navproc_seg_t *seg, const wpt_t *fix);
 char *navproc_seg_get_descr(const navproc_seg_t *seg);
 
-fix_t navproc_get_start_fix(const navproc_t *proc);
-const fix_t *navproc_get_end_fix(const navproc_t *proc);
+wpt_t navproc_get_start_wpt(const navproc_t *proc);
+const wpt_t *navproc_get_end_wpt(const navproc_t *proc);
 
 /* Airport structures */
 
@@ -332,7 +332,7 @@ struct airport_s {
 	unsigned	num_procs;
 	navproc_t	*procs;
 	unsigned	num_gates;
-	fix_t		*gates;
+	wpt_t		*gates;
 	bool_t		true_hdg;
 };
 

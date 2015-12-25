@@ -159,8 +159,8 @@ rlg_new(route_leg_group_type_t type, route_t *route)
 
 	rlg->type = type;
 	rlg->route = route;
-	rlg->start_fix = null_fix;
-	rlg->end_fix = null_fix;
+	rlg->start_wpt = null_wpt;
+	rlg->end_wpt = null_wpt;
 	list_create(&rlg->legs, sizeof (route_leg_t),
 	    offsetof(route_leg_t, leg_group_legs_node));
 
@@ -188,49 +188,49 @@ rlg_new_disco(route_t *route, route_leg_group_t *prev_rlg)
 }
 
 /*
- * Returns a pointer to the end fix of a particular route leg. If the
- * route leg doesn't end in a fix, returns a pointer to `null_fix' instead.
+ * Returns a pointer to the end wpt of a particular route leg. If the
+ * route leg doesn't end in a wpt, returns a pointer to `null_wpt' instead.
  */
-static const fix_t *
-leg_get_end_fix(const route_leg_t *leg)
+static const wpt_t *
+leg_get_end_wpt(const route_leg_t *leg)
 {
-	return (!leg->disco ? navproc_seg_get_end_fix(&leg->seg) : &null_fix);
+	return (!leg->disco ? navproc_seg_get_end_wpt(&leg->seg) : &null_wpt);
 }
 
 /*
- * Sets the end fix of `leg' to `fix'. If the leg is of a type that doesn't
- * take fixes, causes an assertion failure.
+ * Sets the end wpt of `leg' to `wpt'. If the leg is of a type that doesn't
+ * take wpts, causes an assertion failure.
  */
 static void
-leg_set_end_fix(route_leg_t *leg, const fix_t *fix)
+leg_set_end_wpt(route_leg_t *leg, const wpt_t *wpt)
 {
-	navproc_seg_set_end_fix(&leg->seg, fix);
+	navproc_seg_set_end_wpt(&leg->seg, wpt);
 }
 
 static bool_t
-chk_awy_fix_adjacent(route_leg_group_t *rlg, const fix_t *fix, bool_t head)
+chk_awy_fix_adjacent(route_leg_group_t *rlg, const wpt_t *wpt, bool_t head)
 {
 	unsigned i;
 
 	ASSERT(rlg->type == ROUTE_LEG_GROUP_TYPE_AIRWAY);
-	if (IS_NULL_FIX(&rlg->start_fix) || IS_NULL_FIX(&rlg->end_fix))
+	if (IS_NULL_WPT(&rlg->start_wpt) || IS_NULL_WPT(&rlg->end_wpt))
 		return (B_FALSE);
 	for (i = 0; i < rlg->awy->num_segs &&
-	    !FIX_EQ(&rlg->awy->segs[i].endpt[0], head ? fix : &rlg->end_fix);
+	    !WPT_EQ(&rlg->awy->segs[i].endpt[0], head ? wpt : &rlg->end_wpt);
 	    i++)
 		;
 	return (i < rlg->awy->num_segs &&
-	    FIX_EQ(&rlg->awy->segs[i].endpt[1], head ? &rlg->start_fix : fix));
+	    WPT_EQ(&rlg->awy->segs[i].endpt[1], head ? &rlg->start_wpt : wpt));
 }
 
 /*
  * Creates a new DF (direct-to-fix) leg and returns it.
  */
 static route_leg_t *
-rl_new_direct(const fix_t *fix, route_leg_group_t *rlg)
+rl_new_direct(const wpt_t *fix, route_leg_group_t *rlg)
 {
 	route_leg_t *rl = calloc(sizeof (*rl), 1);
-	rl->seg.type = NAVPROC_SEG_TYPE_TRK_TO_FIX;
+	rl->seg.type = NAVPROC_SEG_TYPE_DIR_TO_FIX;
 	rl->seg.term_cond.fix = *fix;
 	rl->rlg = rlg;
 	return (rl);
@@ -254,7 +254,7 @@ last_leg_before_rlg(route_t *route, route_leg_group_t *rlg)
 
 /*
  * Checks the leg of a leg group to make sure that it ends at the appropriate
- * fix.
+ * wpt.
  *
  * @param route The route to which the leg group belongs.
  * @param rlg The route leg group to which the leg is supposed to belong.
@@ -272,21 +272,21 @@ last_leg_before_rlg(route_t *route, route_leg_group_t *rlg)
  */
 static route_leg_t *
 rlg_update_leg(route_t *route, route_leg_group_t *rlg, route_leg_t *rl,
-    const fix_t *end_fix, route_leg_t *prev_rlg_rl, route_leg_t *prev_route_rl)
+    const wpt_t *end_wpt, route_leg_t *prev_rlg_rl, route_leg_t *prev_route_rl)
 {
 	if (rl == NULL) {
 		/* Route leg doesn't exist, recreate & reinsert. */
-		rl = rl_new_direct(end_fix, rlg);
+		rl = rl_new_direct(end_wpt, rlg);
 		list_insert_after(&rlg->legs, prev_rlg_rl, rl);
 		list_insert_after(&route->legs, prev_route_rl, rl);
 	} else {
 		/* Route leg exists, check settings & position in leg list. */
-		ASSERT(rl->seg.type == NAVPROC_SEG_TYPE_TRK_TO_FIX);
+		ASSERT(rl->seg.type == NAVPROC_SEG_TYPE_DIR_TO_FIX);
 		ASSERT(rl != prev_rlg_rl);
 		ASSERT(rl != prev_route_rl);
-		if (!FIX_EQ(leg_get_end_fix(rl), end_fix)) {
+		if (!WPT_EQ(leg_get_end_wpt(rl), end_wpt)) {
 			/* End fix incorrect, reset */
-			leg_set_end_fix(rl, end_fix);
+			leg_set_end_wpt(rl, end_wpt);
 			route->segs_dirty = B_TRUE;
 		}
 		ASSERT(prev_rlg_rl == NULL || prev_rlg_rl == prev_route_rl);
@@ -316,21 +316,21 @@ rlg_update_awy_legs(route_t *route, route_leg_group_t *rlg, bool_t lookup)
 	ASSERT(rlg->type == ROUTE_LEG_GROUP_TYPE_AIRWAY);
 
 	if (lookup) {
-		const fix_t *endfix;
+		const wpt_t *endfix;
 		const airway_t *awy;
 		awy = airway_db_lookup(route->navdb->awydb, rlg->awy->name,
-		    !IS_NULL_FIX(&rlg->start_fix) ? &rlg->start_fix : NULL,
-		    !IS_NULL_FIX(&rlg->end_fix) ? rlg->end_fix.name : NULL,
+		    !IS_NULL_WPT(&rlg->start_wpt) ? &rlg->start_wpt : NULL,
+		    !IS_NULL_WPT(&rlg->end_wpt) ? rlg->end_wpt.name : NULL,
 		    &endfix);
 		VERIFY(awy != NULL);
-		ASSERT(IS_NULL_FIX(&rlg->end_fix) ||
-		    FIX_EQ(&rlg->end_fix, endfix));
+		ASSERT(IS_NULL_WPT(&rlg->end_wpt) ||
+		    WPT_EQ(&rlg->end_wpt, endfix));
 		rlg->awy = awy;
 	}
 
-	if (IS_NULL_FIX(&rlg->start_fix) || IS_NULL_FIX(&rlg->end_fix)) {
+	if (IS_NULL_WPT(&rlg->start_wpt) || IS_NULL_WPT(&rlg->end_wpt)) {
 		/*
-		 * If we're missing either the start/end fix, we can't
+		 * If we're missing either the start/end wpt, we can't
 		 * contain any legs, so the flush has changed us.
 		 */
 		if (list_head(&rlg->legs) == NULL)
@@ -350,12 +350,12 @@ rlg_update_awy_legs(route_t *route, route_leg_group_t *rlg, bool_t lookup)
 
 		/* Locate the initial airway segment */
 		for (; i < rlg->awy->num_segs &&
-		    !FIX_EQ(&rlg->start_fix, &rlg->awy->segs[i].endpt[0]); i++)
+		    !WPT_EQ(&rlg->start_wpt, &rlg->awy->segs[i].endpt[0]); i++)
 			;
 		ASSERT(i < rlg->awy->num_segs);
 		/* Pass over all airway segments in order & adapt our legs */
 		for (; i < rlg->awy->num_segs &&
-		    !FIX_EQ(&rlg->end_fix, &rlg->awy->segs[i].endpt[0]); i++) {
+		    !WPT_EQ(&rlg->end_wpt, &rlg->awy->segs[i].endpt[0]); i++) {
 			rl = rlg_update_leg(route, rlg, rl,
 			    &rlg->awy->segs[i].endpt[1], prev_awy_rl,
 			    prev_route_rl);
@@ -381,7 +381,7 @@ static void
 rlg_update_direct_leg(route_t *route, route_leg_group_t *rlg)
 {
 	ASSERT(rlg->type == ROUTE_LEG_GROUP_TYPE_DIRECT);
-	(void) rlg_update_leg(route, rlg, list_head(&rlg->legs), &rlg->end_fix,
+	(void) rlg_update_leg(route, rlg, list_head(&rlg->legs), &rlg->end_wpt,
 	    NULL, last_leg_before_rlg(route, rlg));
 }
 
@@ -464,20 +464,20 @@ rlg_tail_ndisc(route_t *route)
 	return (rlg);
 }
 
-static fix_t
+static wpt_t
 rlg_find_start_fix(const route_leg_group_t *rlg)
 {
 	route_leg_t *rl = list_head(&rlg->legs);
 	ASSERT(rl != NULL);
-	return (*navproc_seg_get_start_fix(&rl->seg));
+	return (*navproc_seg_get_start_wpt(&rl->seg));
 }
 
-static fix_t
-rlg_find_end_fix(const route_leg_group_t *rlg)
+static wpt_t
+rlg_find_end_wpt(const route_leg_group_t *rlg)
 {
 	route_leg_t *rl = list_tail(&rlg->legs);
 	ASSERT(rl != NULL);
-	return (*navproc_seg_get_end_fix(&rl->seg));
+	return (*navproc_seg_get_end_wpt(&rl->seg));
 }
 
 /*
@@ -619,7 +619,7 @@ rl_complete_seg(const route_leg_t *rl, geo_pos2_t start, const wmm_t *wmm,
 	case NAVPROC_SEG_TYPE_HOLD_TO_MANUAL:
 		seg->type = ROUTE_SEG_TYPE_DIRECT;
 		seg->direct.start = start;
-		seg->direct.end = rl->seg.leg_cmd.hold.fix.pos;
+		seg->direct.end = rl->seg.leg_cmd.hold.wpt.pos;
 		return (B_TRUE);
 	case NAVPROC_SEG_TYPE_INIT_FIX:
 		seg->type = ROUTE_SEG_TYPE_DIRECT;
@@ -789,7 +789,7 @@ calc_dir_leg_intc(geo_pos2_t cur_pos, const route_leg_t *rl,
 	case NAVPROC_SEG_TYPE_HOLD_TO_ALT:
 	case NAVPROC_SEG_TYPE_HOLD_TO_FIX:
 	case NAVPROC_SEG_TYPE_HOLD_TO_MANUAL:
-		return (rl->seg.leg_cmd.hold.fix.pos);
+		return (rl->seg.leg_cmd.hold.wpt.pos);
 	default:
 		assert(0);
 	}
@@ -965,7 +965,7 @@ calc_leg_start_pos(const route_leg_t *targ_rl, const route_leg_t *rl,
  * computation. Suitable starting positions are (in order of preference):
  *	1) departure runway threshold
  *	2) departure airport reference point
- *	3) any rlg up to lim_rlg that has a defined start_fix
+ *	3) any rlg up to lim_rlg that has a defined start_wpt
  * If a starting position is found, it is returned, otherwise NULL_GEO_POS3
  * is returned.
  */
@@ -985,9 +985,9 @@ route_first_start_pos(const route_t *route, const route_leg_group_t *lim_rlg,
 	}
 	for (const route_leg_group_t *rlg = list_head(&route->leg_groups); rlg;
 	    rlg = list_next(&route->leg_groups, rlg)) {
-		if (!IS_NULL_FIX(&rlg->start_fix)) {
+		if (!IS_NULL_WPT(&rlg->start_wpt)) {
 			*rlg_start = rlg;
-			return (GEO2_TO_GEO3(rlg->start_fix.pos, 0));
+			return (GEO2_TO_GEO3(rlg->start_wpt.pos, 0));
 		}
 		if (rlg == lim_rlg) {
 			/* Searched too far */
@@ -1014,8 +1014,8 @@ static bool_t
 proc_rlgs_intc(const route_leg_group_t *rlg1, const route_leg_group_t *rlg2)
 {
 	const route_t		*route = rlg1->route;
-	fix_t			rlg1_end_fix = rlg_find_end_fix(rlg1);
-	fix_t			rlg2_start_fix = rlg_find_start_fix(rlg2);
+	wpt_t			rlg1_end_fix = rlg_find_end_wpt(rlg1);
+	wpt_t			rlg2_start_fix = rlg_find_start_fix(rlg2);
 	geo_pos3_t		route_start_pos;
 	geo_pos2_t		leg_start, intcpt;
 	const route_leg_t	*rl1;
@@ -1025,7 +1025,7 @@ proc_rlgs_intc(const route_leg_group_t *rlg1, const route_leg_group_t *rlg2)
 	ASSERT(rlg1->route == rlg2->route);
 
 	/* Overlapping fixes means intercept is guaranteed */
-	if (FIX_EQ_POS(&rlg2_start_fix, &rlg1_end_fix))
+	if (WPT_EQ_POS(&rlg2_start_fix, &rlg1_end_fix))
 		return (B_TRUE);
 
 	/*
@@ -1099,40 +1099,40 @@ route_remove_arpt_links(route_t *route, const airport_t *arpt)
  *
  * 2) If the first leg group is an AIRWAY:
  *	a) If the second leg group is an AIRWAY:
- *		*) If the two airways already share an end/start fix, no-op.
+ *		*) If the two airways already share an end/start wpt, no-op.
  *		*) Attempts to locate a suitable intersection point between
- *		   the airways and set that as the end/start fix combo. If no
+ *		   the airways and set that as the end/start wpt combo. If no
  *		   intersection point was found, returns ERR_AWY_AWY_MISMATCH.
  *	b) If the second leg group is a DIRECT:
  *		*) If the preceding airway already had an endpoint set, will
- *		   simply connect the second direct leg group's fix to the
+ *		   simply connect the second direct leg group's wpt to the
  *		   airway's endpoint.
  *		*) If the preceding airway had no endpoint set but does have
- *		   a start fix, will attempt locate the subsequent direct leg
- *		   group's end fix on the airway. If successful, will delete
+ *		   a start wpt, will attempt locate the subsequent direct leg
+ *		   group's end wpt on the airway. If successful, will delete
  *		   the direct leg group and instead set the airway's end point
- *		   to that fix. If not, will return ERR_AWY_WPT_MISMATCH.
- *		*) If the preceding airway is lacking a start_fix, will always
+ *		   to that wpt. If not, will return ERR_AWY_WPT_MISMATCH.
+ *		*) If the preceding airway is lacking a start_wpt, will always
  *		   return ERR_AWY_WPT_MISMATCH.
  *	c) If the second leg group is a PROC:
- *		*) If the airway's end fix is identical to the procedure's
- *		   start fix, no-op.
- *		*) Otherwise tries to look for the procedure's start fix on
+ *		*) If the airway's end wpt is identical to the procedure's
+ *		   start wpt, no-op.
+ *		*) Otherwise tries to look for the procedure's start wpt on
  *		   the airway and attempts to find a way to extend the airway
- *		   segment up to the procedure's start. If there is no fix
+ *		   segment up to the procedure's start. If there is no wpt
  *		   on the airway that ends at the procedure, returns
  *		   ERR_AWY_PROC_MISMATCH.
  *
  * 3) If the first leg group is a DIRECT or PROC:
  *	a) If the second leg group is an AIRWAY, attempts to locate the
- *	   first LG's end fix on the airway. If the airway already has an end
- *	   fix defined, will take that into consideration so that we maintain
- *	   correct airway orientation. If the first LG's end fix is not present
+ *	   first LG's end wpt on the airway. If the airway already has an end
+ *	   wpt defined, will take that into consideration so that we maintain
+ *	   correct airway orientation. If the first LG's end wpt is not present
  *	   on the airway, returns ERR_AWY_WPT_MISMATCH.
  *	b) If the second leg group is a DIRECT, sets the second LG's start
- *	   fix to the first LG's end fix.
- *	c) If the second leg group is a PROC, checks if the first LG's end fix
- *	   is identical to the PROC's start fix. If it is, no-op, otherwise
+ *	   wpt to the first LG's end wpt.
+ *	c) If the second leg group is a PROC, checks if the first LG's end wpt
+ *	   is identical to the PROC's start wpt. If it is, no-op, otherwise
  *	   returns ERR_WPT_PROC_MISMATCH.
  */
 static err_t
@@ -1158,10 +1158,10 @@ rlg_try_connect(route_t *route, route_leg_group_t *prev_rlg,
 		switch (next_rlg->type) {
 		case ROUTE_LEG_GROUP_TYPE_AIRWAY: {
 			/* AWY -> AWY */
-			const fix_t *isect;
+			const wpt_t *isect;
 			bool_t awy_end_overlap;
 
-			if (FIX_EQ(&prev_rlg->end_fix, &next_rlg->start_fix))
+			if (WPT_EQ(&prev_rlg->end_wpt, &next_rlg->start_wpt))
 				break;
 
 			if (!allow_mod || !allow_add_legs)
@@ -1170,20 +1170,20 @@ rlg_try_connect(route_t *route, route_leg_group_t *prev_rlg,
 			/* locate: AWY x AWY */
 			isect = airway_db_lookup_awy_intersection(
 			    route->navdb->awydb, prev_rlg->awy->name,
-			    prev_rlg->start_fix.name, next_rlg->awy->name);
+			    prev_rlg->start_wpt.name, next_rlg->awy->name);
 			if (isect == NULL)
 				return (ERR_AWY_AWY_MISMATCH);
-			prev_rlg->end_fix = *isect;
-			next_rlg->start_fix = *isect;
+			prev_rlg->end_wpt = *isect;
+			next_rlg->start_wpt = *isect;
 			/*
 			 * This might have shortened the airway to where its
 			 * start/end starts to overlap. Resolve this by deleting
-			 * the awy's end fix and reconnecting it.
+			 * the awy's end wpt and reconnecting it.
 			 */
-			awy_end_overlap = FIX_EQ(&next_rlg->end_fix,
-			    &next_rlg->start_fix);
+			awy_end_overlap = WPT_EQ(&next_rlg->end_wpt,
+			    &next_rlg->start_wpt);
 			if (awy_end_overlap)
-				next_rlg->end_fix = null_fix;
+				next_rlg->end_wpt = null_wpt;
 			rlg_update_awy_legs(route, prev_rlg, B_TRUE);
 			rlg_update_awy_legs(route, next_rlg, B_TRUE);
 			if (awy_end_overlap) {
@@ -1196,18 +1196,18 @@ rlg_try_connect(route_t *route, route_leg_group_t *prev_rlg,
 		}
 		case ROUTE_LEG_GROUP_TYPE_DIRECT:
 			/* AWY -> DIRECT */
-			if (!IS_NULL_FIX(&prev_rlg->end_fix)) {
+			if (!IS_NULL_WPT(&prev_rlg->end_wpt)) {
 				/*
-				 * AWY and DIRECT both end at same fix, we
+				 * AWY and DIRECT both end at same wpt, we
 				 * can't have that.
 				 */
-				if (FIX_EQ(&prev_rlg->end_fix,
-				    &next_rlg->end_fix))
+				if (WPT_EQ(&prev_rlg->end_wpt,
+				    &next_rlg->end_wpt))
 					return (ERR_AWY_WPT_MISMATCH);
-				if (!IS_NULL_FIX(&next_rlg->start_fix) &&
+				if (!IS_NULL_WPT(&next_rlg->start_wpt) &&
 				    !allow_mod)
 					return (ERR_AWY_WPT_MISMATCH);
-				next_rlg->start_fix = prev_rlg->end_fix;
+				next_rlg->start_wpt = prev_rlg->end_wpt;
 				rlg_update_direct_leg(route, next_rlg);
 
 				route->segs_dirty = B_TRUE;
@@ -1216,22 +1216,22 @@ rlg_try_connect(route_t *route, route_leg_group_t *prev_rlg,
 				 * Preceding airway is missing the endpoint,
 				 * so try to locate the next DIRECT on the
 				 * airway and remove the DIRECT leg group.
-				 * If airway has null start_fix, this will
+				 * If airway has null start_wpt, this will
 				 * never succeed.
 				 */
-				const fix_t *newendfix;
+				const wpt_t *newendfix;
 				const airway_t *newawy;
 
 				if (!allow_mod)
 					return (ERR_AWY_WPT_MISMATCH);
 				newawy = airway_db_lookup(route->navdb->awydb,
-				    prev_rlg->awy->name, &prev_rlg->start_fix,
-				    next_rlg->end_fix.name, &newendfix);
+				    prev_rlg->awy->name, &prev_rlg->start_wpt,
+				    next_rlg->end_wpt.name, &newendfix);
 				if (newawy == NULL ||
-				    !FIX_EQ(newendfix, &next_rlg->end_fix))
+				    !WPT_EQ(newendfix, &next_rlg->end_wpt))
 					return (ERR_AWY_WPT_MISMATCH);
 				prev_rlg->awy = newawy;
-				prev_rlg->end_fix = next_rlg->end_fix;
+				prev_rlg->end_wpt = next_rlg->end_wpt;
 				rlg_update_awy_legs(route, prev_rlg, B_FALSE);
 				rlg_destroy(route, next_rlg);
 
@@ -1242,19 +1242,19 @@ rlg_try_connect(route_t *route, route_leg_group_t *prev_rlg,
 			/* AWY -> PROC */
 			const airway_t *newawy;
 
-			ASSERT(!IS_NULL_FIX(&next_rlg->start_fix));
-			if (FIX_EQ(&prev_rlg->end_fix, &next_rlg->start_fix))
+			ASSERT(!IS_NULL_WPT(&next_rlg->start_wpt));
+			if (WPT_EQ(&prev_rlg->end_wpt, &next_rlg->start_wpt))
 				/* already connected */
 				break;
 			if (!allow_mod)
 				return (ERR_AWY_PROC_MISMATCH);
 			newawy = airway_db_lookup(route->navdb->awydb,
-			    prev_rlg->awy->name, &prev_rlg->start_fix,
-			    next_rlg->start_fix.name, NULL);
+			    prev_rlg->awy->name, &prev_rlg->start_wpt,
+			    next_rlg->start_wpt.name, NULL);
 			if (newawy == NULL)
 				return (ERR_AWY_PROC_MISMATCH);
 			prev_rlg->awy = newawy;
-			prev_rlg->end_fix = next_rlg->start_fix;
+			prev_rlg->end_wpt = next_rlg->start_wpt;
 			rlg_update_awy_legs(route, prev_rlg, B_FALSE);
 			route->segs_dirty = B_TRUE;
 			break;
@@ -1269,23 +1269,23 @@ rlg_try_connect(route_t *route, route_leg_group_t *prev_rlg,
 		switch (next_rlg->type) {
 		case ROUTE_LEG_GROUP_TYPE_AIRWAY: {
 			/* DIRECT -> AWY */
-			const fix_t *newendfix;
+			const wpt_t *newendfix;
 			const airway_t *newawy;
 
-			if (FIX_EQ(&prev_rlg->end_fix, &next_rlg->start_fix))
+			if (WPT_EQ(&prev_rlg->end_wpt, &next_rlg->start_wpt))
 				/* already connected */
 				break;
 			if (!allow_mod)
 				return (ERR_AWY_PROC_MISMATCH);
 			newawy = airway_db_lookup(route->navdb->awydb,
-			    next_rlg->awy->name, &prev_rlg->end_fix,
-			    IS_NULL_FIX(&next_rlg->end_fix) ? NULL :
-			    next_rlg->end_fix.name, &newendfix);
+			    next_rlg->awy->name, &prev_rlg->end_wpt,
+			    IS_NULL_WPT(&next_rlg->end_wpt) ? NULL :
+			    next_rlg->end_wpt.name, &newendfix);
 			if (newawy != NULL &&
-			    (IS_NULL_FIX(&next_rlg->end_fix) ||
-			    FIX_EQ(&next_rlg->end_fix, newendfix))) {
+			    (IS_NULL_WPT(&next_rlg->end_wpt) ||
+			    WPT_EQ(&next_rlg->end_wpt, newendfix))) {
 				next_rlg->awy = newawy;
-				next_rlg->start_fix = prev_rlg->end_fix;
+				next_rlg->start_wpt = prev_rlg->end_wpt;
 				rlg_update_awy_legs(route, next_rlg, B_FALSE);
 
 				route->segs_dirty = B_TRUE;
@@ -1296,11 +1296,11 @@ rlg_try_connect(route_t *route, route_leg_group_t *prev_rlg,
 		}
 		case ROUTE_LEG_GROUP_TYPE_DIRECT:
 			/* [DIRECT|PROC] -> DIRECT */
-			ASSERT(!IS_NULL_FIX(&prev_rlg->end_fix) ||
+			ASSERT(!IS_NULL_WPT(&prev_rlg->end_wpt) ||
 			    prev_rlg->type == ROUTE_LEG_GROUP_TYPE_PROC);
-			if (IS_NULL_FIX(&prev_rlg->end_fix))
+			if (IS_NULL_WPT(&prev_rlg->end_wpt))
 				return (ERR_WPT_PROC_MISMATCH);
-			if (FIX_EQ(&prev_rlg->end_fix, &next_rlg->end_fix)) {
+			if (WPT_EQ(&prev_rlg->end_wpt, &next_rlg->end_wpt)) {
 				if (allow_mod) {
 					/* Kill duplicates if allowed to */
 					route_leg_group_t *new_next_rlg =
@@ -1315,14 +1315,14 @@ rlg_try_connect(route_t *route, route_leg_group_t *prev_rlg,
 					return (ERR_DUPLICATE_LEG);
 				}
 			}
-			if (!IS_NULL_FIX(&next_rlg->start_fix) && !allow_mod)
+			if (!IS_NULL_WPT(&next_rlg->start_wpt) && !allow_mod)
 				return (ERR_WPT_PROC_MISMATCH);
-			next_rlg->start_fix = prev_rlg->end_fix;
+			next_rlg->start_wpt = prev_rlg->end_wpt;
 			break;
 		case ROUTE_LEG_GROUP_TYPE_PROC:
 			/* [DIRECT|PROC] -> PROC */
 			/* If the fixes are equal, we're done */
-			if (FIX_EQ(&prev_rlg->end_fix, &next_rlg->start_fix))
+			if (WPT_EQ(&prev_rlg->end_wpt, &next_rlg->start_wpt))
 				break;
 			if (prev_rlg->type == ROUTE_LEG_GROUP_TYPE_DIRECT) {
 				/* DIRECT -> PROC cannot intercept */
@@ -1335,14 +1335,14 @@ rlg_try_connect(route_t *route, route_leg_group_t *prev_rlg,
 			 */
 			if (navprocs_related(prev_rlg->proc, next_rlg->proc) &&
 			    proc_rlgs_intc(prev_rlg, next_rlg)) {
-				fix_t new_end = rlg_find_end_fix(prev_rlg);
-				if (!IS_NULL_FIX(&new_end)) {
+				wpt_t new_end = rlg_find_end_wpt(prev_rlg);
+				if (!IS_NULL_WPT(&new_end)) {
 					/*
 					 * This is just for display convenience.
 					 * The segment generation algorithm
-					 * ignores start_fix/end_fix.
+					 * ignores start_wpt/end_wpt.
 					 */
-					prev_rlg->end_fix = new_end;
+					prev_rlg->end_wpt = new_end;
 				}
 				break;
 			}
@@ -1528,9 +1528,9 @@ rlg_shorten_proc(route_t *route, route_leg_t *lim_rl, bool_t left)
 		free(rl);
 	}
 	if (left)
-		rlg->start_fix = rlg_find_start_fix(rlg);
+		rlg->start_wpt = rlg_find_start_fix(rlg);
 	else
-		rlg->end_fix = rlg_find_end_fix(rlg);
+		rlg->end_wpt = rlg_find_end_wpt(rlg);
 	rlg_connect_neigh(route, rlg, B_FALSE, B_FALSE);
 }
 
@@ -1835,8 +1835,8 @@ route_insert_proc_rlg(route_t *route, const navproc_t *proc,
 		prev_rl = rl;
 	}
 	ASSERT(!list_is_empty(&rlg->legs));
-	rlg->start_fix = navproc_get_start_fix(proc);
-	rlg->end_fix = rlg_find_end_fix(rlg);
+	rlg->start_wpt = navproc_get_start_wpt(proc);
+	rlg->end_wpt = rlg_find_end_wpt(rlg);
 
 	return (rlg);
 }
@@ -2294,7 +2294,7 @@ route_get_legs(const route_t *route)
 }
 
 /*
- * Inserts an airway leg group without a terminating fix for the moment.
+ * Inserts an airway leg group without a terminating wpt for the moment.
  *
  * @param route The route to insert the leg group into.
  * @param awyname Airway name.
@@ -2340,36 +2340,36 @@ route_lg_awy_insert(route_t *route, const char *awyname,
 }
 
 /*
- * Sets the terminating fix of an airway leg group previously created with
+ * Sets the terminating wpt of an airway leg group previously created with
  * route_lg_awy_insert.
  *
  * @param route The route holding the airway leg group.
- * @param x_rlg The airway leg group for which to set the terminating fix.
- * @param fixname The name of the terminating fix.
+ * @param x_rlg The airway leg group for which to set the terminating wpt.
+ * @param wptname The name of the terminating wpt.
  *
  * @return ERR_OK on success or an error code otherwise.
  */
 err_t
 route_lg_awy_set_end_fix(route_t *route, const route_leg_group_t *x_rlg,
-    const char *fixname)
+    const char *wptname)
 {
 	route_leg_group_t *rlg = (route_leg_group_t *)x_rlg;
 	const airway_t *newawy;
-	const fix_t *end_fix;
+	const wpt_t *end_wpt;
 
 	ASSERT(rlg->type == ROUTE_LEG_GROUP_TYPE_AIRWAY);
 	ASSERT(list_link_active(&rlg->route_leg_groups_node));
 
-	if (IS_NULL_FIX(&rlg->start_fix))
+	if (IS_NULL_WPT(&rlg->start_wpt))
 		return (ERR_AWY_WPT_MISMATCH);
 
 	newawy = airway_db_lookup(route->navdb->awydb, rlg->awy->name,
-	    &rlg->start_fix, fixname, &end_fix);
+	    &rlg->start_wpt, wptname, &end_wpt);
 	if (newawy == NULL)
 		return (ERR_AWY_WPT_MISMATCH);
 
 	rlg->awy = newawy;
-	rlg->end_fix = *end_fix;
+	rlg->end_wpt = *end_wpt;
 
 	rlg_connect_neigh(route, rlg, B_FALSE, B_FALSE);
 
@@ -2380,7 +2380,7 @@ route_lg_awy_set_end_fix(route_t *route, const route_leg_group_t *x_rlg,
 }
 
 /*
- * Inserts a direct leg group to a route.
+ * Inserts a direct-to-FIX leg group to a route.
  *
  * @param route The route to insert the leg group into.
  * @param fix The target fix for the direct leg group.
@@ -2392,7 +2392,7 @@ route_lg_awy_set_end_fix(route_t *route, const route_leg_group_t *x_rlg,
  * @return ERR_OK on success or an error code otherwise.
  */
 err_t
-route_lg_direct_insert(route_t *route, const fix_t *fix,
+route_lg_direct_insert(route_t *route, const wpt_t *fix,
     const route_leg_group_t *x_prev_rlg, const route_leg_group_t **new_rlgpp)
 {
 	route_leg_group_t *prev_rlg = (route_leg_group_t *)x_prev_rlg;
@@ -2407,7 +2407,7 @@ route_lg_direct_insert(route_t *route, const fix_t *fix,
 		return (ERR_INVALID_ENTRY);
 
 	rlg = rlg_new(ROUTE_LEG_GROUP_TYPE_DIRECT, route);
-	rlg->end_fix = *fix;
+	rlg->end_wpt = *fix;
 
 	list_insert_after(&route->leg_groups, prev_rlg, rlg);
 	rlg_update_direct_leg(route, rlg);
@@ -2447,45 +2447,45 @@ route_lg_delete(route_t *route, const route_leg_group_t *x_rlg)
 }
 
 /*
- * Prepends a leg ending at `fix' to an airway leg group `awyrlg'. The new
+ * Prepends a leg ending at `wpt' to an airway leg group `awyrlg'. The new
  * leg will be returned in `rlpp' (if not NULL). What this does is set the
- * start fix of the airway leg group to `fix' and regenerate its legs. It
+ * start fix of the airway leg group to `wpt' and regenerate its legs. It
  * then generates a new direct leg group and inserts it before `awyrlg'.
  * Finally, it connects the direct rlg to the airway and also to any rlg
  * that might have preceded it.
  */
 static void
-rlg_prepend_direct(route_t *route, route_leg_group_t *awyrlg, const fix_t *fix,
+rlg_prepend_direct(route_t *route, route_leg_group_t *awyrlg, const wpt_t *wpt,
     const route_leg_t **rlpp)
 {
 	const route_leg_group_t *dirrlg;
 	route_leg_group_t *prev_rlg = rlg_prev_ndisc(route, awyrlg);
 
 	ASSERT(awyrlg->type == ROUTE_LEG_GROUP_TYPE_AIRWAY);
-	awyrlg->start_fix = *fix;
+	awyrlg->start_wpt = *wpt;
 	rlg_update_awy_legs(route, awyrlg, B_TRUE);
-	route_lg_direct_insert(route, fix, prev_rlg, &dirrlg);
+	route_lg_direct_insert(route, wpt, prev_rlg, &dirrlg);
 	if (rlpp)
 		*rlpp = list_head(&dirrlg->legs);
 }
 
 /*
- * Appends a leg ending at `fix' to the airway `rlg' and returns the new
- * leg in `rlpp' (if not NULL). This simply sets the airway's end fix to
- * `fix' and regenerates its legs, at the end attempting to connect it to
+ * Appends a leg ending at `wpt' to the airway `rlg' and returns the new
+ * leg in `rlpp' (if not NULL). This simply sets the airway's end wpt to
+ * `wpt' and regenerates its legs, at the end attempting to connect it to
  * the rlg following it.
  */
 static void
-rlg_append_direct(route_t *route, route_leg_group_t *rlg, const fix_t *fix,
+rlg_append_direct(route_t *route, route_leg_group_t *rlg, const wpt_t *wpt,
     const route_leg_t **rlpp)
 {
 	ASSERT(rlg->type == ROUTE_LEG_GROUP_TYPE_AIRWAY ||
 	    rlg->type == ROUTE_LEG_GROUP_TYPE_PROC);
-	rlg->end_fix = *fix;
+	rlg->end_wpt = *wpt;
 	if (rlg->type == ROUTE_LEG_GROUP_TYPE_AIRWAY) {
 		rlg_update_awy_legs(route, rlg, B_TRUE);
 	} else {
-		route_leg_t *rl = rl_new_direct(fix, rlg);
+		route_leg_t *rl = rl_new_direct(wpt, rlg);
 		route_leg_t *rl_last = list_tail(&rlg->legs);
 		list_insert_tail(&rlg->legs, rl);
 		list_insert_after(&route->legs, rl_last, rl);
@@ -2516,8 +2516,8 @@ is_terminal_procedure(navproc_type_t type)
 /*
  * Given two legs `rl1' and `rl2' on the same airway route leg group, this
  * function splits the airway rlg up into two airway rlg's. The first airway
- * is terminated at rl1's end fix, and the second airway starts at the start
- * fix of rl2. rl2 must follow rl1 on the airway leg group. If `join' is set
+ * is terminated at rl1's end wpt, and the second airway starts at the start
+ * wpt of rl2. rl2 must follow rl1 on the airway leg group. If `join' is set
  * to B_TRUE and rl1 and rl2 are not immediately adjacent on the airway, the
  * two new airways are connected using a DIRECT leg group. If `join' is set
  * to B_FALSE and rl1 and rl2 are not immediately adjacent on the airway a
@@ -2529,39 +2529,39 @@ awy_split(route_t *route, route_leg_group_t *awy1, route_leg_t *rl1,
     route_leg_t *rl2, bool_t join)
 {
 	route_leg_group_t	*dir, *awy2;
-	fix_t			awy1_start_fix, awy1_end_fix;
-	fix_t			awy2_end_fix, awy2_start_fix;
+	wpt_t			awy1_start_fix, awy1_end_fix;
+	wpt_t			awy2_end_fix, awy2_start_fix;
 
-	awy1_start_fix = awy1->start_fix;
+	awy1_start_fix = awy1->start_wpt;
 	if (rl1 != NULL) {
-		awy1_end_fix = *leg_get_end_fix(rl1);
+		awy1_end_fix = *leg_get_end_wpt(rl1);
 	} else {
-		awy1_end_fix = awy1->start_fix;
+		awy1_end_fix = awy1->start_wpt;
 	}
 	if (rl2 != NULL) {
 		route_leg_t *prev_rl = list_prev(&awy1->legs, rl2);
-		awy2_start_fix = *leg_get_end_fix(prev_rl);
+		awy2_start_fix = *leg_get_end_wpt(prev_rl);
 	} else {
-		awy2_start_fix = awy1->end_fix;
+		awy2_start_fix = awy1->end_wpt;
 	}
-	awy2_end_fix = awy1->end_fix;
+	awy2_end_fix = awy1->end_wpt;
 
-	if (!FIX_EQ(&awy2_start_fix, &awy2_end_fix)) {
+	if (!WPT_EQ(&awy2_start_fix, &awy2_end_fix)) {
 		awy2 = rlg_new(ROUTE_LEG_GROUP_TYPE_AIRWAY, route);
 		awy2->awy = awy1->awy;
-		awy2->start_fix = awy2_start_fix;
-		awy2->end_fix = awy2_end_fix;
+		awy2->start_wpt = awy2_start_fix;
+		awy2->end_wpt = awy2_end_fix;
 		list_insert_after(&route->leg_groups, awy1, awy2);
 		rlg_update_awy_legs(route, awy2, B_FALSE);
 	} else {
 		awy2 = NULL;
 	}
 
-	if (!FIX_EQ(&awy1_end_fix, &awy2_start_fix)) {
+	if (!WPT_EQ(&awy1_end_fix, &awy2_start_fix)) {
 		if (join) {
 			dir = rlg_new(ROUTE_LEG_GROUP_TYPE_DIRECT, route);
-			dir->start_fix = awy1_end_fix;
-			dir->end_fix = awy2_start_fix;
+			dir->start_wpt = awy1_end_fix;
+			dir->end_wpt = awy2_start_fix;
 			list_insert_after(&route->leg_groups, awy1, dir);
 			rlg_update_direct_leg(route, dir);
 		} else {
@@ -2571,8 +2571,8 @@ awy_split(route_t *route, route_leg_group_t *awy1, route_leg_t *rl1,
 		dir = NULL;
 	}
 
-	if (!FIX_EQ(&awy1_start_fix, &awy1_end_fix)) {
-		awy1->end_fix = awy1_end_fix;
+	if (!WPT_EQ(&awy1_start_fix, &awy1_end_fix)) {
+		awy1->end_wpt = awy1_end_fix;
 		rlg_update_awy_legs(route, awy1, B_FALSE);
 	} else {
 		rlg_bypass(route, awy1, B_TRUE, B_FALSE);
@@ -2590,10 +2590,10 @@ awy_split(route_t *route, route_leg_group_t *awy1, route_leg_t *rl1,
 }
 
 static bool_t
-leg_check_dup(const route_leg_t *rl, const fix_t *fix)
+leg_check_dup(const route_leg_t *rl, const wpt_t *wpt)
 {
 	return (rl != NULL && rl->seg.type != NAVPROC_SEG_TYPE_INIT_FIX &&
-	    FIX_EQ_POS(leg_get_end_fix(rl), fix));
+	    WPT_EQ_POS(leg_get_end_wpt(rl), wpt));
 }
 
 /*
@@ -2605,28 +2605,28 @@ leg_check_dup(const route_leg_t *rl, const fix_t *fix)
  * 1) If there are legs either side of the new leg:
  *	a) If each side-leg belongs to a different route leg groups:
  *		i) If the previous leg group is an airway and the newly
- *		   added leg immediately follows the airway's last fix on
+ *		   added leg immediately follows the airway's last wpt on
  *		   the same airway, then the airway is simply extended to
- *		   end at the new leg's fix.
+ *		   end at the new leg's wpt.
  *		ii) If the previous and next leg group are procedures that
  *		   belong to the same airport, then the new leg is appended
  *		   to the end of the previous leg group.
  *		iii) If the next leg group is an airway and the newly
- *		   added leg immediately precedes the airway's first fix
+ *		   added leg immediately precedes the airway's first wpt
  *		   on the same airway, then the airway is simply extended
- *		   to start at the new leg's fix.
+ *		   to start at the new leg's wpt.
  *		iv) If all else fails then insert a new direct leg group
  *		   containing the new leg in between the extant leg groups.
  */
 err_t
-route_l_insert(route_t *route, const fix_t *fix, const route_leg_t *x_prev_rl,
+route_l_insert(route_t *route, const wpt_t *fix, const route_leg_t *x_prev_rl,
     const route_leg_t **rlpp)
 {
 	route_leg_t *prev_rl = (route_leg_t *)x_prev_rl;
 	route_leg_t *next_rl = (prev_rl != NULL ?
 	    list_next(&route->legs, prev_rl) : list_head(&route->legs));
 
-	ASSERT(!IS_NULL_FIX(fix));
+	ASSERT(!IS_NULL_WPT(fix));
 
 		/* Check for dups */
 	if (leg_check_dup(prev_rl, fix) || leg_check_dup(next_rl, fix))
@@ -2866,13 +2866,13 @@ route_l_delete(route_t *route, const route_leg_t *x_rl)
 			    B_FALSE);
 		} else if (prev_rl != NULL && next_rl == NULL) {
 			/* Shorten the airway from the right */
-			rlg->end_fix = *leg_get_end_fix(prev_rl);
+			rlg->end_wpt = *leg_get_end_wpt(prev_rl);
 			rlg_update_awy_legs(route, rlg, B_FALSE);
 			rlg2 = rlg_next_ndisc(route, rlg);
 			rlg_connect(route, rlg, rlg2, B_FALSE, B_FALSE);
 		} else if (prev_rl == NULL && next_rl != NULL) {
 			/* Shorten the airway from the left */
-			rlg->start_fix = *leg_get_end_fix(rl);
+			rlg->start_wpt = *leg_get_end_wpt(rl);
 			rlg_update_awy_legs(route, rlg, B_FALSE);
 			rlg2 = rlg_prev_ndisc(route, rlg);
 			rlg_connect(route, rlg2, rlg, B_FALSE, B_FALSE);
@@ -2886,27 +2886,27 @@ route_l_delete(route_t *route, const route_leg_t *x_rl)
 		if (prev_rl == NULL && next_rl == NULL) {
 			rlg_bypass(route, rl->rlg, B_FALSE, B_FALSE);
 		} else if (prev_rl == NULL) {
-			/* First leg, check if we can adjust start_fix. */
-			fix_t start_fix;
+			/* First leg, check if we can adjust start_wpt. */
+			wpt_t start_wpt;
 
 			list_remove(&rlg->legs, rl);
 			list_remove(&route->legs, rl);
 			free(rl);
-			start_fix = rlg_find_start_fix(rlg);
-			if (!IS_NULL_FIX(&start_fix)) {
-				rlg->start_fix = start_fix;
+			start_wpt = rlg_find_start_fix(rlg);
+			if (!IS_NULL_WPT(&start_wpt)) {
+				rlg->start_wpt = start_wpt;
 				rlg_connect_neigh(route, rlg, B_FALSE, B_FALSE);
 			}
 		} else if (next_rl == NULL) {
-			/* Last leg, check if we can adjust end_fix. */
-			fix_t end_fix;
+			/* Last leg, check if we can adjust end_wpt. */
+			wpt_t end_wpt;
 
 			list_remove(&rlg->legs, rl);
 			list_remove(&route->legs, rl);
 			free(rl);
-			end_fix = rlg_find_end_fix(rlg);
-			if (!IS_NULL_FIX(&end_fix)) {
-				rlg->end_fix = end_fix;
+			end_wpt = rlg_find_end_wpt(rlg);
+			if (!IS_NULL_WPT(&end_wpt)) {
+				rlg->end_wpt = end_wpt;
 				rlg_connect_neigh(route, rlg, B_FALSE, B_FALSE);
 			}
 		} else {

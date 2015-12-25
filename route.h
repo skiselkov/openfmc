@@ -55,8 +55,8 @@ typedef struct {
 		const airway_t	*awy;
 		const navproc_t	*proc;
 	};
-	fix_t			start_fix;
-	fix_t			end_fix;
+	wpt_t			start_wpt;
+	wpt_t			end_wpt;
 	list_t			legs;
 
 	list_node_t		route_leg_groups_node;
@@ -221,14 +221,14 @@ err_t route_lg_awy_insert(route_t *route, const char *awyname,
     const route_leg_group_t *x_prev_rlg, const route_leg_group_t **new_rlgpp);
 err_t route_lg_awy_set_end_fix(route_t *route, const route_leg_group_t *x_rlg,
     const char *fixname);
-err_t route_lg_direct_insert(route_t *route, const fix_t *fix,
+err_t route_lg_direct_insert(route_t *route, const wpt_t *fix,
     const route_leg_group_t *prev_rlg, const route_leg_group_t **new_rlgpp);
 err_t route_lg_delete(route_t *route, const route_leg_group_t *rlg);
 
 /*
  * Editing legs directly.
  */
-err_t route_l_insert(route_t *route, const fix_t *fix,
+err_t route_l_insert(route_t *route, const wpt_t *fix,
     const route_leg_t *x_prev_rl, const route_leg_t **new_rlpp);
 err_t route_l_move(route_t *route, const route_leg_t *x_target_rl,
     const route_leg_t *x_source_rl);

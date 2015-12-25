@@ -473,50 +473,50 @@ dump_route_leg_group(const route_leg_group_t *rlg, int idx)
 	switch (rlg->type) {
 	case ROUTE_LEG_GROUP_TYPE_AIRWAY:
 		printf("%3d %s\t\t%7s\n", idx,
-		    rlg->awy->name, !IS_NULL_FIX(&rlg->end_fix) ?
-		    rlg->end_fix.name : "");
+		    rlg->awy->name, !IS_NULL_WPT(&rlg->end_wpt) ?
+		    rlg->end_wpt.name : "");
 		break;
 	case ROUTE_LEG_GROUP_TYPE_DIRECT:
 		printf("%3d DIRECT\t\t%7s\n", idx,
-		    rlg->end_fix.name);
+		    rlg->end_wpt.name);
 		break;
 	case ROUTE_LEG_GROUP_TYPE_PROC:
 		switch (rlg->proc->type) {
 		case NAVPROC_TYPE_SID:
 			printf("%3d %s.%s\t\t%7s\n", idx,
 			    rlg->proc->rwy->ID, rlg->proc->name,
-			    END_FIX_NAME(&rlg->end_fix));
+			    END_FIX_NAME(&rlg->end_wpt));
 			break;
 		case NAVPROC_TYPE_STAR:
 			printf("%3d %s\t\t%7s\n", idx,
-			    rlg->proc->name, END_FIX_NAME(&rlg->end_fix));
+			    rlg->proc->name, END_FIX_NAME(&rlg->end_wpt));
 			break;
 		case NAVPROC_TYPE_FINAL:
 			printf("%3d %s  \t\t%7s\n", idx,
-			    rlg->proc->name, END_FIX_NAME(&rlg->end_fix));
+			    rlg->proc->name, END_FIX_NAME(&rlg->end_wpt));
 			break;
 		case NAVPROC_TYPE_SID_COMMON:
 			printf("%3d %s.ALL\t\t%7s\n", idx,
-			    rlg->proc->name, END_FIX_NAME(&rlg->end_fix));
+			    rlg->proc->name, END_FIX_NAME(&rlg->end_wpt));
 			break;
 		case NAVPROC_TYPE_STAR_COMMON:
 			printf("%3d ALL.%s\t\t%7s\n", idx,
-			    rlg->proc->name, END_FIX_NAME(&rlg->end_fix));
+			    rlg->proc->name, END_FIX_NAME(&rlg->end_wpt));
 			break;
 		case NAVPROC_TYPE_SID_TRANS:
 			printf("%3d %s.%s\t%7s\n", idx,
 			    rlg->proc->name, rlg->proc->tr_name,
-			    END_FIX_NAME(&rlg->end_fix));
+			    END_FIX_NAME(&rlg->end_wpt));
 			break;
 		case NAVPROC_TYPE_STAR_TRANS:
 			printf("%3d %s.%s\t%7s\n", idx,
 			    rlg->proc->tr_name, rlg->proc->name,
-			    END_FIX_NAME(&rlg->end_fix));
+			    END_FIX_NAME(&rlg->end_wpt));
 			break;
 		case NAVPROC_TYPE_FINAL_TRANS:
 			printf("%3d %s.%s\t\t%7s\n", idx,
 			    rlg->proc->tr_name, rlg->proc->name,
-			    END_FIX_NAME(&rlg->end_fix));
+			    END_FIX_NAME(&rlg->end_wpt));
 			break;
 		default:
 			assert(0);
@@ -597,23 +597,23 @@ find_rl(route_t *route, int idx)
 	return (res);
 }
 
-fix_t
+wpt_t
 find_fix(const char *fix_name, fms_t *fms)
 {
-	fix_t fix;
-	fix_t *fixes;
+	wpt_t fix;
+	wpt_t *fixes;
 	size_t num_fixes;
 	bool_t is_wpt_seq;
 
 	fixes = fms_wpt_name_decode(fix_name, fms, &num_fixes, &is_wpt_seq);
 	if (fixes == NULL) {
 		fprintf(stderr, "%s\n", err2str(ERR_NOT_IN_DATABASE));
-		return (null_fix);
+		return (null_wpt);
 	}
 	if (is_wpt_seq) {
 		free(fixes);
 		fprintf(stderr, "%s\n", err2str(ERR_INVALID_ENTRY));
-		return (null_fix);
+		return (null_wpt);
 	}
 
 	if (num_fixes > 1) {
@@ -722,14 +722,14 @@ test_route(char *navdata_dir)
 			int idx;
 			char fix_name[32];
 			const route_leg_group_t *prev_rlg;
-			fix_t fix;
+			wpt_t fix;
 
 			memset(fix_name, 0, sizeof (fix_name));
 			if (scanf("%7d %31s", &idx, fix_name) != 2)
 				continue;
 			strtoupper(fix_name);
 			fix = find_fix(fix_name, fms);
-			if (IS_NULL_FIX(&fix))
+			if (IS_NULL_WPT(&fix))
 				continue;
 			prev_rlg = find_rlg(route, idx - 1);
 			err = route_lg_direct_insert(route, &fix, prev_rlg,
@@ -738,14 +738,14 @@ test_route(char *navdata_dir)
 			int idx;
 			char fix_name[32];
 			const route_leg_t *prev_rl;
-			fix_t fix;
+			wpt_t fix;
 
 			memset(fix_name, 0, sizeof (fix_name));
 			if (scanf("%7d %31s", &idx, fix_name) != 2)
 				continue;
 			strtoupper(fix_name);
 			fix = find_fix(fix_name, fms);
-			if (IS_NULL_FIX(&fix))
+			if (IS_NULL_WPT(&fix))
 				continue;
 			prev_rl = find_rl(route, idx - 1);
 			err = route_l_insert(route, &fix, prev_rl, NULL);
