@@ -52,6 +52,7 @@ typedef struct {
 
 	struct {
 		regex_t	*wptname;		/* 'DOT', 'ALPHA', etc */
+		regex_t	*arpticao;		/* 'KJFK', 'KMIA', etc */
 
 		regex_t	*geo_nw_blw100;		/* 5010N = N50 W010 */
 		regex_t	*geo_nw_abv100;		/* 50N10 = N50 W110 */

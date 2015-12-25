@@ -34,8 +34,7 @@
 #include "log.h"
 #include "fms.h"
 
-static fix_t *geofix(double lat, double lon, const char *namefmt, ...)
-    PRINTF_ATTR(3);
+static fix_t *geofix(geo_pos2_t pos, const char *namefmt, ...) PRINTF_ATTR(2);
 
 /*
  * Retrieves the time/date validity of a navigation database.
@@ -146,6 +145,9 @@ errout:
 	return (B_FALSE);
 }
 
+/*
+ * Allocates the internal regex structures of fms_t.
+ */
 static bool_t
 fms_alloc_regex(fms_t *fms)
 {
@@ -166,6 +168,8 @@ fms_alloc_regex(fms_t *fms)
 
 	/* "DOT", "ALPHA"; 1 match (wptname) */
 	COMPILE_REGEX(fms->regex.wptname, "^([A-Z0-9]{1,5})$");
+	/* "KJFK", "KMIA"; 1 match (arpticao) */
+	COMPILE_REGEX(fms->regex.arpticao, "^([A-Z]{4})$");
 	/* 5010N, 50N10; 2 matches (lat, lon) */
 	COMPILE_REGEX(fms->regex.geo_nw_blw100, "^([0-9]{2})([0-9]{2})N$");
 	COMPILE_REGEX(fms->regex.geo_nw_abv100, "^([0-9]{2})N([0-9]{2})$");
@@ -202,6 +206,9 @@ fms_alloc_regex(fms_t *fms)
 	return (B_TRUE);
 }
 
+/*
+ * Frees the internal regex structures of fms_t.
+ */
 static void
 fms_free_regex(fms_t *fms)
 {
@@ -215,6 +222,7 @@ fms_free_regex(fms_t *fms)
 	} while (0)
 
 	DESTROY_REGEX(fms->regex.wptname);
+	DESTROY_REGEX(fms->regex.arpticao);
 
 	DESTROY_REGEX(fms->regex.geo_nw_blw100);
 	DESTROY_REGEX(fms->regex.geo_nw_abv100);
@@ -237,6 +245,12 @@ fms_free_regex(fms_t *fms)
 #undef	DESTROY_REGEX
 }
 
+/*
+ * Constructs a new FMS object.
+ *
+ * @param navdata_dir Directory holding to the navigational database.
+ * @param wmm_file Path to the World Magnetic Model file.
+ */
 fms_t *
 fms_new(const char *navdata_dir, const char *wmm_file)
 {
@@ -254,6 +268,9 @@ errout:
 	return (NULL);
 }
 
+/*
+ * Destroys an fms_t object and frees all associated resources.
+ */
 void
 fms_destroy(fms_t *fms)
 {
@@ -337,6 +354,11 @@ navdb_is_current(const fms_navdb_t *navdb)
 	return (navdb->valid_from <= now && now <= navdb->valid_to);
 }
 
+/*
+ * Returns B_TRUE if a navigational database is current.
+ *
+ * @param navdata_dir Directory holding to the navigational database.
+ */
 bool_t
 navdata_is_current(const char *navdata_dir)
 {
@@ -348,17 +370,35 @@ navdata_is_current(const char *navdata_dir)
 	    from <= now && now <= to);
 }
 
+/*
+ * Looks up a fix by name in the FMS nav database. The databases we search are:
+ *	1. The waypoint (FIX) database.
+ *	2. The navaid (VOR/NDB) database.
+ *	3. The airport database.
+ * The search is performed in this order and the result is a union of all
+ * found candidates.
+ *
+ * @param fixname Name of fix to look for.
+ * @param fms FMS object containing our navigational databases.
+ * @param num_fixes Return parameter which will be filled with the number of
+ *	matching fix_t structures returned by the function.
+ *
+ * @return A malloc'd array of fix_t structures containing the fixes matching
+ *	the provided fix name. Returns NULL if no fixes match.
+ */
 static fix_t *
-fms_lookup_fix_by_name(const char *fixname, const fms_t *fms, size_t *num_fixes)
+fms_lookup_wpt_by_name(const char *fixname, const fms_t *fms, size_t *num_fixes)
 {
 	char name[NAV_NAME_LEN];
 	fix_t *fixes = NULL;
 	size_t i = 0, n = 0;
 	const list_t *list;
+	regmatch_t pmatch[2];
 
 	memset(name, 0, sizeof (name));
 	strlcpy(name, fixname, sizeof (name));
 
+	/* Try matching a FIX. */
 	list = htbl_lookup_multi(&fms->navdb->wptdb->by_name, name);
 	if (list != NULL) {
 		n += list_count(list);
@@ -370,7 +410,7 @@ fms_lookup_fix_by_name(const char *fixname, const fms_t *fms, size_t *num_fixes)
 			i++;
 		}
 	}
-
+	/* Try matching a VOR/NDB navaid. */
 	list = htbl_lookup_multi(&fms->navdb->navaiddb->by_id, name);
 	if (list != NULL) {
 		n += list_count(list);
@@ -378,11 +418,24 @@ fms_lookup_fix_by_name(const char *fixname, const fms_t *fms, size_t *num_fixes)
 		for (const void *mv = list_head(list); mv != NULL;
 		    mv = list_next(list, mv)) {
 			navaid_t *navaid = HTBL_VALUE_MULTI(mv);
-			memcpy(fixes[i].name, navaid->ID, sizeof (navaid->ID));
+			memcpy(fixes[i].name, name, sizeof (name));
 			memcpy(fixes[i].icao_country_code,
 			    navaid->icao_country_code,
 			    sizeof (navaid->icao_country_code));
 			fixes[i].pos = GEO3_TO_GEO2(navaid->pos);
+			i++;
+		}
+	}
+	/* Try matching an airport name. */
+	if (regexec(fms->regex.arpticao, name, 2, pmatch, 0) == 0) {
+		airport_t *arpt = airport_open(fixname, fms->navdb->navdata_dir,
+		    fms->navdb->wptdb, fms->navdb->navaiddb);
+		if (arpt != NULL) {
+			n++;
+			fixes = realloc(fixes, n * sizeof (*fixes));
+			memcpy(fixes[i].name, name, sizeof (name));
+			fixes[i].pos = GEO3_TO_GEO2(arpt->refpt);
+			airport_close(arpt);
 			i++;
 		}
 	}
@@ -393,8 +446,15 @@ fms_lookup_fix_by_name(const char *fixname, const fms_t *fms, size_t *num_fixes)
 	return (fixes);
 }
 
+/*
+ * Constructs a geographical fix with a custom printf-style name specification.
+ *
+ * @param pos The geodetic fix position.
+ * @param namefmt The printf format for the fix name.
+ * @param ... The remaining parameters for printf according to namefmt.
+ */
 static fix_t *
-geofix(double lat, double lon, const char *namefmt, ...)
+geofix(geo_pos2_t pos, const char *namefmt, ...)
 {
 	fix_t *fix = calloc(sizeof (*fix), 1);
 	va_list ap;
@@ -404,8 +464,7 @@ geofix(double lat, double lon, const char *namefmt, ...)
 	n = vsnprintf(fix->name, sizeof (fix->name), namefmt, ap);
 	ASSERT(n > 0 && (unsigned)n < sizeof (fix->name));
 	va_end(ap);
-	fix->pos.lat = lat;
-	fix->pos.lon = lon;
+	fix->pos = pos;
 	return (fix);
 }
 
@@ -418,9 +477,19 @@ geofix(double lat, double lon, const char *namefmt, ...)
 		param[len] = 0; \
 	} while (0)
 
+/*
+ * Parses a whole-degree lat-lon coordinate specification (the lat/lon values
+ *	must be specified in the two-digit format).
+ *
+ * @param str The input string to parse.
+ * @param regex Regular expression to match the input string to.
+ * @param lat Return parameter which will be filled with the parsed latitude.
+ * @param lon Return parameter which will be filled with the parsed latitude.
+ *
+ * @return B_TRUE if parsing succeeded, B_FALSE otherwise.
+ */
 static bool_t
-parse_latlon(const char *str, const regex_t *regex, int *latdeg,
-    int *londeg)
+parse_latlon(const char *str, const regex_t *regex, int *lat, int *lon)
 {
 #define	MAX_MATCHES	3
 	regmatch_t	pmatch[MAX_MATCHES];
@@ -430,8 +499,8 @@ parse_latlon(const char *str, const regex_t *regex, int *latdeg,
 		return (B_FALSE);
 	GET_MATCH(str, 1, latstr, 2, 2);
 	GET_MATCH(str, 2, lonstr, 2, 2);
-	*latdeg = atoi(latstr);
-	*londeg = atoi(lonstr);
+	*lat = atoi(latstr);
+	*lon = atoi(lonstr);
 
 	return (B_TRUE);
 #undef	MAX_MATCHES
@@ -463,6 +532,8 @@ parse_latlon(const char *str, const regex_t *regex, int *latdeg,
  *	6) A 9 to 17 character waypoint1/radial1/waypoint2/radial2 combo
  *	   (e.g. "SEA330/OLM020").
  *	7) TODO: along track waypoints.
+ *	8) Airport ICAO code
+ * @param 
  */
 fix_t *
 fms_wpt_name_decode(const char *name, fms_t *fms, size_t *num_fixes,
@@ -476,35 +547,35 @@ fms_wpt_name_decode(const char *name, fms_t *fms, size_t *num_fixes,
 
 	if (parse_latlon(name, fms->regex.geo_nw_blw100, &latdeg, &londeg)) {
 		*num_fixes = 1;
-		return (geofix(latdeg, -londeg, "%s", name));
+		return (geofix(GEO_POS2(latdeg, -londeg), "%s", name));
 	}
 	if (parse_latlon(name, fms->regex.geo_nw_abv100, &latdeg, &londeg)) {
 		*num_fixes = 1;
-		return (geofix(latdeg, -londeg - 100, "%s", name));
+		return (geofix(GEO_POS2(latdeg, -londeg - 100), "%s", name));
 	}
 	if (parse_latlon(name, fms->regex.geo_ne_blw100, &latdeg, &londeg)) {
 		*num_fixes = 1;
-		return (geofix(latdeg, londeg, "%s", name));
+		return (geofix(GEO_POS2(latdeg, londeg), "%s", name));
 	}
 	if (parse_latlon(name, fms->regex.geo_ne_abv100, &latdeg, &londeg)) {
 		*num_fixes = 1;
-		return (geofix(latdeg, londeg + 100, "%s", name));
+		return (geofix(GEO_POS2(latdeg, londeg + 100), "%s", name));
 	}
 	if (parse_latlon(name, fms->regex.geo_sw_blw100, &latdeg, &londeg)) {
 		*num_fixes = 1;
-		return (geofix(-latdeg, -londeg, "%s", name));
+		return (geofix(GEO_POS2(-latdeg, -londeg), "%s", name));
 	}
 	if (parse_latlon(name, fms->regex.geo_sw_abv100, &latdeg, &londeg)) {
 		*num_fixes = 1;
-		return (geofix(-latdeg, -londeg - 100, "%s", name));
+		return (geofix(GEO_POS2(-latdeg, -londeg - 100), "%s", name));
 	}
 	if (parse_latlon(name, fms->regex.geo_se_blw100, &latdeg, &londeg)) {
 		*num_fixes = 1;
-		return (geofix(-latdeg, londeg, "%s", name));
+		return (geofix(GEO_POS2(-latdeg, londeg), "%s", name));
 	}
 	if (parse_latlon(name, fms->regex.geo_se_abv100, &latdeg, &londeg)) {
 		*num_fixes = 1;
-		return (geofix(-latdeg, londeg + 100, "%s", name));
+		return (geofix(GEO_POS2(-latdeg, londeg + 100), "%s", name));
 	}
 
 	if (regexec(fms->regex.geo_long, name, 5, pmatch, 0) == 0) {
@@ -519,7 +590,7 @@ fms_wpt_name_decode(const char *name, fms_t *fms, size_t *num_fixes,
 		lon = (EW[0] == 'E' ? atof(lonstr) : -atof(lonstr));
 
 		*num_fixes = 1;
-		return (geofix(lat, lon, "%s", name));
+		return (geofix(GEO_POS2(lat, lon), "%s", name));
 	}
 
 	if (regexec(fms->regex.geo_detailed, name, 7, pmatch, 0) == 0) {
@@ -542,7 +613,8 @@ fms_wpt_name_decode(const char *name, fms_t *fms, size_t *num_fixes,
 			lon = -atof(lonstr) - (atof(lonmin) / 0.6);
 
 		*num_fixes = 1;
-		return (geofix(lat, lon, "%s%s%s%s", NS, latstr, EW, lonstr));
+		return (geofix(GEO_POS2(lat, lon), "%s%s%s%s", NS, latstr, EW,
+		    lonstr));
 	}
 
 	/*
@@ -550,7 +622,7 @@ fms_wpt_name_decode(const char *name, fms_t *fms, size_t *num_fixes,
 	 * them as well, but not all geographical fixes are in our wptdb.
 	 */
 	if (regexec(fms->regex.wptname, name, 2, pmatch, 0) == 0)
-		return (fms_lookup_fix_by_name(name, fms, num_fixes));
+		return (fms_lookup_wpt_by_name(name, fms, num_fixes));
 
 	if (regexec(fms->regex.radial_dme, name, 4, pmatch, 0) == 0) {
 		char wptname[6], radialstr[4], diststr[4];
@@ -566,7 +638,7 @@ fms_wpt_name_decode(const char *name, fms_t *fms, size_t *num_fixes,
 		if (!is_valid_hdg(radial) || dist == 0)
 			goto errout;
 
-		fixes = fms_lookup_fix_by_name(wptname, fms, &num);
+		fixes = fms_lookup_wpt_by_name(wptname, fms, &num);
 		if (fixes == NULL)
 			goto errout;
 
@@ -601,10 +673,10 @@ fms_wpt_name_decode(const char *name, fms_t *fms, size_t *num_fixes,
 		    radial1 == radial2)
 			goto errout;
 
-		tmp_fixes1 = fms_lookup_fix_by_name(wpt1name, fms, &num_fixes1);
+		tmp_fixes1 = fms_lookup_wpt_by_name(wpt1name, fms, &num_fixes1);
 		if (tmp_fixes1 == NULL)
 			goto errout;
-		tmp_fixes2 = fms_lookup_fix_by_name(wpt2name, fms, &num_fixes2);
+		tmp_fixes2 = fms_lookup_wpt_by_name(wpt2name, fms, &num_fixes2);
 		if (tmp_fixes2 == NULL) {
 			free (tmp_fixes1);
 			goto errout;
@@ -645,6 +717,7 @@ fms_wpt_name_decode(const char *name, fms_t *fms, size_t *num_fixes,
 		*num_fixes = num;
 		return (fixes);
 	}
+
 errout:
 	*num_fixes = 0;
 	return (NULL);
