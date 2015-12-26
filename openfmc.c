@@ -959,7 +959,7 @@ void
 test_math(void)
 {
 	bezier_t		bez;
-	vect2_t			pts[3];
+	vect2_t			pts[5];
 	png_bytep		rows[IMGH];
 	uint8_t			*img;
 	cairo_surface_t		*surface;
@@ -974,14 +974,18 @@ test_math(void)
 	prep_png_img(img, rows, IMGW, IMGH);
 
 #define	BEZ_PT1	VECT2(0, 0)
-#define	BEZ_PT2	VECT2(3, 3)
-#define	BEZ_PT3	VECT2(4, .5)
+#define	BEZ_PT2	VECT2(1, 3.5)
+#define	BEZ_PT3	VECT2(2, 2)
+#define	BEZ_PT4	VECT2(3, 0.5)
+#define	BEZ_PT5	VECT2(4, 4)
 
 	pts[0] = BEZ_PT1;
 	pts[1] = BEZ_PT2;
 	pts[2] = BEZ_PT3;
+	pts[3] = BEZ_PT4;
+	pts[4] = BEZ_PT5;
 
-	bez.n_pts = 3;
+	bez.n_pts = 5;
 	bez.pts = pts;
 
 
@@ -998,7 +1002,7 @@ test_math(void)
 	cairo_set_line_width(cr, 1);
 	cairo_set_source_rgb(cr, 1, 1, 1);
 
-	for (double y = 0.0; y <= 3.0; y += 0.25) {
+	for (double y = 0.0; y <= 4.0; y += 0.25) {
 		cairo_move_to(cr, CAIRO_X(0), CAIRO_Y(y));
 		cairo_line_to(cr, CAIRO_X(4), CAIRO_Y(y));
 		cairo_stroke(cr);
@@ -1029,9 +1033,10 @@ test_math(void)
 	cairo_stroke(cr);
 
 	cairo_move_to(cr, CAIRO_X(pts[0].x), CAIRO_Y(pts[0].y));
-	cairo_line_to(cr, CAIRO_X(pts[1].x), CAIRO_Y(pts[1].y));
-	cairo_line_to(cr, CAIRO_X(pts[2].x), CAIRO_Y(pts[2].y));
-	cairo_close_path(cr);
+	for (int i = 0; i < 5; i++)
+		cairo_line_to(cr, CAIRO_X(pts[i].x), CAIRO_Y(pts[i].y));
+	for (int i = 4; i >= 0; i -= 2)
+		cairo_line_to(cr, CAIRO_X(pts[i].x), CAIRO_Y(pts[i].y));
 	cairo_stroke(cr);
 
 	cairo_set_line_width(cr, 4);
@@ -1046,7 +1051,7 @@ test_math(void)
 	}
 	cairo_stroke(cr);
 
-#define	SRCH_Y	.75
+#define	SRCH_Y	2.13
 #define	LINELEN	20
 	double *xs;
 	size_t n_xs;

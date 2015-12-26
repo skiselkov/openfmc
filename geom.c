@@ -1403,11 +1403,12 @@ quad_bezier_func(double x, const bezier_t *func)
 			n = quadratic_solve(p2.x - 2 * p1.x + p0.x,
 			    2 * (p1.x - p0.x), p0.x - x, ts);
 			ASSERT(n != 0);
-			if (ts[0] >= 0 && ts[0] <= 1.0) {
+			if (ts[0] >= 0 && ts[0] <= 1) {
 				t = ts[0];
-			} else {
-				ASSERT(n == 2);
+			} else if (n == 2 && ts[1] >= 0 && ts[1] <= 1) {
 				t = ts[1];
+			} else {
+				continue;
 			}
 			ASSERT(t >= 0.0 && t <= 1.0);
 			y = POW2(1 - t) * p0.y + 2 * (1 - t) * t * p1.y +
