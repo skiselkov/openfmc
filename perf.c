@@ -230,15 +230,16 @@ acft_perf_parse(const char *filename)
 		else PARSE_SCALAR("REFZFW", acft->ref_zfw)
 		else PARSE_SCALAR("MAXFUEL", acft->max_fuel)
 		else PARSE_SCALAR("MAXGW", acft->max_gw)
+		else PARSE_SCALAR("WINGAREA", acft->wing_area)
 		else PARSE_CURVE("THRDENS", acft->thr_dens_curve)
 		else PARSE_CURVE("THRISA", acft->thr_isa_curve)
 		else PARSE_CURVE("SFCTHR", acft->sfc_thr_curve)
 		else PARSE_CURVE("SFCDENS", acft->sfc_dens_curve)
 		else PARSE_CURVE("SFCISA", acft->sfc_isa_curve)
 		else PARSE_CURVE("CL", acft->cl_curve)
-		else PARSE_CURVE("CL_FLAP", acft->cl_flap_curve)
+		else PARSE_CURVE("CLFLAP", acft->cl_flap_curve)
 		else PARSE_CURVE("CD", acft->cd_curve)
-		else PARSE_CURVE("CD_FLAP", acft->cd_curve)
+		else PARSE_CURVE("CDFLAP", acft->cd_curve)
 		else {
 			openfmc_log(OPENFMC_LOG_ERR, "Error parsing acft perf "
 			    "file %s:%lu: unknown line", filename, line_num);
@@ -252,7 +253,8 @@ acft_perf_parse(const char *filename)
 	    acft->thr_dens_curve == NULL || acft->thr_isa_curve == NULL ||
 	    acft->sfc_thr_curve == NULL || acft->sfc_dens_curve == NULL ||
 	    acft->sfc_isa_curve == NULL || acft->cl_curve ||
-	    acft->cl_flap_curve || acft->cd_curve || acft->cd_flap_curve) {
+	    acft->cl_flap_curve || acft->cd_curve || acft->cd_flap_curve ||
+	    acft->wing_area == 0) {
 		openfmc_log(OPENFMC_LOG_ERR, "Error parsing acft perf "
 		    "file %s: missing or corrupt data fields.", filename);
 		goto errout;
@@ -399,14 +401,15 @@ cl_curve_get_aoa(double Cl, const bezier_t *curve)
 	size_t n;
 
 	candidates = quad_bezier_func_inv(Cl, curve, &n);
-	if (n != 0 && n != SIZE_MAX) {
-		aoa = candidates[0];
-		for (size_t i = 1; i < n; i++) {
-			if (aoa > candidates[i])
-				aoa = candidates[i];
-		}
-		free(candidates);
+	if (n == 0 || n == SIZE_MAX)
+		return (NAN);
+
+	aoa = candidates[0];
+	for (size_t i = 1; i < n; i++) {
+		if (aoa > candidates[i])
+			aoa = candidates[i];
 	}
+	free(candidates);
 
 	return (aoa);
 }
@@ -462,6 +465,42 @@ total_E_to_alt(double E, double mass, double ktas)
 	    (mass * EARTH_GRAVITY)));
 }
 
+/*
+ * Calculates the linear distance covered by an aircraft in wings-level
+ * flight attempting to climb and accelerate. This is used in climb distance
+ * performance estimates, especially when constructing altitude-terminated
+ * procedure legs. This function assumes the engines will be running at
+ * maximum thrust during the climb/acceleration phase (subject to
+ * environmental limitations and configured performance derates).
+ *
+ * @param flt Flight performance settings.
+ * @param acft Aircraft performance tables.
+ * @param isadev Estimated average ISA deviation during climb phase.
+ * @param qnh Estimated average QNH during climb phase.
+ * @param fuel Current fuel state in kg.
+ * @param dir Unit vector pointing in the flight direction of the aircraft.
+ * @param alt1 Climb/acceleration starting altitude AMSL in feet.
+ * @param spd1 Climb/acceleration starting speed in KTAS.
+ * @param wind1 Wind vector at start of climb/acceleration phase. The
+ *	vector's direction expresses the wind direction and its magnitude
+ *	the wind velocity in knots.
+ * @param alt2 Climb/acceleration target altitude AMSL in feet. Must be
+ *	greater than or equal to alt1.
+ * @param spd1 Climb/acceleration target speed in KTAS. Must be greater
+ *	than or equal to spd1.
+ * @param wind2 Wind vector at end of climb/acceleration phase. The wind is
+ *	assumed to vary smoothly between alt1/wind1 and alt2/wind2.
+ * @param flap_ratio Average flap setting between 0 and 1 (inclusive) during
+ *	climb/acceleration phase. This expresses how muct lift and drag is
+ *	produced by the wings as a fraction between CL/CLFLAP and CD/CDFLAP.
+ *	A setting of 0 means flaps up, whereas 1 is flaps fully extended.
+ * @param type Type of acceleration/climb procedure to execute.
+ * @param burnp Return parameter which if not NULL will be filled with the
+ *	amount of fuel burned during the acceleration/climb phase (in kg).
+ *
+ * @return Distance over the ground covered during acceleration/climb
+ *	maneuver in nm.
+ */
 double
 accelclb2dist(const flt_perf_t *flt, const acft_perf_t *acft,
     double isadev, double qnh, double fuel, vect2_t dir,
@@ -474,21 +513,36 @@ accelclb2dist(const flt_perf_t *flt, const acft_perf_t *acft,
 
 	ASSERT(alt1 >= alt2);
 	ASSERT(spd1 >= spd2);
+	ASSERT(fuel >= 0);
 	dir = vect2_unit(dir, NULL);
 
 	/* Iterate in single-second steps. */
 	while (alt < alt2 && spd < spd2) {
-		double mass, dp, lift, drag, Cl, Cd, area, aoa, thr, accel;
+		double mass, dp, lift, drag, Cl, Cd, aoa, thr, accel;
 		double e1, e2, de, alt_fract, wind_comp, dens, fl, oat, press;
 		vect2_t wind;
 
+		/*
+		 * First determine our environment. We need air pressure, OAT,
+		 * dynamic pressure, air density and our total mass in kg.
+		 */
 		fl = alt2fl(alt, qnh);
 		press = alt2press(alt, qnh);
 		oat = isadev2sat(fl, isadev);
 		dp = dyn_press(spd, press, oat);
 		dens = air_density(press, oat);
+		/* Check that we won't run out of fuel. */
+		if (burn > fuel)
+			return (NAN);
 		mass = flt->gw + fuel - burn;
 
+		/*
+		 * Next determine the angle-of-attack we need to fly at to
+		 * maintain flight. The lift is simply equal to our weight
+		 * force and since we assume Cl varies smoothly between CL
+		 * and CLFLAP, the AoA is the weighted average between the
+		 * corresponding lift coefficient curves.
+		 */
 		lift = MASS2GFORCE(mass);
 		Cl = lift / (dp * acft->wing_area);
 		if (flap_ratio == 0)
@@ -497,15 +551,31 @@ accelclb2dist(const flt_perf_t *flt, const acft_perf_t *acft,
 			aoa = WAVG(cl_curve_get_aoa(Cl, acft->cl_curve),
 			    cl_curve_get_aoa(Cl, acft->cl_flap_curve),
 			    flap_ratio);
+		/* Can we even sustain flight at this weight? */
+		if (isnan(aoa))
+			return (NAN);
+
+		/*
+		 * Then simply determine the effective drag coefficient at
+		 * this AoA as the flap_ratio-weighted average between the CD
+		 * and CDFLAP curves.
+		 */
 		Cd = WAVG(quad_bezier_func(aoa, acft->cd_curve),
 		    quad_bezier_func(aoa, acft->cd_flap_curve), flap_ratio);
-		area = acft->min_area + ((acft->max_area - acft->min_area) *
-		    cos(DEG2RAD(aoa)));
-		drag = dp * Cd * area;
-		thr = eng_max_thr(flt, acft, alt, spd, qnh, isadev,
-		    ISA_TP_ALT);
+		drag = dp * Cd * acft->wing_area;
+
+		/*
+		 * Determine the maximum engine thrust available and check to
+		 * see that our drag is not too great to climb or accelerate.
+		 */
+		thr = eng_max_thr(flt, acft, alt, spd, qnh, isadev, ISA_TP_ALT);
 		if (thr - drag < 0)
 			return (NAN);
+		/*
+		 * Calculate the maximum available acceleration in horizontal
+		 * flight and the difference in energy between in this step
+		 * through the accel/clb loop.
+		 */
 		accel = (thr - drag) / mass;
 		e1 = calc_total_E(mass, alt, spd);
 		e2 = calc_total_E(mass, alt, spd + accel);
@@ -530,12 +600,20 @@ accelclb2dist(const flt_perf_t *flt, const acft_perf_t *acft,
 			double accel_time = 0;
 
 			if (spd < spd2) {
-
 				if (spd + accel <= spd2) {
+					/*
+					 * If we're not at the target speed yet,
+					 * use all the available energy.
+					 */
 					new_spd += accel;
 					de = 0;
 					accel_time = 1;
 				} else {
+					/*
+					 * Calculate how much energy we'll use
+					 * for acceleration and leave the rest
+					 * for climbing.
+					 */
 					double e_mod = calc_total_E(mass, alt,
 					    spd2);
 					double de_mod = e_mod - e1;
@@ -547,6 +625,7 @@ accelclb2dist(const flt_perf_t *flt, const acft_perf_t *acft,
 			}
 			ASSERT(de >= 0.0);
 			if (de != 0) {
+				/* Use up the remaining energy to climb. */
 				new_alt = total_E_to_alt(e1 + de, mass, spd);
 				de = 0;
 			}
@@ -558,7 +637,7 @@ accelclb2dist(const flt_perf_t *flt, const acft_perf_t *acft,
 				 */
 				ASSERT(accel_time != 0);
 				dist += spd * accel_time + 0.5 * accel *
-				    POW2(accel_time);
+				    POW2(accel_time) + wind_comp;
 			}
 			if (new_alt != alt) {
 				/*
@@ -569,7 +648,8 @@ accelclb2dist(const flt_perf_t *flt, const acft_perf_t *acft,
 				 * distance covered in the climb fraction at
 				 * the new accelerated speed.
 				 */
-				double a = KT2MPS(new_spd) * (1 - accel_time);
+				double a = KT2MPS(new_spd + wind_comp) *
+				    (1 - accel_time);
 				double b = FEET2MET(new_alt - alt);
 				dist += MET2NM(sqrt(POW2(a) + POW2(b)));
 			}
@@ -578,19 +658,31 @@ accelclb2dist(const flt_perf_t *flt, const acft_perf_t *acft,
 			break;
 		}
 		case ACCEL_AND_CLB: {
-			double spd_mod, alt_mod;
+			double new_spd, new_alt, a, b;
 
-			spd_mod = total_E_to_spd(e1 + de / 2, mass, alt);
-			alt_mod = total_E_to_alt(e1 + de / 2, mass, spd);
-			spd = spd_mod;
-			alt = alt_mod;
+			new_spd = total_E_to_spd(e1 + de / 2, mass, alt);
+			new_alt = total_E_to_alt(e1 + de / 2, mass, spd);
+			/*
+			 * Calculates the distance traveled as one side of
+			 * a right-angle triangle where the hypotenuse is
+			 * given by the distance-acceleration equation above
+			 * and the other side is the altitude gained during
+			 * the climb.
+			 */
+			a = KT2MPS(spd + 0.5 * (new_spd - spd) + wind_comp);
+			b = FEET2MET(new_alt - alt);
+			dist += MET2NM(sqrt(POW2(a) + POW2(b)));
+			spd = new_spd;
+			alt = new_alt;
 			de = 0;
 			break;
 		}
 		}
+		/* Check we've consumed all the energy */
 		ASSERT(de == 0.0);
 	}
-	*burnp = burn;
+	if (burnp != NULL)
+		*burnp = burn;
 	return (dist);
 }
 

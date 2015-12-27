@@ -95,11 +95,9 @@ typedef struct {
 
 	bezier_t	*cl_curve;
 	bezier_t	*cl_flap_curve;
-	double		wing_area;
 	bezier_t	*cd_curve;
 	bezier_t	*cd_flap_curve;
-	double		min_area;
-	double		max_area;
+	double		wing_area;
 } acft_perf_t;
 
 typedef struct {
@@ -115,8 +113,8 @@ typedef struct {
 
 /* Type of acceleration-climb */
 typedef enum {
-	ACCEL_THEN_CLB,
-	ACCEL_AND_CLB
+	ACCEL_THEN_CLB,	/* First accelerate, then climb */
+	ACCEL_AND_CLB	/* Accel & climb simultaneously (50/50 energy split) */
 } accelclb_t;
 
 acft_perf_t *acft_perf_parse(const char *filename);

@@ -8,21 +8,21 @@ ACFTTYPE,<acftname>
 
 ENGTYPE,<engtype>
 
-# Maximum engine thrust in Kilonewtons
-MAXTHR,123.5
+# Maximum engine thrust in Newtons
+MAXTHR,123500
 
 # Reference zero fuel weight. This is not the same as operating empty weight
 # It's only an estimate of a typical zero fuel weight (i.e. OEW + payload)
 # of the aircraft on a typical mission. This is used in place of actual ZFW
 # when ZFW is unavailable and the FMC needs to do performance calculations
-# which depends on it. In metric tons.
-REFZFW,42.5
+# which depends on it. In kg.
+REFZFW,42500
 
-# Maximum allowable fuel load in metric tons.
-MAXFUEL,30
+# Maximum allowable fuel load in kg.
+MAXFUEL,30000
 
-# Maximum allowable gross weight (OEW + payload + fuel) in metric tons.
-MAXGW,85
+# Maximum allowable gross weight (OEW + payload + fuel) in kg.
+MAXGW,85000
 
 # MAXTHR fraction as a function of effective air density (in kg/m^3)
 THRDENS,<numentries>
@@ -59,4 +59,48 @@ SFCISA,<numentries>
 <isadev>,<value>
 <isadev>,<value>
 <isadev>,<value>
+... <numentries> many lines ...
+
+# Defines the reference wing area in m^2 (which is used to calculate lift
+# and drag).
+WINGAREA,85
+
+# Defines the coefficient of lift as a function of angle of attack (in
+# degrees). This is then used to calculate the lift force the aircraft will
+# experience according to the standard lift force formula:
+# F = Dp * A * Cl
+# Where Dp is dynamic air pressure, A is the reference wing area and
+# Cl is the coefficient of lift.
+CL,<numentries>
+<AoA>,<Cl_value>
+<AoA>,<Cl_value>
+<AoA>,<Cl_value>
+... <numentries> many lines ...
+
+# Coefficient of lift at maximum extended flaps. The actual aircraft Cl is
+# assumed to vary linearly between CL and CLFLAP when flaps are at an
+# intermediate setting.
+CLFLAP,<numentries>
+<AoA>,<Cl_value>
+<AoA>,<Cl_value>
+<AoA>,<Cl_value>
+... <numentries> many lines ...
+
+# Defines the coefficient of drag as a function of angle of attack (in
+# degrees). This is then used to calculate the drag force the aircraft will
+# experience according to the standard drag force formula:
+# F = Dp * A * Cd
+# Where Dp is dynamic air pressure, A is the reference wing area and
+# Cd is the coefficient of drag.
+CD,<numentries>
+<AoA>,<Cd_value>
+<AoA>,<Cd_value>
+<AoA>,<Cd_value>
+... <numentries> many lines ...
+
+# Same as CLFLAP, but for the coefficient of drag.
+CDFLAP,<numentries>
+<AoA>,<Cd_value>
+<AoA>,<Cd_value>
+<AoA>,<Cd_value>
 ... <numentries> many lines ...
