@@ -75,14 +75,12 @@ typedef struct {
  */
 #define	RAD2DEG_RATIO	(M_PI / 180)		/* 1 rad / 180 deg */
 #define	DEG2RAD_RATIO	(180 / M_PI)		/* 180 deg / 1 rad */
-#define	DEG2RAD(d)	((d) * RAD2DEG_RATIO)
-#define	RAD2DEG(r)	((r) * DEG2RAD_RATIO)
+#define	DEG2RAD(d)	((d) * RAD2DEG_RATIO)	/* degrees to radians */
+#define	RAD2DEG(r)	((r) * DEG2RAD_RATIO)	/* radians to degrees */
 
-#define	FEET2MET(x)	((x) * 0.3048)
-#define	MET2FEET(x)	((x) * 3.28083989501312335958)
-#define	NM2MET(x)	((x) * 1852)
-#define	MET2NM(x)	((x) / 1852.0)
-
+/*
+ * Coordinate constructors.
+ */
 #define	GEO_POS2(lat, lon)		((geo_pos2_t){(lat), (lon)})
 #define	GEO_POS3(lat, lon, elev)	((geo_pos3_t){(lat), (lon), (elev)})
 #define	VECT2(x, y)			((vect2_t){(x), (y)})
@@ -91,6 +89,9 @@ typedef struct {
 #define	VECT2_PARALLEL(a, b)	\
 	(((a).y == 0 && (b).y == 0) || (((a).x / (a).y) == ((b).x / (b).y)))
 
+/*
+ * Special coordinate values and tests for these special values.
+ */
 #define	ZERO_VECT2		((vect2_t){0.0, 0.0})
 #define	ZERO_VECT3		((vect3_t){0.0, 0.0, 0.0})
 #define	NULL_VECT2		((vect2_t){NAN, NAN})
@@ -104,9 +105,6 @@ typedef struct {
 
 #define	GEO2_TO_GEO3(v, a)	((geo_pos3_t){(v).lat, (v).lon, (a)})
 #define	GEO3_TO_GEO2(v)		((geo_pos2_t){(v).lat, (v).lon})
-#define	GEO_POS2_INV(v)		((geo_pos2_t){-(v).lat, -(v).lon})
-#define	GEO_POS3_EQ(a, b) \
-	((a).lat == (b).lat && (a).lon == (b).lon && (a).elev == (b).elev)
 
 #define	EARTH_MSL		6371200		/* meters */
 #ifndef	ABS
@@ -147,6 +145,7 @@ double vect2_dist(vect2_t a, vect2_t b);
 vect3_t vect3_set_abs(vect3_t a, double abs);
 vect2_t vect2_set_abs(vect2_t a, double abs);
 vect3_t vect3_unit(vect3_t a, double *l);
+vect2_t vect2_unit(vect2_t a, double *l);
 
 vect3_t vect3_add(vect3_t a, vect3_t b);
 vect2_t vect2_add(vect2_t a, vect2_t b);
@@ -155,6 +154,7 @@ vect2_t vect2_sub(vect2_t a, vect2_t b);
 vect3_t vect3_scmul(vect3_t a, double b);
 vect2_t vect2_scmul(vect2_t a, double b);
 double vect3_dotprod(vect3_t a, vect3_t b);
+double vect2_dotprod(vect2_t a, vect2_t b);
 vect3_t vect3_xprod(vect3_t a, vect3_t b);
 vect3_t vect3_mean(vect3_t a, vect3_t b);
 

@@ -1404,8 +1404,8 @@ main(int argc, char **argv)
 //	test_route(argv[optind]);
 //	test_magvar();
 //	test_perf();
-	test_math();
-//	test_route_seg();
+//	test_math();
+	test_route_seg();
 
 	return (0);
 }

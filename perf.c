@@ -33,6 +33,8 @@
 #include "helpers.h"
 #include "perf.h"
 
+#define	SECS_PER_HR	3600		/* Number of seconds in an hour */
+
 /*
  * Physical constants.
  */
@@ -45,39 +47,22 @@
 /*
  * ISA (International Standard Atmosphere) parameters.
  */
-#define	ISA_SL_TEMP_C		15.0	/* ISA sea level temp in degrees C */
-#define	ISA_SL_TEMP_K		288.15	/* ISA sea level temp in Kelvin */
-#define	ISA_SL_PRESS		1013.25	/* ISA sea level pressure in hPa */
-#define	ISA_TLR_PER_1000FT	1.98	/* ISA temp lapse rate per 1000ft */
-#define	ISA_TLR_PER_1M		0.0065	/* ISA temp lapse rate per 1 meter */
-#define	ISA_SPEED_SOUND		340.3	/* Speed of sound at 15 degrees C */
+#define	ISA_SL_TEMP_C		15.0	/* Sea level temperature in degrees C */
+#define	ISA_SL_TEMP_K		288.15	/* Sea level temperature in Kelvin */
+#define	ISA_SL_PRESS		1013.25	/* Sea level pressure in hPa */
+#define	ISA_TLR_PER_1000FT	1.98	/* Temperature lapse rate per 1000ft */
+#define	ISA_TLR_PER_1M		0.0065	/* Temperature lapse rate per 1 meter */
+#define	ISA_SPEED_SOUND		340.3	/* Speed of sound at sea level */
+#define	ISA_TP_ALT		36089	/* Tropopause altitude in feet */
 
-/* Calculates gravitational force for weight `w' in kg on Earth */
-#define	W2F(w)			((w) * EARTH_GRAVITY)
+/* Calculates gravitational force for mass `m' in kg on Earth */
+#define	MASS2GFORCE(m)		((m) * EARTH_GRAVITY)
 
 #define	ACFT_PERF_MIN_VERSION	1
 #define	ACFT_PERF_MAX_VERSION	1
 #define	MAX_LINE_COMPS		2
 
 #define	APPROX_ITERATIONS	3
-
-/*
- * Converts an altitude in feel to a static air temperature at ISA conditions.
- */
-static inline double
-alt2isaoat(double alt)
-{
-	return (ISA_SL_TEMP_C - FEET2MET(alt) * ISA_TLR_PER_1M);
-}
-
-/*
- * Converts an altitude in feel to a static air pressure at ISA conditions.
- */
-static inline double
-alt2isapress(double alt)
-{
-	return (alt2press(alt, ISA_SL_PRESS));
-}
 
 /*
  * Parses a set of bezier curve points from the input CSV file. Used to parse
@@ -250,6 +235,10 @@ acft_perf_parse(const char *filename)
 		else PARSE_CURVE("SFCTHR", acft->sfc_thr_curve)
 		else PARSE_CURVE("SFCDENS", acft->sfc_dens_curve)
 		else PARSE_CURVE("SFCISA", acft->sfc_isa_curve)
+		else PARSE_CURVE("CL", acft->cl_curve)
+		else PARSE_CURVE("CL_FLAP", acft->cl_flap_curve)
+		else PARSE_CURVE("CD", acft->cd_curve)
+		else PARSE_CURVE("CD_FLAP", acft->cd_curve)
 		else {
 			openfmc_log(OPENFMC_LOG_ERR, "Error parsing acft perf "
 			    "file %s:%lu: unknown line", filename, line_num);
@@ -262,7 +251,8 @@ acft_perf_parse(const char *filename)
 	    acft->eng_type == NULL || acft->eng_max_thr <= 0 ||
 	    acft->thr_dens_curve == NULL || acft->thr_isa_curve == NULL ||
 	    acft->sfc_thr_curve == NULL || acft->sfc_dens_curve == NULL ||
-	    acft->sfc_isa_curve == NULL) {
+	    acft->sfc_isa_curve == NULL || acft->cl_curve ||
+	    acft->cl_flap_curve || acft->cd_curve || acft->cd_flap_curve) {
 		openfmc_log(OPENFMC_LOG_ERR, "Error parsing acft perf "
 		    "file %s: missing or corrupt data fields.", filename);
 		goto errout;
@@ -292,7 +282,51 @@ acft_perf_destroy(acft_perf_t *acft)
 		bezier_free(acft->thr_dens_curve);
 	if (acft->thr_isa_curve)
 		bezier_free(acft->thr_isa_curve);
+	if (acft->sfc_thr_curve)
+		bezier_free(acft->sfc_thr_curve);
+	if (acft->sfc_dens_curve)
+		bezier_free(acft->sfc_dens_curve);
+	if (acft->sfc_isa_curve)
+		bezier_free(acft->sfc_isa_curve);
+	if (acft->cl_curve)
+		bezier_free(acft->cl_curve);
+	if (acft->cl_flap_curve)
+		bezier_free(acft->cl_flap_curve);
+	if (acft->cd_curve)
+		bezier_free(acft->cd_curve);
+	if (acft->cd_flap_curve)
+		bezier_free(acft->cd_flap_curve);
 	free(acft);
+}
+
+/*
+ * Estimates maximum available engine thrust in a given flight situation.
+ * This takes into account atmospheric conditions as well as any currently
+ * effective engine derates.
+ *
+ * @param flt Flight performance configuration.
+ * @param acft Aircraft performance tables.
+ * @param alt Altitude in feet.
+ * @param ktas True air speed in knots.
+ * @param qnh Barometric altimeter setting in hPa.
+ * @param isadev ISA temperature deviation in degrees C.
+ * @param tp_alt Altitude of the tropopause in feet.
+ *
+ * @return Maximum available engine thrust in kN.
+ */
+double
+eng_max_thr(const flt_perf_t *flt, const acft_perf_t *acft, double alt,
+    double ktas, double qnh, double isadev, double tp_alt)
+{
+	double Ps, Pd, D;
+
+	Ps = alt2press(alt, qnh);
+	Pd = dyn_press(ktas, Ps, isadev2sat(alt2fl(alt < tp_alt ? alt : tp_alt,
+	    qnh), isadev));
+	D = air_density(Pd, isadev);
+
+	return (quad_bezier_func(D, acft->thr_dens_curve) *
+	    quad_bezier_func(isadev, acft->thr_isa_curve) * flt->thr_derate);
 }
 
 /*
@@ -311,10 +345,10 @@ acft_perf_destroy(acft_perf_t *acft)
  *	between alt1 and alt2 while keeping the flight and aircraft limits.
  */
 double
-eng_max_thr_avg(const flt_perf_t *flt, acft_perf_t *acft, double alt1,
+eng_max_thr_avg(const flt_perf_t *flt, const acft_perf_t *acft, double alt1,
     double alt2, double ktas, double qnh, double isadev, double tp_alt)
 {
-	double P, Ps, Pd, D, avg_temp, thr;
+	double Ps, Pd, D, avg_temp, thr;
 	double avg_alt = AVG(alt1, alt2);
 	/* convert altitudes to flight levels to calculate avg temp */
 	double alt1_fl = alt2fl(alt1, qnh);
@@ -332,12 +366,11 @@ eng_max_thr_avg(const flt_perf_t *flt, acft_perf_t *acft, double alt1,
 	 */
 	Ps = alt2press(avg_alt, qnh);
 	Pd = dyn_press(ktas, Ps, avg_temp);
-	P = Ps + Pd;
 	/*
 	 * Finally grab effective air density.
 	 */
 	isadev = isadev2sat(alt2fl(avg_alt, qnh), avg_temp);
-	D = air_density(P + Pd, isadev);
+	D = air_density(Pd, isadev);
 	/*
 	 * Derive engine performance.
 	 */
@@ -348,33 +381,237 @@ eng_max_thr_avg(const flt_perf_t *flt, acft_perf_t *acft, double alt1,
 	return (thr);
 }
 
-static inline double
-calc_energy(double mass, double alt, double spd)
+/*
+ * Given a curve mapping angle-of-attack (AoA) to an aircraft's coefficient of
+ * lift (Cl) and a target Cl, we attempt to find the lowest AoA on the curve
+ * where the required Cl is produced. If no candidate can be found, we return
+ * DEFAULT_AOA.
+ *
+ * @param Cl Required coefficient of lift.
+ * @param curve Bezier curve mapping AoA to Cl.
+ *
+ * @return The angle of attack (in degrees) at which the Cl is produced.
+ */
+static double
+cl_curve_get_aoa(double Cl, const bezier_t *curve)
 {
-	double v = KT2MPS(spd), h = FEET2MET(alt);
-	return (mass * EARTH_GRAVITY * h + 0.5 * mass * POW2(v));
+	double aoa = 5, *candidates;
+	size_t n;
+
+	candidates = quad_bezier_func_inv(Cl, curve, &n);
+	if (n != 0 && n != SIZE_MAX) {
+		aoa = candidates[0];
+		for (size_t i = 1; i < n; i++) {
+			if (aoa > candidates[i])
+				aoa = candidates[i];
+		}
+		free(candidates);
+	}
+
+	return (aoa);
+}
+
+/*
+ * Calculates total (kinetic + potential) energy of a moving object.
+ *
+ * @param mass Mass in kg.
+ * @param alt Elevation above sea level in feet.
+ * @param ktas Speed in knots.
+ *
+ * @return The object's total energy in Joules.
+ */
+static double
+calc_total_E(double mass, double alt, double ktas)
+{
+	return (mass * EARTH_GRAVITY * FEET2MET(alt) +
+	    0.5 * mass * POW2(KT2MPS(ktas)));
+}
+
+/*
+ * Calculates the speed an object needs to be moving at to have a given
+ * total (kinetic + potential) energy.
+ *
+ * @param E Total energy in Joules.
+ * @param mass Mass in kg.
+ * @param alt Elevation above sea level in feet.
+ *
+ * @return The object's required speed in knots to have energy E.
+ */
+static double
+total_E_to_spd(double E, double mass, double alt)
+{
+	return (MPS2KT(sqrt((E - (mass * EARTH_GRAVITY * FEET2MET(alt))) /
+	    (0.5 * mass))));
+}
+
+/*
+ * Calculates the elevation an object needs to be at to have a given
+ * total (kinetic + potential) energy.
+ *
+ * @param E Total energy in Joules.
+ * @param mass Mass in kg.
+ * @param ktas Speed in knots.
+ *
+ * @return The object's required elevation above sea level in feet to have
+ *	energy E.
+ */
+static double
+total_E_to_alt(double E, double mass, double ktas)
+{
+	return (MET2FEET((E - (0.5 * mass * POW2(KT2MPS(ktas)))) /
+	    (mass * EARTH_GRAVITY)));
 }
 
 double
-accelclb2dist(const flt_perf_t *flt, const acft_perf_t *acft, double fuel,
-    double alt1, double spd1, double alt2, double spd2, bool_t accel_first)
+accelclb2dist(const flt_perf_t *flt, const acft_perf_t *acft,
+    double isadev, double qnh, double fuel, vect2_t dir,
+    double alt1, double spd1, vect2_t wind1,
+    double alt2, double spd2, vect2_t wind2,
+    double flap_ratio, accelclb_t type, double *burnp)
 {
-	double e, burn;
-	double spd = spd1;
+	double alt = alt1, spd = spd1;
+	double burn = 0, dist = 0;
 
-	UNUSED(spd2);
-	UNUSED(accel_first);
+	ASSERT(alt1 >= alt2);
+	ASSERT(spd1 >= spd2);
+	dir = vect2_unit(dir, NULL);
 
-	burn = 0;
-	e = calc_energy(flt->gw + fuel, alt1, spd1);
+	/* Iterate in single-second steps. */
+	while (alt < alt2 && spd < spd2) {
+		double mass, dp, lift, drag, Cl, Cd, area, aoa, thr, accel;
+		double e1, e2, de, alt_fract, wind_comp, dens, fl, oat, press;
+		vect2_t wind;
 
-	for (double alt = alt1; alt <= alt2;) {
-		double dp, lift, cl;
-		dp = dyn_press(spd, alt2isapress(alt), alt2isaoat(alt));
-		lift = W2F(flt->gw + fuel - burn);
-		cl = lift / (dp * acft->wing_area);
+		fl = alt2fl(alt, qnh);
+		press = alt2press(alt, qnh);
+		oat = isadev2sat(fl, isadev);
+		dp = dyn_press(spd, press, oat);
+		dens = air_density(press, oat);
+		mass = flt->gw + fuel - burn;
+
+		lift = MASS2GFORCE(mass);
+		Cl = lift / (dp * acft->wing_area);
+		if (flap_ratio == 0)
+			aoa = cl_curve_get_aoa(Cl, acft->cl_curve);
+		else
+			aoa = WAVG(cl_curve_get_aoa(Cl, acft->cl_curve),
+			    cl_curve_get_aoa(Cl, acft->cl_flap_curve),
+			    flap_ratio);
+		Cd = WAVG(quad_bezier_func(aoa, acft->cd_curve),
+		    quad_bezier_func(aoa, acft->cd_flap_curve), flap_ratio);
+		area = acft->min_area + ((acft->max_area - acft->min_area) *
+		    cos(DEG2RAD(aoa)));
+		drag = dp * Cd * area;
+		thr = eng_max_thr(flt, acft, alt, spd, qnh, isadev,
+		    ISA_TP_ALT);
+		if (thr - drag < 0)
+			return (NAN);
+		accel = (thr - drag) / mass;
+		e1 = calc_total_E(mass, alt, spd);
+		e2 = calc_total_E(mass, alt, spd + accel);
+		de = e2 - e1;
+		ASSERT(de > 0.0);
+
+		/*
+		 * Calculate the directional wind component. This will be
+		 * factored into the distance traveled estimation below.
+		 */
+		alt_fract = (alt - alt1) / (alt2 - alt1);
+		wind = VECT2(WAVG(wind1.x, wind2.x, alt_fract),
+		    WAVG(wind1.y, wind2.y, alt_fract));
+		wind_comp = vect2_dotprod(wind, dir);
+
+		/* Estimate the fuel burn. */
+		burn += acft_get_sfc(acft, thr, dens, isadev) / SECS_PER_HR;
+
+		switch (type) {
+		case ACCEL_THEN_CLB: {
+			double new_spd = spd, new_alt = alt;
+			double accel_time = 0;
+
+			if (spd < spd2) {
+
+				if (spd + accel <= spd2) {
+					new_spd += accel;
+					de = 0;
+					accel_time = 1;
+				} else {
+					double e_mod = calc_total_E(mass, alt,
+					    spd2);
+					double de_mod = e_mod - e1;
+					ASSERT(de_mod <= de);
+					accel_time = de_mod / de;
+					de -= de_mod;
+					new_spd = spd2;
+				}
+			}
+			ASSERT(de >= 0.0);
+			if (de != 0) {
+				new_alt = total_E_to_alt(e1 + de, mass, spd);
+				de = 0;
+			}
+			if (new_spd != spd) {
+				/*
+				 * Acceleration phase was performed. Distance
+				 * covered while accelerating is simply:
+				 * d = vt + (1/2)at^2.
+				 */
+				ASSERT(accel_time != 0);
+				dist += spd * accel_time + 0.5 * accel *
+				    POW2(accel_time);
+			}
+			if (new_alt != alt) {
+				/*
+				 * Climb phase was performed. We can estimate
+				 * this as a right-angle triangle with the
+				 * vertical leg being the difference in
+				 * altitude achieved and the hypotenuse the
+				 * distance covered in the climb fraction at
+				 * the new accelerated speed.
+				 */
+				double a = KT2MPS(new_spd) * (1 - accel_time);
+				double b = FEET2MET(new_alt - alt);
+				dist += MET2NM(sqrt(POW2(a) + POW2(b)));
+			}
+			spd = new_spd;
+			alt = new_alt;
+			break;
+		}
+		case ACCEL_AND_CLB: {
+			double spd_mod, alt_mod;
+
+			spd_mod = total_E_to_spd(e1 + de / 2, mass, alt);
+			alt_mod = total_E_to_alt(e1 + de / 2, mass, spd);
+			spd = spd_mod;
+			alt = alt_mod;
+			de = 0;
+			break;
+		}
+		}
+		ASSERT(de == 0.0);
 	}
-	return (0);
+	*burnp = burn;
+	return (dist);
+}
+
+/*
+ * Calculates the specific fuel consumption of the aircraft engines in
+ * a given instant.
+ *
+ * @param acft Aircraft performance specification structure.
+ * @param thr Thrust setting on the engine in kN.
+ * @param dens Air density in kg/m^3.
+ * @param isadev ISA temperature deviation in degrees C.
+ *
+ * @return The aircraft's engine's specific fuel consumption at the specified
+ *	conditions in kg/hr.
+ */
+double
+acft_get_sfc(const acft_perf_t *acft, double thr, double dens, double isadev)
+{
+	return (quad_bezier_func(thr, acft->sfc_thr_curve) *
+	    quad_bezier_func(dens, acft->sfc_dens_curve) *
+	    quad_bezier_func(isadev, acft->sfc_isa_curve));
 }
 
 /*

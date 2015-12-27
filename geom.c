@@ -32,6 +32,7 @@
 #include "helpers.h"
 #include "wmm.h"
 #include "geom.h"
+#include "perf.h"
 
 /*
  * The WGS84 ellipsoid parameters.
@@ -162,7 +163,7 @@ vect2_set_abs(vect2_t a, double abs)
 }
 
 /*
- * Returns a unit  vector (vector with identical orientation but a length of 1)
+ * Returns a unit vector (vector with identical orientation but a length of 1)
  * for a given input vector. The length of the input vector is stored in `l'.
  */
 vect3_t
@@ -175,6 +176,21 @@ vect3_unit(vect3_t a, double *l)
 	if (l)
 		*l = len;
 	return (VECT3(a.x / len, a.y / len, a.z / len));
+}
+
+/*
+ * Same as vect3_unit, but for 2-space vectors.
+ */
+vect2_t
+vect2_unit(vect2_t a, double *l)
+{
+	double len;
+	len = vect2_abs(a);
+	if (len == 0)
+		return (NULL_VECT2);
+	if (l)
+		*l = len;
+	return (VECT2(a.x / len, a.y / len));
 }
 
 /*
@@ -230,7 +246,7 @@ vect3_scmul(vect3_t a, double b)
 }
 
 /*
- * Same as vect2_scmul, but for 2-space vectors.
+ * Same as vect3_scmul, but for 2-space vectors.
  */
 vect2_t
 vect2_scmul(vect2_t a, double b)
@@ -247,6 +263,15 @@ double
 vect3_dotprod(vect3_t a, vect3_t b)
 {
 	return (a.x * b.x + a.y * b.y + a.z * b.z);
+}
+
+/*
+ * Same as vect3_dotprod, but for 2-space vectors.
+ */
+double
+vect2_dotprod(vect2_t a, vect2_t b)
+{
+	return (a.x * b.x + a.y * b.y);
 }
 
 /*

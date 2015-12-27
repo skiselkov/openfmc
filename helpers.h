@@ -177,6 +177,8 @@ void append_format(char **str, size_t *sz, const char *format, ...)
 #define	MIN(x, y)	((x) < (y) ? (x) : (y))
 #define	MAX(x, y)	((x) > (y) ? (x) : (y))
 #define	AVG(x, y)	(((x) + (y)) / 2)
+/* Weighted avg, 'w' is weight fraction from 0.0 = all of x to 1.0 = all of y */
+#define	WAVG(x, y, w)	((x) + ((y) - (x)) * w)
 #endif	/* MIN or MAX */
 
 #ifdef	__cplusplus

@@ -32,7 +32,9 @@
 extern "C" {
 #endif
 
-/* Temperature scale conversions */
+/*
+ * Temperature unit conversions.
+ */
 #define	KELVIN2C(k)	((k) - 273.15)
 #define	C2KELVIN(c)	((c) + 273.15)
 #define	FAH2C(f)	(((f) - 32) * 0.555555)
@@ -40,6 +42,13 @@ extern "C" {
 #define	FAH2KELVIN(f)	(((f) + 459.67) * 0.5555555555)
 #define	KELVIN2FAH(k)	(((k) * 1.8) - 459.67)
 
+/*
+ * Length and velocity unit conversions.
+ */
+#define	FEET2MET(x)	((x) * 0.3048)		/* feet to meters */
+#define	MET2FEET(x)	((x) * 3.2808398950131)	/* meters to feet */
+#define	NM2MET(x)	((x) * 1852)		/* nautical miles to meters */
+#define	MET2NM(x)	((x) / 1852.0)		/* meters to nautical miles */
 #define	KT2MPS(k)	(NM2MET(k) / 3600)	/* knots to m/s */
 #define	MPS2KT(k)	(MET2NM(k) * 3600)	/* m/s to knots */
 
@@ -85,7 +94,12 @@ typedef struct {
 	bezier_t	*sfc_isa_curve;
 
 	bezier_t	*cl_curve;
+	bezier_t	*cl_flap_curve;
 	double		wing_area;
+	bezier_t	*cd_curve;
+	bezier_t	*cd_flap_curve;
+	double		min_area;
+	double		max_area;
 } acft_perf_t;
 
 typedef struct {
@@ -101,20 +115,25 @@ typedef struct {
 
 /* Type of acceleration-climb */
 typedef enum {
-	ACCELCLB_ACCEL_THEN_CLB,
-	ACCELCLB_ACCEL_AND_CLB,
-	ACCELCLB_CLB_THEN_ACCEL
+	ACCEL_THEN_CLB,
+	ACCEL_AND_CLB
 } accelclb_t;
 
 acft_perf_t *acft_perf_parse(const char *filename);
 void acft_perf_destroy(acft_perf_t *perf);
 
-double eng_max_thr_avg(const flt_perf_t *flt, acft_perf_t *acft, double alt1,
-    double alt2, double ktas, double qnh, double isadev, double tp_alt);
+double eng_max_thr_avg(const flt_perf_t *flt, const acft_perf_t *acft,
+    double alt1, double alt2, double ktas, double qnh, double isadev,
+    double tp_alt);
 
 double accelclb2dist(const flt_perf_t *flt, const acft_perf_t *acft,
-    double fuel, double alt1, double spd1, double alt2, double spd2,
-    accelclb_t type);
+    double isadev, double qnh, double fuel, vect2_t dir,
+    double alt1, double spd1, vect2_t wind1,
+    double alt2, double spd2, vect2_t wind2,
+    double flap_ratio, accelclb_t type, double *burnp);
+
+double acft_get_sfc(const acft_perf_t *acft, double thr, double dens,
+    double isadev);
 
 double alt2press(double alt, double qnh);
 double press2alt(double press, double qnh);

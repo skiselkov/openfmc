@@ -28,7 +28,7 @@
 #include "wmm.h"
 #include "helpers.h"
 #include "GeomagnetismLibrary.h"
-#include "geom.h"
+#include "perf.h"
 
 struct wmm_s {
 	/* time-modified model according to year passed to wmm_open */
