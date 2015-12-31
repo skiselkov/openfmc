@@ -52,6 +52,12 @@ extern "C" {
 #define	KT2MPS(k)	(NM2MET(k) / 3600)	/* knots to m/s */
 #define	MPS2KT(k)	(MET2NM(k) * 3600)	/* m/s to knots */
 
+/*
+ * Other unit conversions
+ */
+#define	HPA2PA(x)	((x) / 100)
+#define	PA2HPA(x)	((x) * 100)
+
 typedef struct {
 	int	spd;
 	double	Cd;
@@ -108,13 +114,14 @@ typedef struct {
 	vect2_t		heading;
 	geo_pos3_t	position;
 
-	double		gw;		/* Gross Weight in kg */
+	double		zfw;		/* Gross Weight in kg */
 } flt_perf_t;
 
 /* Type of acceleration-climb */
 typedef enum {
 	ACCEL_THEN_CLB,	/* First accelerate, then climb */
-	ACCEL_AND_CLB	/* Accel & climb simultaneously (50/50 energy split) */
+	ACCEL_AND_CLB,	/* Accel & climb simultaneously (50/50 energy split) */
+	ACCEL_TAKEOFF	/* Accel to target speed first without needing lift */
 } accelclb_t;
 
 acft_perf_t *acft_perf_parse(const char *filename);
@@ -125,10 +132,10 @@ double eng_max_thr_avg(const flt_perf_t *flt, const acft_perf_t *acft,
     double tp_alt);
 
 double accelclb2dist(const flt_perf_t *flt, const acft_perf_t *acft,
-    double isadev, double qnh, double fuel, vect2_t dir,
+    double isadev, double qnh, double tp_alt, double fuel, vect2_t dir,
     double alt1, double spd1, vect2_t wind1,
     double alt2, double spd2, vect2_t wind2,
-    double flap_ratio, accelclb_t type, double *burnp);
+    double flap_ratio, double mach_lim, accelclb_t type, double *burnp);
 
 double acft_get_sfc(const acft_perf_t *acft, double thr, double dens,
     double isadev);

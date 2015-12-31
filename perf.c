@@ -49,7 +49,7 @@
  */
 #define	ISA_SL_TEMP_C		15.0	/* Sea level temperature in degrees C */
 #define	ISA_SL_TEMP_K		288.15	/* Sea level temperature in Kelvin */
-#define	ISA_SL_PRESS		1013.25	/* Sea level pressure in hPa */
+#define	ISA_SL_PRESS		101325	/* Sea level pressure in Pa */
 #define	ISA_TLR_PER_1000FT	1.98	/* Temperature lapse rate per 1000ft */
 #define	ISA_TLR_PER_1M		0.0065	/* Temperature lapse rate per 1 meter */
 #define	ISA_SPEED_SOUND		340.3	/* Speed of sound at sea level */
@@ -63,6 +63,16 @@
 #define	MAX_LINE_COMPS		2
 
 #define	APPROX_ITERATIONS	3
+
+/*
+ * Simulation step for accelclb2dist in seconds. 15 seems to be a good
+ * compromise between performance and accuracy (~1% error vs running 1-second
+ * steps, but 15x faster).
+ */
+#define	SECS_PER_STEP	15.0
+#define	ALT_THRESH	1
+#define	KCAS_THRESH	0.1
+#define	MIN_ACCEL	0.0075	/* In m/s^2, equals approx 0.05 KT/s */
 
 /*
  * Parses a set of bezier curve points from the input CSV file. Used to parse
@@ -239,7 +249,7 @@ acft_perf_parse(const char *filename)
 		else PARSE_CURVE("CL", acft->cl_curve)
 		else PARSE_CURVE("CLFLAP", acft->cl_flap_curve)
 		else PARSE_CURVE("CD", acft->cd_curve)
-		else PARSE_CURVE("CDFLAP", acft->cd_curve)
+		else PARSE_CURVE("CDFLAP", acft->cd_flap_curve)
 		else {
 			openfmc_log(OPENFMC_LOG_ERR, "Error parsing acft perf "
 			    "file %s:%lu: unknown line", filename, line_num);
@@ -252,9 +262,9 @@ acft_perf_parse(const char *filename)
 	    acft->eng_type == NULL || acft->eng_max_thr <= 0 ||
 	    acft->thr_dens_curve == NULL || acft->thr_isa_curve == NULL ||
 	    acft->sfc_thr_curve == NULL || acft->sfc_dens_curve == NULL ||
-	    acft->sfc_isa_curve == NULL || acft->cl_curve ||
-	    acft->cl_flap_curve || acft->cd_curve || acft->cd_flap_curve ||
-	    acft->wing_area == 0) {
+	    acft->sfc_isa_curve == NULL || acft->cl_curve == NULL ||
+	    acft->cl_flap_curve == NULL || acft->cd_curve == NULL ||
+	    acft->cd_flap_curve == NULL || acft->wing_area == 0) {
 		openfmc_log(OPENFMC_LOG_ERR, "Error parsing acft perf "
 		    "file %s: missing or corrupt data fields.", filename);
 		goto errout;
@@ -320,15 +330,16 @@ double
 eng_max_thr(const flt_perf_t *flt, const acft_perf_t *acft, double alt,
     double ktas, double qnh, double isadev, double tp_alt)
 {
-	double Ps, Pd, D;
+	double Ps, Pd, D, dmod, tmod;
 
 	Ps = alt2press(alt, qnh);
 	Pd = dyn_press(ktas, Ps, isadev2sat(alt2fl(alt < tp_alt ? alt : tp_alt,
 	    qnh), isadev));
-	D = air_density(Pd, isadev);
+	D = air_density(Ps + Pd, isadev);
+	dmod = quad_bezier_func(D, acft->thr_dens_curve);
+	tmod = quad_bezier_func(isadev, acft->thr_isa_curve);
 
-	return (quad_bezier_func(D, acft->thr_dens_curve) *
-	    quad_bezier_func(isadev, acft->thr_isa_curve) * flt->thr_derate);
+	return (acft->eng_max_thr * dmod * tmod * flt->thr_derate);
 }
 
 /*
@@ -372,7 +383,7 @@ eng_max_thr_avg(const flt_perf_t *flt, const acft_perf_t *acft, double alt1,
 	 * Finally grab effective air density.
 	 */
 	isadev = isadev2sat(alt2fl(avg_alt, qnh), avg_temp);
-	D = air_density(Pd, isadev);
+	D = air_density(Ps + Pd, isadev);
 	/*
 	 * Derive engine performance.
 	 */
@@ -416,53 +427,277 @@ cl_curve_get_aoa(double Cl, const bezier_t *curve)
 
 /*
  * Calculates total (kinetic + potential) energy of a moving object.
+ * This simply computes: E = m.g.h + (1/2).m.v^2
  *
  * @param mass Mass in kg.
- * @param alt Elevation above sea level in feet.
- * @param ktas Speed in knots.
+ * @param altm Altitude above sea level in meters.
+ * @param tas True airspeed in m/s.
  *
  * @return The object's total energy in Joules.
  */
-static double
-calc_total_E(double mass, double alt, double ktas)
+static inline double
+calc_total_E(double mass, double altm, double tas)
 {
-	return (mass * EARTH_GRAVITY * FEET2MET(alt) +
-	    0.5 * mass * POW2(KT2MPS(ktas)));
+	return (mass * EARTH_GRAVITY * altm + 0.5 * mass * POW2(tas));
 }
 
 /*
- * Calculates the speed an object needs to be moving at to have a given
- * total (kinetic + potential) energy.
+ * Calculates the altitude above sea level an object needs to be at to have
+ * a given total (kinetic + potential) energy. This simply computes:
+ * h = (E - (1/2).m.v^2) / (m.g)
  *
  * @param E Total energy in Joules.
- * @param mass Mass in kg.
- * @param alt Elevation above sea level in feet.
+ * @param m Mass in kg.
+ * @param tas True airspeed in m/s.
  *
- * @return The object's required speed in knots to have energy E.
+ * @return The object's required elevation above sea level in meters.
  */
-static double
-total_E_to_spd(double E, double mass, double alt)
+static inline double
+total_E_to_alt(double E, double m, double tas)
 {
-	return (MPS2KT(sqrt((E - (mass * EARTH_GRAVITY * FEET2MET(alt))) /
-	    (0.5 * mass))));
+	return ((E - (0.5 * m * POW2(tas))) / (m * EARTH_GRAVITY));
 }
 
 /*
- * Calculates the elevation an object needs to be at to have a given
- * total (kinetic + potential) energy.
+ * Calculates the angle of attack required to maintain level flight.
  *
- * @param E Total energy in Joules.
- * @param mass Mass in kg.
- * @param ktas Speed in knots.
+ * @param Pd Dynamic pressure on the aircraft in Pa (see dyn_press()).
+ * @param mass Aircrat mass in kg.
+ * @param flap_ratio Active flat setting between 0 and 1 inclusive
+ *	(0 - flaps up, 1 - flaps fully deployed).
+ * @param acft Performance tables of the aircraft.
  *
- * @return The object's required elevation above sea level in feet to have
- *	energy E.
+ * @return Angle of attack to airstream in degrees required to produce
+ *	lift equivalent to the weight of `mass' on Earth. If the aircraft
+ *	is unable to produce sufficient lift at any angle of attack to
+ *	sustain flight, returns NAN instead.
  */
 static double
-total_E_to_alt(double E, double mass, double ktas)
+get_aoa(double Pd, double mass, double flap_ratio, const acft_perf_t *acft)
 {
-	return (MET2FEET((E - (0.5 * mass * POW2(KT2MPS(ktas)))) /
-	    (mass * EARTH_GRAVITY)));
+	double lift, Cl;
+
+	lift = MASS2GFORCE(mass);
+	Cl = lift / (Pd * acft->wing_area);
+	if (flap_ratio == 0)
+		return (cl_curve_get_aoa(Cl, acft->cl_curve));
+	else
+		return (wavg(cl_curve_get_aoa(Cl, acft->cl_curve),
+		    cl_curve_get_aoa(Cl, acft->cl_flap_curve),
+		    flap_ratio));
+}
+
+/*
+ * Calculates the amount of drag experienced by an aircraft.
+ *
+ * @param Pd Dynamic pressure on the airframe in Pa (see dyn_press()).
+ * @param aoa Current angle of attack to the airstream in degrees.
+ * @param flap_ratio Active flat setting between 0 and 1 inclusive
+ *	(0 - flaps up, 1 - flaps fully deployed).
+ * @param acft Performance tables of the aircraft.
+ *
+ * @return Drag force on the aircraft's airframe in N.
+ */
+static inline double
+get_drag(double Pd, double aoa, double flap_ratio, const acft_perf_t *acft)
+{
+	if (flap_ratio == 0)
+		return (quad_bezier_func(aoa, acft->cd_curve) *
+		    Pd * acft->wing_area);
+	else
+		return (wavg(quad_bezier_func(aoa, acft->cd_curve),
+		    quad_bezier_func(aoa, acft->cd_flap_curve),
+		    flap_ratio) * Pd * acft->wing_area);
+}
+
+/*
+ * Performs a level acceleration simulation step.
+ *
+ * @param isadev ISA temperature deviation in degrees C.
+ * @param tp_alt Altitude of the tropopause.
+ * @param qnh Barometric altimeter setting in Pa.
+ * @param gnd Flag indicating whether the aircraft is currently positioned
+ *	on the ground (and hence no lift generation is required).
+ * @param alt Current aircraft altitude above mean sea level in feet.
+ * @param kcasp Input/output argument containing the aircraft's current
+ *	calibrated airspeed in knots. This will be updated with the new
+ *	airspeed after the function returns with success.
+ * @param kcas_targp Input/output argument containing the acceleration
+ *	target calibrated airspeed in knots. If the airspeed exceeds
+ *	mach_lim, it will be down-adjusted, otherwise it remains unchanged.
+ * @param mach_lim Limiting Mach number. If either the current airspeed
+ *	or target airspeeds exceed this value at the provided altitude,
+ *	we down-adjust both. This allows for continuously accelerating while
+ *	climbing until reaching the Mach limit and then slowly bleeding off
+ *	speed to maintain the Mach number.
+ * @param wind_mps Wind component along flight path in m/s.
+ * @param mass Aircraft total mass in kg.
+ * @param flap_ratio Active flat setting between 0 and 1 inclusive
+ *	(0 - flaps up, 1 - flaps fully deployed).
+ * @param acft Performance tables of the aircraft.
+ * @param flt Flight performance settings.
+ * @param distp Return parameter that will be incremented with the distance
+ *	covered during the acceleration phase. As such, it must be
+ *	pre-initialized.
+ * @param timep Input/output argument that initially contains the number of
+ *	seconds that the acceleration step can be allowed to happen. This is
+ *	then adjusted with the actual amount of time that the acceleration
+ *	was happening. If the target airspeed is greater than what can be
+ *	achieved during the acceleration step, timep is left unmodified
+ *	(all of the available time was used for acceleration). If the
+ *	target speed is achievable, timep is modified to the proportion of
+ *	the time taken to accelerate to that speed. If the target speed is
+ *	less than the current speed, timep is set proportionally negative
+ *	(and kcasp adjusted to it), indicating to the caller that the energy
+ *	can be used in a climb.
+ * @param burnp Return parameter that will be filled with the amount of
+ *	fuel consumed during the acceleration phase. If no acceleration was
+ *	performed or speed was even given up for reuse for climbing, no
+ *	adjustment to this value will be made.
+ *
+ * @return B_TRUE on success, B_FALSE on failure (insufficient thrust
+ *	to overcome drag and accelerate).
+ */
+static bool_t
+accel_step(double isadev, double tp_alt, double qnh, bool_t gnd, double alt,
+    double *kcasp, double *kcas_targp, double mach_lim, double wind_mps,
+    double mass, double flap_ratio, const acft_perf_t *acft,
+    const flt_perf_t *flt, double *distp, double *timep, double *burnp)
+{
+	double aoa, drag, accel, E_now, E_max, E_targ, tas_max;
+	double fl = alt2fl(alt, qnh);
+	double Ps = alt2press(alt, qnh);
+	double oat = isadev2sat(fl, isadev);
+	double ktas_now = kcas2ktas(*kcasp, Ps, oat);
+	double tas_now = KT2MPS(ktas_now);
+	double mach_lim_ktas = mach2ktas(mach_lim, oat);
+	double ktas_targ = kcas2ktas(*kcas_targp, Ps, oat);
+	double tas_targ = KT2MPS(MIN(ktas_targ, mach_lim_ktas));
+	double Pd = dyn_press(ktas_now, Ps, oat);
+	double D = air_density(Ps + Pd, oat);
+	double thr = eng_max_thr(flt, acft, alt, ktas_now, qnh, isadev, tp_alt);
+	double burn = *burnp;
+	double t = *timep;
+	double altm = FEET2MET(alt);
+
+	if (gnd) {
+		aoa = 0;
+	} else {
+		aoa = get_aoa(Pd, mass, flap_ratio, acft);
+		if (isnan(aoa))
+			return (B_FALSE);
+	}
+	drag = get_drag(Pd, aoa, flap_ratio, acft);
+	accel = (thr - drag) / mass;
+	if (accel < MIN_ACCEL)
+		return (B_FALSE);
+
+	tas_max = tas_now + accel * t;
+	E_now = calc_total_E(mass, altm, tas_now);
+	E_max = calc_total_E(mass, altm, tas_max);
+	E_targ = calc_total_E(mass, altm, tas_targ);
+
+	if (E_targ > E_max) {
+		*kcasp = ktas2kcas(MPS2KT(tas_max), Ps, oat);
+	} else {
+		t *= ((E_targ - E_now) / (E_max - E_now));
+		*kcasp = ktas2kcas(MPS2KT(tas_targ), Ps, oat);
+		*timep = t;
+
+		/* If we were mach-number-limited, adjust *kcas_targp */
+		if (ktas_targ > mach_lim_ktas)
+			*kcas_targp = *kcasp;
+	}
+
+	if (t > 0)
+		burn += acft_get_sfc(acft, thr, D, isadev) * (t / SECS_PER_HR);
+
+	*burnp = burn;
+	(*distp) += MET2NM(tas_now * t + 0.5 * accel * POW2(t) +
+	    wind_mps * t);
+
+	return (B_TRUE);
+}
+
+/*
+ * Performs a climb simulation step.
+ *
+ * @param isadev Same as `isadev' in accel_step.
+ * @param tp_alt Same as `tp_alt' in accel_step.
+ * @param qnh Same as `qnh' in accel_step.
+ * @param altp Input/output argument containing the aircraft's current
+ *	altitude in feet. It will be adjusted with the altitude achieved
+ *	during the climb.
+ * @param kcasp Input/output argument containing the aircraft's current
+ *	calibrated airspeed in knots. After climb, we recalculate the
+ *	effective calibrated airspeed at the new altitude and update kcasp.
+ * @param alt_targ Climb target altitude in feet.
+ * @param wind_mps Same as `wind_mps' in accel_step.
+ * @param mass Same as `mass' in accel_step.
+ * @param flap_ratio Same as `flap_ratio' in accel_step.
+ * @param acft Same as `acft' in accel_step.
+ * @param flt Same as `flt' in accel_step.
+ * @param distp Same as `distp' in accel_step.
+ * @param timep Same as `timep' in accel_step.
+ * @param burnp Same as `burnp' in accel_step.
+ *
+ * @return B_TRUE on success, B_FALSE on failure (insufficient speed to
+ *	sustain flight or thrust to maintain speed).
+ */
+static bool_t
+clb_step(double isadev, double tp_alt, double qnh, double *altp,
+    double *kcasp, double alt_targ, double wind_mps, double mass,
+    double flap_ratio, const acft_perf_t *acft, const flt_perf_t *flt,
+    double *distp, double *timep, double *burnp)
+{
+	double aoa, drag, E_now, E_max, E_targ, D2;
+	double alt = *altp;
+	double fl = alt2fl(alt, qnh);
+	double Ps = alt2press(alt, qnh);
+	double oat = isadev2sat(fl, isadev);
+	double ktas_now = kcas2ktas(*kcasp, Ps, oat);
+	double tas_now = KT2MPS(ktas_now);
+	double Pd = dyn_press(ktas_now, Ps, oat);
+	double D = air_density(Ps + Pd, oat);
+	double thr = eng_max_thr(flt, acft, alt, ktas_now, qnh, isadev, tp_alt);
+	double burn = *burnp;
+	double t = *timep;
+	double altm = FEET2MET(alt);
+
+	aoa = get_aoa(Pd, mass, flap_ratio, acft);
+	if (isnan(aoa))
+		return (B_FALSE);
+	drag = get_drag(Pd, aoa, flap_ratio, acft);
+	if (thr - drag < 0)
+		return (B_FALSE);
+
+	E_now = calc_total_E(mass, altm, tas_now);
+	E_max = E_now + (thr - drag) * tas_now * t;
+	E_targ = calc_total_E(mass, FEET2MET(alt_targ), tas_now);
+
+	if (E_targ > E_max) {
+		*altp = MET2FEET(total_E_to_alt(E_max, mass, tas_now));
+	} else {
+		t *= ((E_targ - E_now) / (E_max - E_now));
+		*altp = alt_targ;
+		*timep = t;
+	}
+
+	/* adjust kcas to new altitude */
+	Ps = alt2press(*altp, qnh);
+	fl = alt2fl(*altp, qnh);
+	oat = isadev2sat(fl, isadev);
+	D2 = air_density(Ps + dyn_press(ktas_now, Ps, oat), oat);
+	*kcasp = ktas2kcas(ktas_now, Ps, oat);
+
+	/* use average air density to use in burn estimation */
+	burn += acft_get_sfc(acft, thr, AVG(D, D2), isadev) * (t / SECS_PER_HR);
+
+	*burnp = burn;
+	(*distp) += MET2NM(sqrt(POW2(tas_now * t) +
+	    FEET2MET(POW2((*altp) - alt))) + wind_mps * t);
+
+	return (B_TRUE);
 }
 
 /*
@@ -477,17 +712,17 @@ total_E_to_alt(double E, double mass, double ktas)
  * @param acft Aircraft performance tables.
  * @param isadev Estimated average ISA deviation during climb phase.
  * @param qnh Estimated average QNH during climb phase.
+ * @param tp_alt Altitude of the tropopause in feet AMSL.
  * @param fuel Current fuel state in kg.
  * @param dir Unit vector pointing in the flight direction of the aircraft.
- * @param alt1 Climb/acceleration starting altitude AMSL in feet.
- * @param spd1 Climb/acceleration starting speed in KTAS.
+ * @param alt1 Climb/acceleration starting altitude in feet AMSL.
+ * @param kcas1 Climb/acceleration starting calibrated airspeed in knots.
  * @param wind1 Wind vector at start of climb/acceleration phase. The
  *	vector's direction expresses the wind direction and its magnitude
- *	the wind velocity in knots.
+ *	the wind's true speed in knots.
  * @param alt2 Climb/acceleration target altitude AMSL in feet. Must be
  *	greater than or equal to alt1.
- * @param spd1 Climb/acceleration target speed in KTAS. Must be greater
- *	than or equal to spd1.
+ * @param kcas2 Climb/acceleration target calibrated airspeed in knots.
  * @param wind2 Wind vector at end of climb/acceleration phase. The wind is
  *	assumed to vary smoothly between alt1/wind1 and alt2/wind2.
  * @param flap_ratio Average flap setting between 0 and 1 (inclusive) during
@@ -496,190 +731,80 @@ total_E_to_alt(double E, double mass, double ktas)
  *	A setting of 0 means flaps up, whereas 1 is flaps fully extended.
  * @param type Type of acceleration/climb procedure to execute.
  * @param burnp Return parameter which if not NULL will be filled with the
- *	amount of fuel burned during the acceleration/climb phase (in kg).
+ *	amount of fuel consumed during the acceleration/climb phase (in kg).
  *
  * @return Distance over the ground covered during acceleration/climb
- *	maneuver in nm.
+ *	maneuver in NM.
  */
 double
 accelclb2dist(const flt_perf_t *flt, const acft_perf_t *acft,
-    double isadev, double qnh, double fuel, vect2_t dir,
-    double alt1, double spd1, vect2_t wind1,
-    double alt2, double spd2, vect2_t wind2,
-    double flap_ratio, accelclb_t type, double *burnp)
+    double isadev, double qnh, double tp_alt, double fuel, vect2_t dir,
+    double alt1, double kcas1, vect2_t wind1,
+    double alt2, double kcas2, vect2_t wind2,
+    double flap_ratio, double mach_lim, accelclb_t type, double *burnp)
 {
-	double alt = alt1, spd = spd1;
-	double burn = 0, dist = 0;
+	double alt = alt1, kcas = kcas1, burn = 0, dist = 0;
 
-	ASSERT(alt1 >= alt2);
-	ASSERT(spd1 >= spd2);
+	ASSERT(alt1 <= alt2);
 	ASSERT(fuel >= 0);
 	dir = vect2_unit(dir, NULL);
 
-	/* Iterate in single-second steps. */
-	while (alt < alt2 && spd < spd2) {
-		double mass, dp, lift, drag, Cl, Cd, aoa, thr, accel;
-		double e1, e2, de, alt_fract, wind_comp, dens, fl, oat, press;
+	/* Iterate in steps of SECS_PER_STEP. */
+	while (alt2 - alt > ALT_THRESH || kcas2 - kcas > KCAS_THRESH) {
+		double wind_mps, alt_fract, accel_t, clb_t;
 		vect2_t wind;
-
-		/*
-		 * First determine our environment. We need air pressure, OAT,
-		 * dynamic pressure, air density and our total mass in kg.
-		 */
-		fl = alt2fl(alt, qnh);
-		press = alt2press(alt, qnh);
-		oat = isadev2sat(fl, isadev);
-		dp = dyn_press(spd, press, oat);
-		dens = air_density(press, oat);
-		/* Check that we won't run out of fuel. */
-		if (burn > fuel)
-			return (NAN);
-		mass = flt->gw + fuel - burn;
-
-		/*
-		 * Next determine the angle-of-attack we need to fly at to
-		 * maintain flight. The lift is simply equal to our weight
-		 * force and since we assume Cl varies smoothly between CL
-		 * and CLFLAP, the AoA is the weighted average between the
-		 * corresponding lift coefficient curves.
-		 */
-		lift = MASS2GFORCE(mass);
-		Cl = lift / (dp * acft->wing_area);
-		if (flap_ratio == 0)
-			aoa = cl_curve_get_aoa(Cl, acft->cl_curve);
-		else
-			aoa = WAVG(cl_curve_get_aoa(Cl, acft->cl_curve),
-			    cl_curve_get_aoa(Cl, acft->cl_flap_curve),
-			    flap_ratio);
-		/* Can we even sustain flight at this weight? */
-		if (isnan(aoa))
-			return (NAN);
-
-		/*
-		 * Then simply determine the effective drag coefficient at
-		 * this AoA as the flap_ratio-weighted average between the CD
-		 * and CDFLAP curves.
-		 */
-		Cd = WAVG(quad_bezier_func(aoa, acft->cd_curve),
-		    quad_bezier_func(aoa, acft->cd_flap_curve), flap_ratio);
-		drag = dp * Cd * acft->wing_area;
-
-		/*
-		 * Determine the maximum engine thrust available and check to
-		 * see that our drag is not too great to climb or accelerate.
-		 */
-		thr = eng_max_thr(flt, acft, alt, spd, qnh, isadev, ISA_TP_ALT);
-		if (thr - drag < 0)
-			return (NAN);
-		/*
-		 * Calculate the maximum available acceleration in horizontal
-		 * flight and the difference in energy between in this step
-		 * through the accel/clb loop.
-		 */
-		accel = (thr - drag) / mass;
-		e1 = calc_total_E(mass, alt, spd);
-		e2 = calc_total_E(mass, alt, spd + accel);
-		de = e2 - e1;
-		ASSERT(de > 0.0);
 
 		/*
 		 * Calculate the directional wind component. This will be
 		 * factored into the distance traveled estimation below.
 		 */
 		alt_fract = (alt - alt1) / (alt2 - alt1);
-		wind = VECT2(WAVG(wind1.x, wind2.x, alt_fract),
-		    WAVG(wind1.y, wind2.y, alt_fract));
-		wind_comp = vect2_dotprod(wind, dir);
+		wind = VECT2(wavg(wind1.x, wind2.x, alt_fract),
+		    wavg(wind1.y, wind2.y, alt_fract));
+		wind_mps = KT2MPS(vect2_dotprod(wind, dir));
 
-		/* Estimate the fuel burn. */
-		burn += acft_get_sfc(acft, thr, dens, isadev) / SECS_PER_HR;
+#ifdef	ACCELCLB_DEBUG
+		double old_alt = alt;
+		double old_kcas = kcas;
+#endif	/* ACCELCLB_DEBUG */
 
-		switch (type) {
-		case ACCEL_THEN_CLB: {
-			double new_spd = spd, new_alt = alt;
-			double accel_time = 0;
+		/*
+		 * ACCEL_THEN_CLB and ACCEL_TAKEOFF first accelerate to kcas2
+		 * and then climb. ACCEL_AND_CLB does a 50/50 time split.
+		 */
+		if (type == ACCEL_THEN_CLB || type == ACCEL_TAKEOFF)
+			accel_t = SECS_PER_STEP;
+		else
+			accel_t = SECS_PER_STEP / 2;
 
-			if (spd < spd2) {
-				if (spd + accel <= spd2) {
-					/*
-					 * If we're not at the target speed yet,
-					 * use all the available energy.
-					 */
-					new_spd += accel;
-					de = 0;
-					accel_time = 1;
-				} else {
-					/*
-					 * Calculate how much energy we'll use
-					 * for acceleration and leave the rest
-					 * for climbing.
-					 */
-					double e_mod = calc_total_E(mass, alt,
-					    spd2);
-					double de_mod = e_mod - e1;
-					ASSERT(de_mod <= de);
-					accel_time = de_mod / de;
-					de -= de_mod;
-					new_spd = spd2;
-				}
-			}
-			ASSERT(de >= 0.0);
-			if (de != 0) {
-				/* Use up the remaining energy to climb. */
-				new_alt = total_E_to_alt(e1 + de, mass, spd);
-				de = 0;
-			}
-			if (new_spd != spd) {
-				/*
-				 * Acceleration phase was performed. Distance
-				 * covered while accelerating is simply:
-				 * d = vt + (1/2)at^2.
-				 */
-				ASSERT(accel_time != 0);
-				dist += spd * accel_time + 0.5 * accel *
-				    POW2(accel_time) + wind_comp;
-			}
-			if (new_alt != alt) {
-				/*
-				 * Climb phase was performed. We can estimate
-				 * this as a right-angle triangle with the
-				 * vertical leg being the difference in
-				 * altitude achieved and the hypotenuse the
-				 * distance covered in the climb fraction at
-				 * the new accelerated speed.
-				 */
-				double a = KT2MPS(new_spd + wind_comp) *
-				    (1 - accel_time);
-				double b = FEET2MET(new_alt - alt);
-				dist += MET2NM(sqrt(POW2(a) + POW2(b)));
-			}
-			spd = new_spd;
-			alt = new_alt;
-			break;
+		if (!accel_step(isadev, tp_alt, qnh, type == ACCEL_TAKEOFF &&
+		    alt == alt1, alt, &kcas, &kcas2, mach_lim, wind_mps,
+		    flt->zfw + fuel - burn, flap_ratio, acft, flt, &dist,
+		    &accel_t, &burn)) {
+			return (NAN);
 		}
-		case ACCEL_AND_CLB: {
-			double new_spd, new_alt, a, b;
 
-			new_spd = total_E_to_spd(e1 + de / 2, mass, alt);
-			new_alt = total_E_to_alt(e1 + de / 2, mass, spd);
-			/*
-			 * Calculates the distance traveled as one side of
-			 * a right-angle triangle where the hypotenuse is
-			 * given by the distance-acceleration equation above
-			 * and the other side is the altitude gained during
-			 * the climb.
-			 */
-			a = KT2MPS(spd + 0.5 * (new_spd - spd) + wind_comp);
-			b = FEET2MET(new_alt - alt);
-			dist += MET2NM(sqrt(POW2(a) + POW2(b)));
-			spd = new_spd;
-			alt = new_alt;
-			de = 0;
-			break;
+		clb_t = SECS_PER_STEP - accel_t;
+		if (clb_t > 0 && alt2 - alt > ALT_THRESH && !clb_step(isadev,
+		    tp_alt, qnh, &alt, &kcas, alt2, wind_mps, flt->zfw + fuel -
+		    burn, flap_ratio, acft, flt, &dist, &clb_t, &burn)) {
+			return (NAN);
 		}
-		}
-		/* Check we've consumed all the energy */
-		ASSERT(de == 0.0);
+
+#ifdef	ACCELCLB_DEBUG
+		double total_t, oat;
+
+		total_t = accel_t + clb_t;
+		oat = isadev2sat(alt2fl(alt, qnh), isadev);
+
+		printf("V:%5.01lf  +V:%5.02lf  H:%5.0lf  fpm:%4.0lf  "
+		    "s:%6.0lf  M:%5.03lf\n", kcas, (kcas - old_kcas) / total_t,
+		    alt, ((alt - old_alt) / total_t) * 60, NM2MET(dist),
+		    ktas2mach(kcas2ktas(kcas, alt2press(alt, qnh), oat), oat));
+#endif	/* ACCELCLB_DEBUG */
+
+		if (fuel < burn)
+			return (NAN);
 	}
 	if (burnp != NULL)
 		*burnp = burn;
@@ -811,7 +936,7 @@ mach2keas(double mach, double press)
  * compressibility) to Mach number.
  *
  * @param mach Equivalent airspeed in knots.
- * @param oat Static outside static air pressure in hPa.
+ * @param oat Static outside static air pressure in Pa.
  *
  * @return Mach number.
  */
@@ -824,7 +949,7 @@ keas2mach(double keas, double press)
 	 * M = Ve / (a0 * sqrt(P / P0))
 	 *
 	 * Where Ve is equivalent airspeed in m.s^-1, P is local static
-	 * pressure and P0 is ISA sea level pressure (in hPa).
+	 * pressure and P0 is ISA sea level pressure (in Pa).
 	 */
 	return (KT2MPS(keas) / (ISA_SPEED_SOUND * sqrt(press / ISA_SL_PRESS)));
 }
@@ -833,15 +958,16 @@ keas2mach(double keas, double press)
  * Calculates static air pressure from pressure altitude.
  *
  * @param alt Pressure altitude in feet.
- * @param qnh Local QNH in hPa.
+ * @param qnh Local QNH in Pa.
  *
- * @return Air pressure in hPa.
+ * @return Air pressure in Pa.
  */
 double
 alt2press(double alt, double qnh)
 {
-	return (qnh * pow(1 - (ISA_TLR_PER_1M * FEET2MET(alt)) / ISA_SL_TEMP_K,
-	    (EARTH_GRAVITY * DRY_AIR_MOL) / (R_univ * ISA_TLR_PER_1M)));
+	return (qnh * pow(1 - (ISA_TLR_PER_1M * FEET2MET(alt)) /
+	    ISA_SL_TEMP_K, (EARTH_GRAVITY * DRY_AIR_MOL) /
+	    (R_univ * ISA_TLR_PER_1M)));
 }
 
 /*
@@ -960,7 +1086,7 @@ speed_sound(double oat)
 /*
  * Calculates air density.
  *
- * @param pressure Static air pressure in hPa.
+ * @param pressure Static air pressure in Pa.
  * @param oat Static outside air temperature in degrees C.
  *
  * @return Local air density in kg.m^-3.
@@ -976,17 +1102,17 @@ air_density(double pressure, double oat)
 	 * Where p is local static air pressure, R_spec is the specific gas
 	 * constant for dry air and T is absolute temperature.
 	 */
-	return ((pressure * 100) / (R_spec * C2KELVIN(oat)));
+	return (pressure / (R_spec * C2KELVIN(oat)));
 }
 
 /*
  * Calculates impact pressure. This is dynamic pressure with air
  * compressibility considered.
  *
- * @param pressure Static air pressure in hPa.
+ * @param pressure Static air pressure in Pa.
  * @param mach Flight mach number.
  *
- * @return Impact pressure in hPa.
+ * @return Impact pressure in Pa.
  */
 double
 impact_press(double mach, double pressure)
@@ -1005,13 +1131,13 @@ impact_press(double mach, double pressure)
  * Calculates dynamic pressure.
  *
  * @param pressure True airspeed in knots.
- * @param press Static air pressure in hPa.
+ * @param press Static air pressure in Pa.
  * @param oat Static outside air temperature in degrees C.
  *
- * @return Dynamic pressure in hPa.
+ * @return Dynamic pressure in Pa.
  */
 double
 dyn_press(double ktas, double press, double oat)
 {
-	return (0.5 * air_density(press, oat) * POW2(KT2MPS(ktas)) / 100);
+	return (0.5 * air_density(press, oat) * POW2(KT2MPS(ktas)));
 }

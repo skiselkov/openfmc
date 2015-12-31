@@ -898,7 +898,7 @@ test_perf(void)
 	double		ktas = 500;
 	double		oat = -50;
 	double		alt = 35000;
-	double		qnh = 1050;
+	double		qnh = 105000;
 	acft_perf_t	*acft;
 	flt_perf_t	flt;
 
@@ -906,21 +906,19 @@ test_perf(void)
 	if (acft == NULL)
 		exit(EXIT_FAILURE);
 	flt.thr_derate = 1.0;
-	UNUSED(flt);
-
-	acft_perf_destroy(acft);
+	flt.zfw = acft->ref_zfw;
 
 	printf("INPUTS:\n"
 	    "  KTAS:\t\t%6.0lf KT\n"
 	    "  OAT:\t\t%6.1lf deg C\n"
 	    "  QNH:\t\t%6.1lf hPa\n"
 	    "  ALT:\t\t%6.0lf ft\n"
-	    "-------------------------\n", ktas, oat, qnh, alt);
+	    "-------------------------\n", ktas, oat, qnh / 100, alt);
 
 	double press = alt2press(alt, qnh);
 
 	printf("alt2press:\t%6.1lf hPa\n"
-	    "press2alt:\t%6.0lf ft\n", press, press2alt(press, qnh));
+	    "press2alt:\t%6.0lf ft\n", press / 100, press2alt(press, qnh));
 
 	double fl = alt2fl(alt, qnh);
 	printf("alt2fl:\t\t%6.0lf FL\n"
@@ -933,7 +931,7 @@ test_perf(void)
 	printf("speed of sound:\t%6.1lf m/s\n"
 	    "air density:\t%6.3lf kg/m^3\n"
 	    "impact press:\t%6.1lf hPa\n"
-	    "dynamic press:\t%6.1lf hPa\n", a0, dens, Pi, Pd);
+	    "dynamic press:\t%6.1lf hPa\n", a0, dens, Pi / 100, Pd / 100);
 
 	double isadev = sat2isadev(fl, oat);
 	printf("sat2isadev:\t%6.1lf deg C\n"
@@ -953,6 +951,47 @@ test_perf(void)
 	double tat = sat2tat(oat, mach);
 	printf("sat2tat:\t%6.2lf deg C\n"
 	    "tat2sat:\t%6.2lf deg C\n", tat, tat2sat(tat, mach));
+
+#define	ISADEV		0
+#define	QNH		101325
+#define	TP_ALT		45000
+#define	MACH_LIM	0.77
+
+	double alts[] = {
+		0,	1000,	2000,	10000,	34000
+	};
+	double spds[] = {
+		0,	165,	210,	250,	270
+	};
+	double flaps[] = {
+		0.25,	0.1,	0,	0
+	};
+	double fuel, dist;
+	const char *names[] = {
+		"T/O",	"ACCEL",	"CLB",	"CLB"
+	};
+	accelclb_t type[] = {
+		ACCEL_TAKEOFF, ACCEL_AND_CLB, ACCEL_THEN_CLB, ACCEL_THEN_CLB
+	};
+
+	fuel = 45000;
+	dist = 0;
+
+	for (int i = 0; i + 1 < 5; i++) {
+		double dist_i, burn;
+
+		dist_i = accelclb2dist(&flt, acft, ISADEV, QNH, TP_ALT, fuel,
+		    VECT2(1, 0), alts[i], spds[i], ZERO_VECT2, alts[i + 1],
+		    spds[i + 1], ZERO_VECT2, flaps[i], MACH_LIM, type[i],
+		    &burn);
+		dist += dist_i;
+		fuel -= burn;
+		printf("%s:\ts: %.2lf km  s_i: %.2lf km  F: %.0lf kg"
+		    "  burn_i: %.0lf kg\n", names[i], NM2MET(dist) / 1000,
+		    NM2MET(dist_i) / 1000, fuel, burn);
+	}
+
+	acft_perf_destroy(acft);
 }
 
 void
@@ -1403,9 +1442,9 @@ main(int argc, char **argv)
 //	test_sph_xlate();
 //	test_route(argv[optind]);
 //	test_magvar();
-//	test_perf();
+	test_perf();
 //	test_math();
-	test_route_seg();
+//	test_route_seg();
 
 	return (0);
 }
