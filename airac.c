@@ -1372,9 +1372,9 @@ parse_AF_seg(char **comps, size_t num_comps, navproc_seg_t *seg,
 	CHECK_NUM_COMPS(17, AF);
 	seg->type = NAVPROC_SEG_TYPE_ARC_TO_FIX;
 	dir = atoi(comps[4]);
-	seg->leg_cmd.dme_arc.start_radial = atof(comps[6]);
+	seg->leg_cmd.dme_arc.start_radial = atof(comps[8]);
 	seg->leg_cmd.dme_arc.radius = atof(comps[7]);
-	seg->leg_cmd.dme_arc.end_radial = atof(comps[8]);
+	seg->leg_cmd.dme_arc.end_radial = atof(comps[6]);
 	if ((dir != 1 && dir != 2) ||
 	    !parse_proc_seg_wpt(&comps[1], &seg->term_cond.fix) ||
 	    !is_valid_hdg(seg->leg_cmd.dme_arc.start_radial) ||
@@ -1385,16 +1385,7 @@ parse_AF_seg(char **comps, size_t num_comps, navproc_seg_t *seg,
 	    arpt, NULL, db, NAVAID_TYPE_ANY)) {
 		return (B_FALSE);
 	}
-	if (dir == 2) {
-		/*
-		 * Swap start_radial and end_radial, we always store the
-		 * ARC direction as going from start_radial to end_radial.
-		 */
-		double tmp = seg->leg_cmd.dme_arc.start_radial;
-		seg->leg_cmd.dme_arc.start_radial =
-		    seg->leg_cmd.dme_arc.end_radial;
-		seg->leg_cmd.dme_arc.end_radial = tmp;
-	}
+	seg->leg_cmd.dme_arc.cw = (dir == 2);
 
 	return (B_TRUE);
 }
