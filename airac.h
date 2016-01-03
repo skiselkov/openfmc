@@ -229,6 +229,7 @@ typedef struct {
 			double		start_radial;
 			double		end_radial;
 			double		radius;
+			bool_t		cw;
 		} dme_arc;
 		struct {	/* RF */
 			wpt_t		ctr_wpt;
@@ -261,7 +262,7 @@ typedef struct {
 			wpt_t		navaid;
 			double		radial;
 		} radial;
-		struct {			/* CD, FD */
+		struct {			/* CD, FD, VD */
 			wpt_t		navaid;
 			double		dist;
 		} dme;

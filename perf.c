@@ -44,17 +44,6 @@
 #define	R_univ		8.31447		/* Universal gas constant */
 #define	R_spec		287.058		/* Specific gas constant of dry air */
 
-/*
- * ISA (International Standard Atmosphere) parameters.
- */
-#define	ISA_SL_TEMP_C		15.0	/* Sea level temperature in degrees C */
-#define	ISA_SL_TEMP_K		288.15	/* Sea level temperature in Kelvin */
-#define	ISA_SL_PRESS		101325	/* Sea level pressure in Pa */
-#define	ISA_TLR_PER_1000FT	1.98	/* Temperature lapse rate per 1000ft */
-#define	ISA_TLR_PER_1M		0.0065	/* Temperature lapse rate per 1 meter */
-#define	ISA_SPEED_SOUND		340.3	/* Speed of sound at sea level */
-#define	ISA_TP_ALT		36089	/* Tropopause altitude in feet */
-
 /* Calculates gravitational force for mass `m' in kg on Earth */
 #define	MASS2GFORCE(m)		((m) * EARTH_GRAVITY)
 

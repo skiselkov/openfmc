@@ -1041,7 +1041,7 @@ sph_xlate(geo_pos2_t pos, const sph_xlate_t *xlate)
 }
 
 /*
- * Returns the great circle distance between two geographical points on the
+ * Returns the great circle distance between two geodesic coordinates on the
  * Earth in meters.
  */
 double

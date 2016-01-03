@@ -70,6 +70,10 @@ typedef struct {
 	alt_lim_t		alt_lim;
 	bool_t			spd_lim_ovrd;
 	spd_lim_t		spd_lim;
+	vect2_t			wind;
+
+	double			alt_est;
+	double			spd_est;
 
 	route_leg_group_t	*rlg;
 
@@ -169,7 +173,8 @@ void route_destroy(route_t *route);
 /*
  * Updating & copying routes
  */
-void route_update(route_t *route, acft_perf_t *acft, flt_perf_t *flt);
+err_t route_update(route_t *route, const acft_perf_t *acft,
+    const flt_perf_t *flt, route_leg_t **err_rl);
 bool_t route_update_needed(const route_t *route);
 route_t *route_copy(const route_t *route);
 

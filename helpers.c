@@ -31,6 +31,10 @@
 
 #include "helpers.h"
 
+/*
+ * How to turn to get from hdg1 to hdg2 with positive being right and negative
+ * being left. Always turns the shortest way around (<= 180 degrees).
+ */
 double
 rel_hdg(double hdg1, double hdg2)
 {

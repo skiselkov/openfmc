@@ -43,7 +43,8 @@ static const char *err_name_tbl[NUM_ERRS] = {
 	"INVALID STAR",
 	"INVALID FINAL",
 	"INVALID TRANS",
-	"NOT IN DATABASE"
+	"NOT IN DATABASE",
+	"UNABLE NEXT ALT"
 };
 
 const char *

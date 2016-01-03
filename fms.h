@@ -31,6 +31,14 @@
 #include "airac.h"
 #include "wmm.h"
 
+typedef enum {
+	FLT_PHASE_TO,	/* Takeoff */
+	FLT_PHASE_CLB,	/* Climb to CRZ ALT */
+	FLT_PHASE_CRZ,	/* Cruise */
+	FLT_PHASE_DES,	/* Descent from CRZ ALT to runway */
+	FLT_PHASE_GA	/* Go-around */
+} flt_phase_t;
+
 typedef struct {
 	time_t		valid_from;
 	time_t		valid_to;

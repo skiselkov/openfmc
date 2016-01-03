@@ -58,6 +58,17 @@ extern "C" {
 #define	HPA2PA(x)	((x) / 100)
 #define	PA2HPA(x)	((x) * 100)
 
+/*
+ * ISA (International Standard Atmosphere) parameters.
+ */
+#define	ISA_SL_TEMP_C		15.0	/* Sea level temperature in degrees C */
+#define	ISA_SL_TEMP_K		288.15	/* Sea level temperature in Kelvin */
+#define	ISA_SL_PRESS		101325	/* Sea level pressure in Pa */
+#define	ISA_TLR_PER_1000FT	1.98	/* Temperature lapse rate per 1000ft */
+#define	ISA_TLR_PER_1M		0.0065	/* Temperature lapse rate per 1 meter */
+#define	ISA_SPEED_SOUND		340.3	/* Speed of sound at sea level */
+#define	ISA_TP_ALT		36089	/* Tropopause altitude in feet */
+
 typedef struct {
 	int	spd;
 	double	Cd;
@@ -109,11 +120,16 @@ typedef struct {
 typedef struct {
 	double		crz_lvl;
 	double		crz_tas;
+	double		crz_mach;
 	double		thr_derate;	/* fraction of eng_max_thr */
+	double		crz_isadev;
+	double		to_flap;
+	double		accel_alt;
 
 	vect2_t		heading;
 	geo_pos3_t	position;
 
+	double		fuel;		/* Fuel load in kg */
 	double		zfw;		/* Gross Weight in kg */
 } flt_perf_t;
 

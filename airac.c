@@ -1483,20 +1483,28 @@ dump_CA_seg(char **result, size_t *result_sz, const navproc_seg_t *seg)
 }
 
 static bool_t
-parse_CD_seg(char **comps, size_t num_comps, navproc_seg_t *seg,
-    const airport_t *arpt, const navaid_db_t *db)
+parse_CD_VD_seg(char **comps, size_t num_comps, navproc_seg_t *seg,
+    const airport_t *arpt, const navaid_db_t *db, bool_t is_CD)
 {
-	CHECK_NUM_COMPS(18, CD);
-	seg->type = NAVPROC_SEG_TYPE_CRS_TO_DME;
+	if (is_CD) {
+		CHECK_NUM_COMPS(18, CD);
+		seg->type = NAVPROC_SEG_TYPE_CRS_TO_DME;
+	} else {
+		CHECK_NUM_COMPS(18, VD);
+		seg->type = NAVPROC_SEG_TYPE_HDG_TO_DME;
+	}
 	seg->leg_cmd.hdg.hdg = atof(comps[8]);
-	seg->leg_cmd.hdg.turn = atoi(comps[2]);
+	seg->leg_cmd.hdg.turn = atoi(comps[4]);
 	seg->term_cond.dme.dist = atof(comps[9]);
 	if (!is_valid_hdg(seg->leg_cmd.hdg.hdg) ||
 	    !is_valid_turn(seg->leg_cmd.hdg.turn) ||
 	    !parse_alt_spd_term(&comps[10], &seg->alt_lim, &seg->spd_lim) ||
 	    !proc_navaid_lookup(comps[5], &seg->term_cond.dme.navaid,
-	    arpt, NULL, db, NAVAID_TYPE_ANY))
+	    arpt, NULL, db, NAVAID_TYPE_ANY)) {
+		openfmc_log(OPENFMC_LOG_ERR, "Error parsing %s segment line",
+		    is_CD ? "CD" : "VD");
 		return (B_FALSE);
+	}
 	return (B_TRUE);
 }
 
@@ -1911,27 +1919,6 @@ dump_VA_seg(char **result, size_t *result_sz, const navproc_seg_t *seg)
 	    alt_lim_desc, spd_lim_desc);
 }
 
-static bool_t
-parse_VD_seg(char **comps, size_t num_comps, navproc_seg_t *seg,
-    const airport_t *arpt, const navaid_db_t *db)
-{
-	CHECK_NUM_COMPS(18, VD);
-	seg->type = NAVPROC_SEG_TYPE_HDG_TO_DME;
-	seg->leg_cmd.hdg.hdg = atof(comps[8]);
-	seg->leg_cmd.hdg.turn = atoi(comps[3]);
-	seg->term_cond.dme.dist = atof(comps[9]);
-	if (!is_valid_hdg(seg->leg_cmd.hdg.hdg) ||
-	    !is_valid_turn(seg->leg_cmd.hdg.turn) ||
-	    !parse_alt_spd_term(&comps[10], &seg->alt_lim, &seg->spd_lim) ||
-	    !proc_navaid_lookup(comps[5], &seg->term_cond.dme.navaid,
-	    arpt, NULL, db, NAVAID_TYPE_ANY)) {
-		openfmc_log(OPENFMC_LOG_ERR, "Error parsing VD segment line");
-		return (B_FALSE);
-	}
-
-	return (B_TRUE);
-}
-
 static void
 dump_VD_seg(char **result, size_t *result_sz, const navproc_seg_t *seg)
 {
@@ -2034,7 +2021,8 @@ parse_proc_seg_line(const char *line, navproc_t *proc, const airport_t *arpt,
 		if (!parse_CA_seg(comps, num_comps, &seg))
 			goto errout;
 	} else if (strcmp(comps[0], "CD") == 0) {
-		if (!parse_CD_seg(comps, num_comps, &seg, arpt, navdb))
+		if (!parse_CD_VD_seg(comps, num_comps, &seg, arpt, navdb,
+		    B_TRUE))
 			goto errout;
 	} else if (strcmp(comps[0], "CF") == 0) {
 		if (!parse_CF_seg(comps, num_comps, &seg, arpt, navdb))
@@ -2088,7 +2076,8 @@ parse_proc_seg_line(const char *line, navproc_t *proc, const airport_t *arpt,
 		if (!parse_VA_seg(comps, num_comps, &seg))
 			goto errout;
 	} else if (strcmp(comps[0], "VD") == 0) {
-		if (!parse_VD_seg(comps, num_comps, &seg, arpt, navdb))
+		if (!parse_CD_VD_seg(comps, num_comps, &seg, arpt, navdb,
+		    B_FALSE))
 			goto errout;
 	} else if (strcmp(comps[0], "VI") == 0) {
 		if (!parse_VI_VM_VR_seg(comps, num_comps, &seg,
