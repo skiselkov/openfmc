@@ -991,15 +991,18 @@ route_first_start_pos(const route_t *route, const route_leg_group_t *lim_rlg,
 	if (hdgp != NULL)
 		*hdgp = 0;
 	if (route->dep_rwy != NULL) {
-		*rlg_start = NULL;
+		if (rlg_start != NULL)
+			*rlg_start = NULL;
 		*posp = route->dep_rwy->thr_pos;
 		if (hdgp != NULL)
 			*hdgp = route->dep_rwy->hdg;
 		return;
 	}
 	if (route->dep != NULL) {
-		*rlg_start = NULL;
+		if (rlg_start != NULL)
+			*rlg_start = NULL;
 		*posp = route->dep->refpt;
+		return;
 	}
 	for (const route_leg_group_t *rlg = list_head(&route->leg_groups); rlg;
 	    rlg = list_next(&route->leg_groups, rlg)) {
@@ -2053,14 +2056,13 @@ err_t
 route_update(route_t *route, const acft_perf_t *acft, const flt_perf_t *flt,
     route_leg_t **err_rl)
 {
-#define	MIN_SPD			150
 #define	ENROUTE_RNP		1
 #define	SID_STAR_RNP		0.5
 #define	FINAL_RNP		0.3
 	geo_pos3_t	start_pos;
 	geo_pos2_t	cur_pos;
 	route_leg_t	*rl, *rl_prev, *rl_next;
-	double		cur_spd = MIN_SPD;
+	double		cur_spd = 0;
 	double		rnp, cur_hdg, cur_alt;
 	flt_phase_t	phase = FLT_PHASE_TO;
 	double		fuel = flt->fuel;
@@ -2083,9 +2085,9 @@ route_update(route_t *route, const acft_perf_t *acft, const flt_perf_t *flt,
 		route_seg_t		*rs, *rs_prev;
 		alt_lim_t		alt_lim;
 		spd_lim_t		spd_lim;
-		double			next_alt, next_spd, flap;
+		double			next_alt, next_spd, flap, dist;
 		vect2_t			next_wind;
-		accelclb_t		clbtype;
+		accelclb_t		clbtype = ACCEL_THEN_CLB;
 		const navproc_seg_t	*seg = &rl->seg;
 
 		rl_next = list_next(&route->legs, rl);
@@ -2095,12 +2097,16 @@ route_update(route_t *route, const acft_perf_t *acft, const flt_perf_t *flt,
 			cur_pos = NULL_GEO_POS2;
 			continue;
 		}
-
-		if (phase == FLT_PHASE_TO) {
+		UNUSED(dist);
+		flap = 0;
+/*
+		switch (phase) {
+		case FLT_PHASE_TO:
 			clbtype = ACCEL_TAKEOFF;
 			flap = flt->to_flap;
-		} else {
-			if (cur_alt < flt->accel_alt) {
+			break;
+		case FLT_PHASE_CLB:
+			if (cur_alt < start_pos.elev + flt->accel_height) {
 				clbtype = ACCEL_AND_CLB;
 				flap = flt->to_flap;
 			} else {
@@ -2108,7 +2114,7 @@ route_update(route_t *route, const acft_perf_t *acft, const flt_perf_t *flt,
 				flap = 0;
 			}
 		}
-
+*/
 		switch (rlg->type) {
 		case ROUTE_LEG_GROUP_TYPE_AIRWAY:
 		case ROUTE_LEG_GROUP_TYPE_DIRECT:
@@ -2139,8 +2145,11 @@ route_update(route_t *route, const acft_perf_t *acft, const flt_perf_t *flt,
 			break;
 		}
 		spd_lim = route_l_get_spd_lim(rl);
-		if (spd_lim.type == SPD_LIM_AT_OR_BLW)
-			next_spd = spd_lim.spd1;
+		if (phase == FLT_PHASE_TO)
+			next_spd = perf_TO_spd(flt, acft);
+		else
+			next_spd = (spd_lim.type == SPD_LIM_AT_OR_BLW ?
+			    spd_lim.spd1 : cur_spd);
 
 		if (seg->type != NAVPROC_SEG_TYPE_INIT_FIX &&
 		    IS_NULL_GEO_POS(cur_pos))
@@ -2161,8 +2170,8 @@ route_update(route_t *route, const acft_perf_t *acft, const flt_perf_t *flt,
 		case NAVPROC_SEG_TYPE_CRS_TO_ALT:
 		case NAVPROC_SEG_TYPE_HDG_TO_ALT:
 		case NAVPROC_SEG_TYPE_FIX_TO_ALT: {
-			err_t err2 = route_update_CA_FA_VA(acft, flt, route, rl,
-			    phase, clbtype, fuel, flap, rnp, &cur_pos,
+			err_t err2 = route_update_CA_FA_VA(acft, flt, route,
+			    rl, phase, clbtype, fuel, flap, rnp, &cur_pos,
 			    &cur_alt, &cur_hdg, cur_spd, next_spd, next_wind,
 			    seg->type == NAVPROC_SEG_TYPE_FIX_TO_ALT);
 			if (err2 != ERR_OK) {

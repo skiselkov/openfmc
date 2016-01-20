@@ -250,9 +250,11 @@ fms_free_regex(fms_t *fms)
  *
  * @param navdata_dir Directory holding to the navigational database.
  * @param wmm_file Path to the World Magnetic Model file.
+ * @param acft_perf_file Path to the aircraft performance file.
  */
 fms_t *
-fms_new(const char *navdata_dir, const char *wmm_file)
+fms_new(const char *navdata_dir, const char *wmm_file,
+    const char *acft_perf_file)
 {
 	fms_t *fms = calloc(sizeof (*fms), 1);
 
@@ -261,6 +263,9 @@ fms_new(const char *navdata_dir, const char *wmm_file)
 		goto errout;
 	if (!fms_alloc_regex(fms))
 		goto errout;
+	if (!(fms->acft = acft_perf_parse(acft_perf_file)))
+		goto errout;
+	fms->flt = flt_perf_new(fms->acft);
 
 	return (fms);
 errout:
@@ -277,6 +282,10 @@ fms_destroy(fms_t *fms)
 	if (fms->navdb)
 		fms_navdb_close(fms->navdb);
 	fms_free_regex(fms);
+	if (fms->acft)
+		acft_perf_destroy(fms->acft);
+	if (fms->flt)
+		flt_perf_destroy(fms->flt);
 	free(fms);
 }
 
@@ -722,4 +731,16 @@ errout:
 	*num_wpts = 0;
 	return (NULL);
 #undef	MAX_MATCHES
+}
+
+const acft_perf_t *
+fms_acft_perf(const fms_t *fms)
+{
+	return (fms->acft);
+}
+
+flt_perf_t *
+fms_flt_perf(fms_t *fms)
+{
+	return (fms->flt);
 }

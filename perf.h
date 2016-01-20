@@ -64,6 +64,7 @@ extern "C" {
 #define	ISA_SL_TEMP_C		15.0	/* Sea level temperature in degrees C */
 #define	ISA_SL_TEMP_K		288.15	/* Sea level temperature in Kelvin */
 #define	ISA_SL_PRESS		101325	/* Sea level pressure in Pa */
+#define	ISA_SL_DENS		1.225	/* Sea level density in kg/m^3 */
 #define	ISA_TLR_PER_1000FT	1.98	/* Temperature lapse rate per 1000ft */
 #define	ISA_TLR_PER_1M		0.0065	/* Temperature lapse rate per 1 meter */
 #define	ISA_SPEED_SOUND		340.3	/* Speed of sound at sea level */
@@ -75,16 +76,37 @@ typedef struct {
 } drag_coeff_t;
 
 typedef struct {
+	double	zfw;
+	double	fuel;
+	double	clb_ias;
+	double	clb_mach;
+	double	crz_ias;
+	double	crz_mach;
+	double	crz_lvl;
+	double	des_ias;
+	double	des_mach;
+	double	to_flap;
+	double	accel_height;
+	double	spd_lim;
+	double	spd_lim_alt;
+
+	double	thr_derate;
+} flt_perf_t;
+
+typedef struct {
 	char		*acft_type;
 
-	double		ref_zfw;
+	flt_perf_t	ref;	/* Reference performance values */
+
 	double		max_fuel;
 	double		max_gw;
 
 	char		*eng_type;
 
-	/* Base max thrust in Kilonewtons @ ISA conditions */
+	/* Base max thrust in Newtons @ ISA conditions */
 	double		eng_max_thr;
+	/* Base min thrust in Newtons @ ISA conditions */
+	double		eng_min_thr;
 	/*
 	 * eng_max_thr fraction as a function of air density (in kg/m^3).
 	 */
@@ -112,26 +134,12 @@ typedef struct {
 
 	bezier_t	*cl_curve;
 	bezier_t	*cl_flap_curve;
+	double		cl_max_aoa;
 	bezier_t	*cd_curve;
 	bezier_t	*cd_flap_curve;
+	double		cl_flap_max_aoa;
 	double		wing_area;
 } acft_perf_t;
-
-typedef struct {
-	double		crz_lvl;
-	double		crz_tas;
-	double		crz_mach;
-	double		thr_derate;	/* fraction of eng_max_thr */
-	double		crz_isadev;
-	double		to_flap;
-	double		accel_alt;
-
-	vect2_t		heading;
-	geo_pos3_t	position;
-
-	double		fuel;		/* Fuel load in kg */
-	double		zfw;		/* Gross Weight in kg */
-} flt_perf_t;
 
 /* Type of acceleration-climb */
 typedef enum {
@@ -143,15 +151,31 @@ typedef enum {
 acft_perf_t *acft_perf_parse(const char *filename);
 void acft_perf_destroy(acft_perf_t *perf);
 
+flt_perf_t *flt_perf_new(const acft_perf_t *acft);
+void flt_perf_destroy(flt_perf_t *flt);
+
 double eng_max_thr_avg(const flt_perf_t *flt, const acft_perf_t *acft,
     double alt1, double alt2, double ktas, double qnh, double isadev,
     double tp_alt);
 
 double accelclb2dist(const flt_perf_t *flt, const acft_perf_t *acft,
     double isadev, double qnh, double tp_alt, double fuel, vect2_t dir,
-    double alt1, double spd1, vect2_t wind1,
-    double alt2, double spd2, vect2_t wind2,
+    double alt1, double kcas1, vect2_t wind1,
+    double alt2, double kcas2, vect2_t wind2,
     double flap_ratio, double mach_lim, accelclb_t type, double *burnp);
+double dist2accelclb(const flt_perf_t *flt, const acft_perf_t *acft,
+    double isadev, double qnh, double tp_alt, double fuel, vect2_t dir,
+    double flap_ratio, double *alt, double *kcas, vect2_t wind,
+    double alt_tgt, double kcas_tgt, double mach_lim, double dist_tgt,
+    accelclb_t type, double *burnp);
+
+double dist2deceldes(const flt_perf_t *flt, const acft_perf_t *acft,
+    double isadev, double qnh, double tp_alt, double fuel, vect2_t dir,
+    double flap_ratio, double *alt, double *kcas, vect2_t wind,
+    double alt_tgt, double kcas_tgt, double mach_lim, double dist_tgt,
+    accelclb_t type, double *burnp);
+
+double perf_TO_spd(const flt_perf_t *flt, const acft_perf_t *acft);
 
 double acft_get_sfc(const acft_perf_t *acft, double thr, double dens,
     double isadev);

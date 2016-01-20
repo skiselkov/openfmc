@@ -299,7 +299,7 @@ test_fpp(void)
 	cairo_stroke(cr);
 
 	xlate_png_byteorder(img, IMGW, IMGH);
-	write_png_img("test.png", rows, IMGW, IMGH);
+	write_png_img("/tmp/test.png", rows, IMGW, IMGH);
 
 	cairo_destroy(cr);
 
@@ -394,7 +394,7 @@ test_lcc(double reflat, double stdpar1, double stdpar2)
 	}
 
 	xlate_png_byteorder(img, IMGW, IMGH);
-	write_png_img("test.png", rows, IMGW, IMGH);
+	write_png_img("/tmp/test.png", rows, IMGW, IMGH);
 
 	free(img);
 }
@@ -645,20 +645,25 @@ strtoupper(char *str)
 void
 test_route(char *navdata_dir)
 {
-	char		cmd[64];
-	route_t		*route = NULL;
-	fms_t		*fms;
-	fms_navdb_t	*navdb;
+	char			cmd[64];
+	route_t			*route = NULL;
+	fms_t			*fms;
+	fms_navdb_t		*navdb;
+	const acft_perf_t	*acft;
+	flt_perf_t		*flt;
 
-	fms = fms_new(navdata_dir, "WMM.COF");
+	fms = fms_new(navdata_dir, "doc/WMM.COF", "doc/perf_sample.csv");
 	if (!fms)
 		exit(EXIT_FAILURE);
 	navdb = fms->navdb;
+	acft = fms_acft_perf(fms);
+	flt = fms_flt_perf(fms);
 
 	route = route_create(navdb);
 
 	while (!feof(stdin)) {
 		err_t err = ERR_OK;
+		route_leg_t *err_rl = NULL;
 
 		if (scanf("%63s", cmd) != 1)
 			continue;
@@ -807,11 +812,13 @@ test_route(char *navdata_dir)
 			freelocale(loc);
 		}
 
+		if (err == ERR_OK)
+			err = route_update(route, acft, flt, &err_rl);
+
 		if (err != ERR_OK) {
 			fprintf(stderr, "%s\n", err2str(err));
 			continue;
 		}
-
 	}
 
 	route_destroy(route);
@@ -825,7 +832,7 @@ test_magvar_run(const int npos, const char **names, const double *expct_var,
 	wmm_t *wmm;
 
 	printf("year: %.2lf\n", year);
-	wmm = wmm_open("WMM.COF", year);
+	wmm = wmm_open("doc/WMM.COF", year);
 	ASSERT(wmm != NULL);
 
 	for (int i = 0; i < npos; i++) {
@@ -893,20 +900,21 @@ test_magvar(void)
 }
 
 void
-test_perf(void)
+test_perf(const char *navdata_dir)
 {
-	double		ktas = 500;
-	double		oat = -50;
-	double		alt = 35000;
-	double		qnh = 105000;
-	acft_perf_t	*acft;
-	flt_perf_t	flt;
+	double			ktas = 500;
+	double			oat = -50;
+	double			alt = 35000;
+	double			qnh = 105000;
+	const acft_perf_t	*acft;
+	flt_perf_t		*flt;
+	fms_t			*fms;
 
-	acft = acft_perf_parse("doc/perf_sample.csv");
-	if (acft == NULL)
+	fms = fms_new(navdata_dir, "doc/WMM.COF", "doc/perf_sample.csv");
+	if (fms == NULL)
 		exit(EXIT_FAILURE);
-	flt.thr_derate = 1.0;
-	flt.zfw = acft->ref_zfw;
+	acft = fms_acft_perf(fms);
+	flt = fms_flt_perf(fms);
 
 	printf("INPUTS:\n"
 	    "  KTAS:\t\t%6.0lf KT\n"
@@ -958,7 +966,7 @@ test_perf(void)
 #define	MACH_LIM	0.77
 
 	double alts[] = {
-		0,	1000,	2000,	10000,	34000
+		0,	1000,	2000,	10000,	35000
 	};
 	double spds[] = {
 		0,	165,	210,	250,	270
@@ -980,7 +988,7 @@ test_perf(void)
 	for (int i = 0; i + 1 < 5; i++) {
 		double dist_i, burn;
 
-		dist_i = accelclb2dist(&flt, acft, ISADEV, QNH, TP_ALT, fuel,
+		dist_i = accelclb2dist(flt, acft, ISADEV, QNH, TP_ALT, fuel,
 		    VECT2(1, 0), alts[i], spds[i], ZERO_VECT2, alts[i + 1],
 		    spds[i + 1], ZERO_VECT2, flaps[i], MACH_LIM, type[i],
 		    &burn);
@@ -991,7 +999,29 @@ test_perf(void)
 		    NM2MET(dist_i) / 1000, fuel, burn);
 	}
 
-	acft_perf_destroy(acft);
+	fuel = 45000;
+	double dists[] = { 10, 20, 25, 100 };
+	double alts2[] = { 0, 5000, 15000, 25000, 35000 };
+	double kcas2[] = { 0, 210, 290, 290, 290 };
+	accelclb_t types[] = {
+		ACCEL_TAKEOFF, ACCEL_THEN_CLB, ACCEL_THEN_CLB, ACCEL_THEN_CLB
+	};
+	dist = 0;
+	for (int i = 0; i < 4; i++) {
+		double dist_i = 0, burn = 0;
+
+		dist_i = dist2accelclb(flt, acft, ISADEV, QNH, TP_ALT, fuel,
+		    VECT2(1, 0), i == 0 ? flt->to_flap : 0, &alts2[i],
+		    &kcas2[i], ZERO_VECT2, alts2[i + 1], kcas2[i + 1], 0.77,
+		    dists[i], types[i], &burn);
+		dist += dist_i;
+		printf("s: %.2lf km  s_i: %.2lf km\n", NM2MET(dist) / 1000,
+		    NM2MET(dist_i) / 1000);
+		alts2[i + 1] = alts2[i];
+		kcas2[i + 1] = kcas2[i];
+	}
+
+	fms_destroy(fms);
 }
 
 void
@@ -1442,7 +1472,7 @@ main(int argc, char **argv)
 //	test_sph_xlate();
 //	test_route(argv[optind]);
 //	test_magvar();
-	test_perf();
+	test_perf(argv[optind]);
 //	test_math();
 //	test_route_seg();
 

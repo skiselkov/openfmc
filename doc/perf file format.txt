@@ -8,15 +8,44 @@ ACFTTYPE,<acftname>
 
 ENGTYPE,<engtype>
 
-# Maximum engine thrust in Newtons
+# Maximum engine thrust in Newtons @ ISA conditions
 MAXTHR,123500
 
-# Reference zero fuel weight. This is not the same as operating empty weight
-# It's only an estimate of a typical zero fuel weight (i.e. OEW + payload)
-# of the aircraft on a typical mission. This is used in place of actual ZFW
-# when ZFW is unavailable and the FMC needs to do performance calculations
-# which depends on it. In kg.
-REFZFW,42500
+# Minimum engine thrust in Newtons @ ISA conditions
+MINTHR,1000
+
+# The reference values below are used in route calculations when actual
+# performance is not yet available. They should represent the aircraft on
+# a representative mission to estimate typical flight behavior. Once real
+# flight performance data is entered, the route is recomputed using the
+# real flight performance data.
+
+# Reference zero fuel weight in kg.
+REFZFW,32500
+# Reference fuel load in kg.
+REFFUEL,50000
+# Reference climb indicated airspeed in knots.
+REFCLBIAS,290
+# Reference climb mach number.
+REFCLBMACH,0.84
+# Reference cruise level in feet.
+REFCRZLVL,35000
+# Reference cruise indicated airspeed in knots.
+REFCRZIAS,400
+# Reference cruise mach number.
+REFCRZMACH,0.84
+# Reference descent indicated airspeed in knots.
+REFDESIAS,275
+# Reference descent mach number.
+REFDESMACH,0.77
+# Reference takeoff flap setting.
+REFTOFLAP,0.15
+# Reference acceleration height in feet.
+REFACCELHT,1000
+# Reference speed limitation in knots below the limit altitude.
+REFSPDLIM,250
+# Reference altitude in feet below which the speed limitation is applied.
+REFSPDLIMALT,10000
 
 # Maximum allowable fuel load in kg.
 MAXFUEL,30000
@@ -77,6 +106,10 @@ CL,<numentries>
 <AoA>,<Cl_value>
 ... <numentries> many lines ...
 
+# Angle of attack at which maximum coefficient of lift is attained with zero
+# flap setting.
+CLMAX,<aoa>
+
 # Coefficient of lift at maximum extended flaps. The actual aircraft Cl is
 # assumed to vary linearly between CL and CLFLAP when flaps are at an
 # intermediate setting.
@@ -85,6 +118,9 @@ CLFLAP,<numentries>
 <AoA>,<Cl_value>
 <AoA>,<Cl_value>
 ... <numentries> many lines ...
+
+# Same as CLMAX, but with maximum flap setting.
+CLFLAPMAX,<aoa>
 
 # Defines the coefficient of drag as a function of angle of attack (in
 # degrees). This is then used to calculate the drag force the aircraft will

@@ -47,8 +47,9 @@ quadratic_solve(double a, double b, double c, double x[2])
 
 	tmp = POW2(b) - 4 * a * c;
 	if (tmp > ROUND_ERROR) {
-		x[0] = (-b + sqrt(tmp)) / (2 * a);
-		x[1] = (-b - sqrt(tmp)) / (2 * a);
+		double tmp_sqrt = sqrt(tmp);
+		x[0] = (-b + tmp_sqrt) / (2 * a);
+		x[1] = (-b - tmp_sqrt) / (2 * a);
 		return (2);
 	} else if (tmp > -ROUND_ERROR) {
 		x[0] = -b / (2 * a);

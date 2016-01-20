@@ -29,6 +29,7 @@
 #include <regex.h>
 
 #include "airac.h"
+#include "perf.h"
 #include "wmm.h"
 
 typedef enum {
@@ -86,9 +87,13 @@ typedef struct {
 
 		regex_t	*along_trk;		/* VAMPS/25, ELN/-30 */
 	} regex;
+
+	acft_perf_t	*acft;
+	flt_perf_t	*flt;
 } fms_t;
 
-fms_t *fms_new(const char *navdata_dir, const char *wmm_file);
+fms_t *fms_new(const char *navdata_dir, const char *wmm_file,
+    const char *acft_perf_file);
 void fms_destroy(fms_t *fms);
 
 fms_navdb_t *fms_navdb_open(const char *navdata_dir, const char *wmm_file);
@@ -99,5 +104,8 @@ bool_t navdata_is_current(const char *navdata_dir);
 
 wpt_t *fms_wpt_name_decode(const char *name, fms_t *fms, size_t *num,
     bool_t *is_wpt_seq);
+
+const acft_perf_t *fms_acft_perf(const fms_t *fms);
+flt_perf_t *fms_flt_perf(fms_t *fms);
 
 #endif	/* _OPENFMC_FMS_H_ */

@@ -1351,7 +1351,7 @@ bezier_free(bezier_t *curve)
  * curve segments.
  *
  * @param x Function input value.
- * @param func The set of quadratic bezier curve defining the function.
+ * @param func The set of quadratic bezier curves defining the function.
  *	Please note that since this is a function, curve segments may
  *	not overlap. This is to guarantee that at any point 'x' the
  *	function resolves to one value.
