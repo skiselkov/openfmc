@@ -244,6 +244,6 @@ void route_l_set_spd_lim(route_t *route, const route_leg_t *x_rl, spd_lim_t l);
 spd_lim_t route_l_get_spd_lim(const route_leg_t *rl);
 
 route_seg_t *route_seg_join(list_t *seglist, route_seg_t *rs1,
-    route_seg_t *rs2, double wpt_rnp, double spd);
+    route_seg_t *rs2, double wpt_rnp, double spd, double turn_rate);
 
 #endif	/* _OPENFMC_ROUTE_H_ */

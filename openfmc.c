@@ -1172,6 +1172,7 @@ test_math(void)
 #define	CW1		B_TRUE
 #define	CW2		B_TRUE
 #define	RNP		NM2MET(.3)
+#define	STD_TURN_RATE	3
 
 #define	PROJLAT_OFF	0.06
 #define	PROJLON_OFF	0
@@ -1359,7 +1360,8 @@ test_route_seg(void)
 	    rs = list_next(&seglist, rs)) {
 		route_seg_t *rs_next = list_next(&seglist, rs);
 		if (rs_next != NULL)
-			rs = route_seg_join(&seglist, rs, rs_next, RNP, SPD1);
+			rs = route_seg_join(&seglist, rs, rs_next, RNP, SPD1,
+			    STD_TURN_RATE);
 	}
 
 #if	DRAW_ROUTE

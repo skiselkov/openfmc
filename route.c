@@ -38,7 +38,8 @@
 #define	SAME_DIR(a, b)	((a).x * (b).x >= 0 && (a).y * (b).y >= 0)
 
 #define	ARC_JOIN_THR		1
-#define	STD_RATE_TURN		3
+#define	STD_RATE1_TURN		3
+#define	STD_RATE2_TURN		1.5
 #define	STD_INCTP_ANGLE		30
 #define	INTCP_SRCH_DIST		1e9
 
@@ -1681,7 +1682,7 @@ next_join_type(const route_t *route, const route_leg_t *rl)
 }
 
 static geo_pos2_t
-route_do_turn(route_t *route, route_leg_t *rl, double spd,
+route_do_turn(route_t *route, route_leg_t *rl, double spd, double turn_rate,
     geo_pos2_t cur_pos, double cur_hdg, double next_hdg, double rnp,
     double *turn_len)
 {
@@ -1717,7 +1718,7 @@ route_do_turn(route_t *route, route_leg_t *rl, double spd,
 			*turn_len = 0;
 		return (cur_pos);
 	}
-	r = calc_arc_radius(spd, STD_RATE_TURN);
+	r = calc_arc_radius(spd, turn_rate);
 	cw = (turn == TURN_RIGHT);
 	center = geo_displace_mag(&wgs84, route->navdb->wmm, cur_pos,
 	    cur_hdg + (cw ? 90 : -90), r);
@@ -1728,7 +1729,7 @@ route_do_turn(route_t *route, route_leg_t *rl, double spd,
 	list_insert_tail(&route->segs, rs);
 	rs_prev = list_prev(&route->segs, rs);
 	if (rs_prev != NULL)
-		route_seg_join(&route->segs, rs_prev, rs, rnp, spd);
+		route_seg_join(&route->segs, rs_prev, rs, rnp, spd, turn_rate);
 
 	if (turn_len != NULL) {
 		double arc_angle;
@@ -1744,7 +1745,7 @@ route_do_turn(route_t *route, route_leg_t *rl, double spd,
 
 static void
 dir_connect(geo_pos2_t start, geo_pos2_t end, double rnp, double spd,
-    route_t *route, route_seg_join_type_t join_type)
+    double turn_rate, route_t *route, route_seg_join_type_t join_type)
 {
 	route_seg_t *rs, *rs_prev;
 
@@ -1752,12 +1753,12 @@ dir_connect(geo_pos2_t start, geo_pos2_t end, double rnp, double spd,
 	list_insert_tail(&route->segs, rs);
 	rs_prev = list_prev(&route->segs, rs);
 	if (rs_prev != NULL)
-		route_seg_join(&route->segs, rs_prev, rs, rnp, spd);
+		route_seg_join(&route->segs, rs_prev, rs, rnp, spd, turn_rate);
 }
 
 static void
 route_update_AF(route_t *route, route_leg_t *rl, geo_pos2_t *cur_pos,
-    double *hdgp, double rnp, double spd)
+    double *hdgp, double rnp, double spd, double turn_rate)
 {
 	geo_pos2_t start_pos, end_pos;
 	route_seg_t *rs;
@@ -1771,7 +1772,7 @@ route_update_AF(route_t *route, route_leg_t *rl, geo_pos2_t *cur_pos,
 	    rl->seg.leg_cmd.dme_arc.end_radial,
 	    NM2MET(rl->seg.leg_cmd.dme_arc.radius));
 	if (gc_distance(*cur_pos, start_pos) > ARC_START_THRESH) {
-		dir_connect(*cur_pos, start_pos, rnp, spd, route,
+		dir_connect(*cur_pos, start_pos, rnp, spd, turn_rate, route,
 		    ROUTE_SEG_JOIN_TRACK);
 		*cur_pos = start_pos;
 	}
@@ -1786,7 +1787,7 @@ route_update_AF(route_t *route, route_leg_t *rl, geo_pos2_t *cur_pos,
 
 static bool_t
 route_update_RF(route_t *route, route_leg_t *rl, geo_pos2_t *cur_pos,
-    double *hdgp, double rnp, double spd)
+    double *hdgp, double rnp, double spd, double turn_rate)
 {
 	route_seg_t *rs, next_rs;
 	fpp_t fpp;
@@ -1818,7 +1819,7 @@ route_update_RF(route_t *route, route_leg_t *rl, geo_pos2_t *cur_pos,
 	end_pos = fpp2geo(e, &fpp);
 
 	if (vect2_abs(vect2_sub(s, p)) > ARC_START_THRESH) {
-		dir_connect(*cur_pos, start_pos, rnp, spd, route,
+		dir_connect(*cur_pos, start_pos, rnp, spd, turn_rate, route,
 		    ROUTE_SEG_JOIN_TRACK);
 		*cur_pos = start_pos;
 	}
@@ -1831,7 +1832,7 @@ route_update_RF(route_t *route, route_leg_t *rl, geo_pos2_t *cur_pos,
 	    c), seg->leg_cmd.radius_arc.cw)), GEO2_TO_GEO3(*cur_pos, 0));
 
 	if (connect_out) {
-		dir_connect(end_pos, out_pos, rnp, spd, route,
+		dir_connect(end_pos, out_pos, rnp, spd, turn_rate, route,
 		    next_join_type(route, rl));
 		*cur_pos = out_pos;
 		*hdgp = wmm_true2mag(route->navdb->wmm, gc_point_hdg(end_pos,
@@ -1847,7 +1848,7 @@ route_update_CA_FA_VA(const acft_perf_t *acft, const flt_perf_t *flt,
     route_t *route, route_leg_t *rl, flt_phase_t phase,
     accelclb_t clbtype, double fuel, double flap, double rnp,
     geo_pos2_t *cur_pos, double *cur_alt, double *cur_hdg, double cur_spd,
-    double next_spd, vect2_t next_wind, bool_t is_FA)
+    double next_spd, double turn_rate, vect2_t next_wind, bool_t is_FA)
 {
 	double burn, dist, turn_len;
 	geo_pos2_t next_pos;
@@ -1866,7 +1867,7 @@ route_update_CA_FA_VA(const acft_perf_t *acft, const flt_perf_t *flt,
 	if (is_FA && gc_distance(*cur_pos, seg->leg_cmd.fix_crs.fix.pos) >
 	    ARC_START_THRESH) {
 		dir_connect(*cur_pos, seg->leg_cmd.fix_crs.fix.pos, rnp,
-		    cur_spd, route, ROUTE_SEG_JOIN_TRACK);
+		    cur_spd, turn_rate, route, ROUTE_SEG_JOIN_TRACK);
 		*cur_pos = seg->leg_cmd.fix_crs.fix.pos;
 	}
 
@@ -1878,8 +1879,8 @@ route_update_CA_FA_VA(const acft_perf_t *acft, const flt_perf_t *flt,
 		return (ERR_UNABLE_NEXT_ALT);
 
 	if (!is_FA) {
-		*cur_pos = route_do_turn(route, rl, cur_spd, *cur_pos,
-		    *cur_hdg, seg->leg_cmd.hdg.hdg, rnp, &turn_len);
+		*cur_pos = route_do_turn(route, rl, cur_spd, turn_rate,
+		    *cur_pos, *cur_hdg, seg->leg_cmd.hdg.hdg, rnp, &turn_len);
 	} else {
 		turn_len = 0;
 	}
@@ -1900,7 +1901,8 @@ route_update_CA_FA_VA(const acft_perf_t *acft, const flt_perf_t *flt,
 
 static bool_t
 route_update_CD_FD_VD(route_t *route, route_leg_t *rl, double rnp,
-    geo_pos2_t *cur_pos, double *cur_hdg, double cur_spd, bool_t is_FD)
+    geo_pos2_t *cur_pos, double *cur_hdg, double cur_spd, double turn_rate,
+    bool_t is_FD)
 {
 	geo_pos2_t new_pos;
 	const navproc_seg_t *seg = &rl->seg;
@@ -1910,12 +1912,12 @@ route_update_CD_FD_VD(route_t *route, route_leg_t *rl, double rnp,
 	    seg->type == NAVPROC_SEG_TYPE_FIX_TO_DME ||
 	    seg->type == NAVPROC_SEG_TYPE_HDG_TO_DME);
 	if (!is_FD) {
-		*cur_pos = route_do_turn(route, rl, cur_spd, *cur_pos,
-		    *cur_hdg, hdg, rnp, NULL);
+		*cur_pos = route_do_turn(route, rl, cur_spd, turn_rate,
+		    *cur_pos, *cur_hdg, hdg, rnp, NULL);
 	} else if (is_FD && gc_distance(*cur_pos,
 	    seg->leg_cmd.fix_crs.fix.pos) > ARC_START_THRESH) {
 		dir_connect(*cur_pos, seg->leg_cmd.fix_crs.fix.pos, rnp,
-		    cur_spd, route, ROUTE_SEG_JOIN_TRACK);
+		    cur_spd, turn_rate, route, ROUTE_SEG_JOIN_TRACK);
 		*cur_pos = seg->leg_cmd.fix_crs.fix.pos;
 	}
 
@@ -1924,7 +1926,7 @@ route_update_CD_FD_VD(route_t *route, route_leg_t *rl, double rnp,
 	    route->navdb->wmm);
 	if (IS_NULL_GEO_POS(new_pos))
 		return (B_FALSE);
-	dir_connect(*cur_pos, new_pos, rnp, cur_spd, route,
+	dir_connect(*cur_pos, new_pos, rnp, cur_spd, turn_rate, route,
 	    next_join_type(route, rl));
 	*cur_pos = new_pos;
 	*cur_hdg = hdg;
@@ -1934,7 +1936,7 @@ route_update_CD_FD_VD(route_t *route, route_leg_t *rl, double rnp,
 
 static void
 route_update_hold(route_t *route, route_leg_t *rl, double rnp,
-    geo_pos2_t *cur_pos, double cur_spd, double next_spd)
+    geo_pos2_t *cur_pos, double cur_spd, double next_spd, double turn_rate)
 {
 	geo_pos2_t start, center, end;
 	double r;
@@ -1945,11 +1947,11 @@ route_update_hold(route_t *route, route_leg_t *rl, double rnp,
 	    seg->type == NAVPROC_SEG_TYPE_HOLD_TO_FIX ||
 	    seg->type == NAVPROC_SEG_TYPE_HOLD_TO_MANUAL);
 	if (gc_distance(*cur_pos, start) > ARC_START_THRESH) {
-		dir_connect(*cur_pos, start, rnp, cur_spd, route,
+		dir_connect(*cur_pos, start, rnp, cur_spd, turn_rate, route,
 		    ROUTE_SEG_JOIN_TRACK);
 		*cur_pos = start;
 	}
-	r = calc_arc_radius(next_spd, STD_RATE_TURN);
+	r = calc_arc_radius(next_spd, turn_rate);
 
 	/* Initial turn onto the outbound course */
 	start = seg->leg_cmd.hold.wpt.pos;
@@ -1967,7 +1969,8 @@ route_update_hold(route_t *route, route_leg_t *rl, double rnp,
 	start = end;
 	end = geo_displace_mag(&wgs84, route->navdb->wmm, start,
 	    seg->leg_cmd.hold.inbd_crs + 180, seg->leg_cmd.hold.leg_len);
-	dir_connect(start, end, rnp, next_spd, route, ROUTE_SEG_JOIN_SIMPLE);
+	dir_connect(start, end, rnp, next_spd, turn_rate, route,
+	    ROUTE_SEG_JOIN_SIMPLE);
 
 	/* Turn back inbound */
 	start = end;
@@ -1983,13 +1986,13 @@ route_update_hold(route_t *route, route_leg_t *rl, double rnp,
 
 	/* Track back inbound to the hold fix */
 	start = end;
-	dir_connect(start, *cur_pos, rnp, next_spd, route,
+	dir_connect(start, *cur_pos, rnp, next_spd, turn_rate, route,
 	    ROUTE_SEG_JOIN_SIMPLE);
 }
 
 static bool_t
 route_update_proc_turn(route_t *route, route_leg_t *rl, geo_pos2_t *cur_pos,
-    double next_spd, double rnp)
+    double next_spd, double rnp, double turn_rate)
 {
 	const navproc_seg_t *seg = &rl->seg;
 	geo_pos2_t start = seg->leg_cmd.proc_turn.startpt.pos;
@@ -2001,13 +2004,13 @@ route_update_proc_turn(route_t *route, route_leg_t *rl, geo_pos2_t *cur_pos,
 	route_leg_t *next_rl;
 
 	if (gc_distance(*cur_pos, start) > ARC_START_THRESH) {
-		dir_connect(*cur_pos, start, rnp, next_spd, route,
+		dir_connect(*cur_pos, start, rnp, next_spd, turn_rate, route,
 		    ROUTE_SEG_JOIN_TRACK);
 		*cur_pos = start;
 	}
 
 	b = NM2MET(next_spd / 60);
-	r = calc_arc_radius(next_spd, STD_RATE_TURN);
+	r = calc_arc_radius(next_spd, turn_rate);
 	outbd_turn_dir = hdg2dir(seg->leg_cmd.proc_turn.outbd_turn_hdg);
 	p2 = vect2_set_abs(outbd_turn_dir, b);
 	dr = vect2_set_abs(vect2_norm(outbd_turn_dir,
@@ -2042,11 +2045,13 @@ route_update_proc_turn(route_t *route, route_leg_t *rl, geo_pos2_t *cur_pos,
 	if (IS_NULL_GEO_POS(p4_pos))
 		return (B_FALSE);
 
-	dir_connect(start, p2_pos, rnp, next_spd, route, ROUTE_SEG_JOIN_SIMPLE);
+	dir_connect(start, p2_pos, rnp, next_spd, turn_rate, route,
+	    ROUTE_SEG_JOIN_SIMPLE);
 	rs = rs_new_arc(p2_pos, p3_pos, c_pos,
 	    !seg->leg_cmd.proc_turn.turn_right, ROUTE_SEG_JOIN_SIMPLE);
 	list_insert_tail(&route->segs, rs);
-	dir_connect(p3_pos, p4_pos, rnp, next_spd, route, ROUTE_SEG_JOIN_TRACK);
+	dir_connect(p3_pos, p4_pos, rnp, next_spd, turn_rate, route,
+	    ROUTE_SEG_JOIN_TRACK);
 	*cur_pos = p4_pos;
 
 	return (B_TRUE);
@@ -2089,6 +2094,7 @@ route_update(route_t *route, const acft_perf_t *acft, const flt_perf_t *flt,
 		vect2_t			next_wind;
 		accelclb_t		clbtype = ACCEL_THEN_CLB;
 		const navproc_seg_t	*seg = &rl->seg;
+		double			turn_rate = 3;
 
 		rl_next = list_next(&route->legs, rl);
 		next_wind = (rl_next != NULL ? rl_next->wind : rl->wind);
@@ -2158,11 +2164,11 @@ route_update(route_t *route, const acft_perf_t *acft, const flt_perf_t *flt,
 		switch (seg->type) {
 		case NAVPROC_SEG_TYPE_ARC_TO_FIX:
 			route_update_AF(route, rl, &cur_pos, &cur_hdg, rnp,
-			    cur_spd);
+			    cur_spd, turn_rate);
 			break;
 		case NAVPROC_SEG_TYPE_RADIUS_ARC_TO_FIX:
 			if (!route_update_RF(route, rl, &cur_pos, &cur_hdg,
-			    rnp, next_spd)) {
+			    rnp, next_spd, turn_rate)) {
 				cur_pos = NULL_GEO_POS2;
 				continue;
 			}
@@ -2172,8 +2178,9 @@ route_update(route_t *route, const acft_perf_t *acft, const flt_perf_t *flt,
 		case NAVPROC_SEG_TYPE_FIX_TO_ALT: {
 			err_t err2 = route_update_CA_FA_VA(acft, flt, route,
 			    rl, phase, clbtype, fuel, flap, rnp, &cur_pos,
-			    &cur_alt, &cur_hdg, cur_spd, next_spd, next_wind,
-			    seg->type == NAVPROC_SEG_TYPE_FIX_TO_ALT);
+			    &cur_alt, &cur_hdg, cur_spd, next_spd, turn_rate,
+			    next_wind, seg->type ==
+			    NAVPROC_SEG_TYPE_FIX_TO_ALT);
 			if (err2 != ERR_OK) {
 				err = err2;
 				*err_rl = rl;
@@ -2185,7 +2192,7 @@ route_update(route_t *route, const acft_perf_t *acft, const flt_perf_t *flt,
 		case NAVPROC_SEG_TYPE_HDG_TO_DME:
 		case NAVPROC_SEG_TYPE_FIX_TO_DME:
 			if (!route_update_CD_FD_VD(route, rl, rnp, &cur_pos,
-			    &cur_hdg, cur_spd,
+			    &cur_hdg, cur_spd, turn_rate,
 			    seg->type == NAVPROC_SEG_TYPE_FIX_TO_DME)) {
 				cur_pos = NULL_GEO_POS2;
 				continue;
@@ -2206,8 +2213,8 @@ route_update(route_t *route, const acft_perf_t *acft, const flt_perf_t *flt,
 		case NAVPROC_SEG_TYPE_HDG_TO_INTCP: {
 			geo_pos2_t new_pos;
 
-			cur_pos = route_do_turn(route, rl, cur_spd, cur_pos,
-			    cur_hdg, seg->leg_cmd.hdg.hdg, rnp, NULL);
+			cur_pos = route_do_turn(route, rl, cur_spd, turn_rate,
+			    cur_pos, cur_hdg, seg->leg_cmd.hdg.hdg, rnp, NULL);
 			cur_hdg = seg->leg_cmd.hdg.hdg;
 			new_pos = calc_vect_leg_intc(cur_pos, rl,
 			    &route->legs, route->navdb->wmm);
@@ -2225,8 +2232,8 @@ route_update(route_t *route, const acft_perf_t *acft, const flt_perf_t *flt,
 		case NAVPROC_SEG_TYPE_HDG_TO_RADIAL: {
 			geo_pos2_t new_pos;
 
-			cur_pos = route_do_turn(route, rl, cur_spd, cur_pos,
-			    cur_hdg, seg->leg_cmd.hdg.hdg, rnp, NULL);
+			cur_pos = route_do_turn(route, rl, cur_spd, turn_rate,
+			    cur_pos, cur_hdg, seg->leg_cmd.hdg.hdg, rnp, NULL);
 			cur_hdg = seg->leg_cmd.hdg.hdg;
 			new_pos = calc_radial_leg_intc(cur_pos, rl,
 			    &route->legs, route->navdb->wmm);
@@ -2273,7 +2280,7 @@ route_update(route_t *route, const acft_perf_t *acft, const flt_perf_t *flt,
 		case NAVPROC_SEG_TYPE_HOLD_TO_FIX:
 		case NAVPROC_SEG_TYPE_HOLD_TO_MANUAL:
 			route_update_hold(route, rl, rnp, &cur_pos, cur_spd,
-			    next_spd);
+			    turn_rate, next_spd);
 			break;
 		case NAVPROC_SEG_TYPE_INIT_FIX:
 			if (IS_NULL_GEO_POS(cur_pos))
@@ -2282,7 +2289,7 @@ route_update(route_t *route, const acft_perf_t *acft, const flt_perf_t *flt,
 			break;
 		case NAVPROC_SEG_TYPE_PROC_TURN:
 			if (!route_update_proc_turn(route, rl, &cur_pos,
-			    next_spd, rnp)) {
+			    next_spd, turn_rate, rnp)) {
 				cur_pos = NULL_GEO_POS2;
 				continue;
 			}
@@ -2293,7 +2300,8 @@ route_update(route_t *route, const acft_perf_t *acft, const flt_perf_t *flt,
 
 		if ((rs = list_tail(&route->segs)) != NULL &&
 		    (rs_prev = list_prev(&route->segs, rs)) != NULL)
-			route_seg_join(&route->segs, rs_prev, rs, rnp, cur_spd);
+			route_seg_join(&route->segs, rs_prev, rs, rnp, cur_spd,
+			    turn_rate);
 
 		cur_spd = next_spd;
 		cur_alt = next_alt;
@@ -4666,7 +4674,7 @@ errout:
  */
 route_seg_t *
 route_seg_join(list_t *seglist, route_seg_t *rs1, route_seg_t *rs2,
-    double wpt_rnp, double spd)
+    double wpt_rnp, double spd, double turn_rate)
 {
 	double		r;
 
@@ -4674,7 +4682,7 @@ route_seg_join(list_t *seglist, route_seg_t *rs1, route_seg_t *rs2,
 
 	if (rs1->join_type == ROUTE_SEG_JOIN_SIMPLE)
 		return (rs1);
-	r = calc_arc_radius(spd, STD_RATE_TURN);
+	r = calc_arc_radius(spd, turn_rate);
 
 	if (rs2->type == ROUTE_SEG_TYPE_DIRECT) {
 		return (rs_join_dir(seglist, rs1, rs2, r, wpt_rnp,

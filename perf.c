@@ -932,6 +932,16 @@ dist2accelclb(const flt_perf_t *flt, const acft_perf_t *acft,
 	return (dist);
 }
 
+/* TODO:
+double
+dist2deceldes(const flt_perf_t *flt, const acft_perf_t *acft, double isadev,
+    double qnh, double tp_alt, double fuel, vect2_t dir, double flap_ratio,
+    double *alt, double *kcas, vect2_t wind, double alt_tgt, double kcas_tgt,
+    double mach_lim, double dist_tgt, accelclb_t type, double *burnp)
+{
+}
+*/
+
 double
 perf_TO_spd(const flt_perf_t *flt, const acft_perf_t *acft)
 {
