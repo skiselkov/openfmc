@@ -1463,20 +1463,51 @@ main(int argc, char **argv)
 	UNUSED(argc);
 	UNUSED(argv);
 
-	if (argc - optind != 1) {
+#ifdef	TEST_AIRAC
+	char *dump = "", *airac_dir = NULL;
+	int c;
+	while ((c = getopt(argc, argv, "a:d:")) != -1) {
+		switch (c) {
+		case 'a':
+			airac_dir = optarg;
+			break;
+		case 'd':
+			dump = optarg;
+			break;
+		default:
+			return 1;
+		}
+	}
+	if (airac_dir == NULL) {
 		fprintf(stderr, "Missing navdata_dir argument\n");
 		return (1);
 	}
-
-//	test_airac(argv[optind], dump);
-//	test_lcc(40, 30, 50);
-//	test_fpp();
-//	test_sph_xlate();
-//	test_route(argv[optind]);
-//	test_magvar();
+	test_airac(airac_dir, dump);
+#endif
+#ifdef	TEST_LCC
+	test_lcc(40, 30, 50);
+#endif
+#ifdef	TEST_FPP
+	test_fpp();
+#endif
+#ifdef	TEST_SPH_XLATE
+	test_sph_xlate();
+#endif
+#ifdef	TEST_ROUTE
+	test_route(argv[optind]);
+#endif
+#ifdef	TEST_MAGVAR
+	test_magvar();
+#endif
+#ifdef	TEST_PERF
 	test_perf(argv[optind]);
-//	test_math();
-//	test_route_seg();
+#endif
+#ifdef	TEST_MATH
+	test_math();
+#endif
+#ifdef	TEST_ROUTE_SEG
+	test_route_seg();
+#endif
 
 	return (0);
 }

@@ -1078,8 +1078,9 @@ parse_arpt_line(const char *line, airport_t *arpt)
 	arpt->true_hdg = !!atoi(comps[9]);
 	if (!is_valid_alt(arpt->TA) || !is_valid_alt(arpt->TL) ||
 	    arpt->longest_rwy == 0 || arpt->longest_rwy > MAX_RWY_LEN) {
-		openfmc_log(OPENFMC_LOG_ERR, "Error parsing initial airport "
-		    "line: TA, TL or longest runway parameters invalid.");
+		openfmc_log(OPENFMC_LOG_ERR, "Error parsing airport %s initial "
+		    "line: TA, TL or longest runway parameters invalid.",
+		    arpt->icao);
 		goto errout;
 	}
 
@@ -1099,14 +1100,14 @@ parse_rwy_line(const char *line, runway_t *rwy, airport_t *arpt)
 	STRLCPY_CHECK_ERROUT(line_copy, line);
 	if (explode_line(line_copy, ',', comps, 15) != 15 ||
 	    strcmp(comps[0], "R") != 0) {
-		openfmc_log(OPENFMC_LOG_ERR, "Error parsing runway line: "
-		    "runway doesn't start with 'R'.");
+		openfmc_log(OPENFMC_LOG_ERR, "Error parsing %s runway line: "
+		    "runway doesn't start with 'R'.", arpt->icao);
 		goto errout;
 	}
 
 	if (!is_valid_rwy_ID(comps[1])) {
-		openfmc_log(OPENFMC_LOG_ERR, "Error parsing runway line: "
-		    "runway ID \"%s\" invalid.", comps[1]);
+		openfmc_log(OPENFMC_LOG_ERR, "Error parsing %s runway line: "
+		    "runway ID \"%s\" invalid.", arpt->icao, comps[1]);
 		goto errout;
 	}
 	(void) strcpy(rwy->ID, comps[1]);
@@ -1132,14 +1133,15 @@ parse_rwy_line(const char *line, runway_t *rwy, airport_t *arpt)
 	    !geo_pos3_from_str(comps[8], comps[9], comps[10],
 	    &rwy->thr_pos) ||
 	    rwy->gp_angle < 0.0 || rwy->gp_angle > GP_MAX_ANGLE) {
-		openfmc_log(OPENFMC_LOG_ERR, "Error parsing runway line: "
-		    "invalid parameters found.");
+		openfmc_log(OPENFMC_LOG_ERR, "Error parsing %s runway line: "
+		    "invalid parameters found.", arpt->icao);
 		goto errout;
 	}
 
 	return (B_TRUE);
 errout:
-	openfmc_log(OPENFMC_LOG_ERR, "Error parsing runway line \"%s\".", line);
+	openfmc_log(OPENFMC_LOG_ERR, "Error %s parsing runway line \"%s\".",
+	    arpt->icao, line);
 	return (B_FALSE);
 }
 
@@ -1148,8 +1150,8 @@ parse_sid_proc_line(const airport_t *arpt, char **comps, size_t num_comps,
     navproc_t *proc)
 {
 	if (num_comps != 4) {
-		openfmc_log(OPENFMC_LOG_ERR, "Error parsing SID line: "
-		    "incorrect number of columns.");
+		openfmc_log(OPENFMC_LOG_ERR, "Error parsing %s SID line: "
+		    "incorrect number of columns.", arpt->icao);
 		return (B_FALSE);
 	}
 	STRLCPY_CHECK_ERROUT(proc->name, comps[1]);
@@ -1157,9 +1159,9 @@ parse_sid_proc_line(const airport_t *arpt, char **comps, size_t num_comps,
 		proc->type = NAVPROC_TYPE_SID;
 		proc->rwy = airport_find_rwy_by_ID(arpt, comps[2]);
 		if (proc->rwy == NULL) {
-			openfmc_log(OPENFMC_LOG_ERR, "Error parsing SID line: "
+			openfmc_log(OPENFMC_LOG_ERR, "Error parsing %s/%s SID: "
 			    "runway \"%s\" not found in parent airport.",
-			    comps[2]);
+			    arpt->icao, proc->name, comps[2]);
 			return (B_FALSE);
 		}
 	} else if (strcmp(comps[2], "ALL") == 0) {
@@ -1178,8 +1180,8 @@ parse_star_proc_line(const airport_t *arpt, char **comps, size_t num_comps,
     navproc_t *proc)
 {
 	if (num_comps != 4) {
-		openfmc_log(OPENFMC_LOG_ERR, "Error parsing STAR line: "
-		    "incorrect number of columns.");
+		openfmc_log(OPENFMC_LOG_ERR, "Error parsing %s STAR line: "
+		    "incorrect number of columns.", arpt->icao);
 		return (B_FALSE);
 	}
 	STRLCPY_CHECK_ERROUT(proc->name, comps[1]);
@@ -1187,9 +1189,9 @@ parse_star_proc_line(const airport_t *arpt, char **comps, size_t num_comps,
 		proc->type = NAVPROC_TYPE_STAR;
 		proc->rwy = airport_find_rwy_by_ID(arpt, comps[2]);
 		if (proc->rwy == NULL) {
-			openfmc_log(OPENFMC_LOG_ERR, "Error parsing STAR line: "
-			    "runway \"%s\" not found in parent airport.",
-			    comps[2]);
+			openfmc_log(OPENFMC_LOG_ERR, "Error parsing %s/%s "
+			    "STAR: runway \"%s\" not found in parent airport.",
+			    arpt->icao, proc->name, comps[2]);
 			return (B_FALSE);
 		}
 	} else if (strcmp(comps[2], "ALL") == 0) {
@@ -1208,17 +1210,17 @@ parse_apptr_proc_line(const airport_t *arpt, char **comps, size_t num_comps,
     navproc_t *proc)
 {
 	if (num_comps != 4) {
-		openfmc_log(OPENFMC_LOG_ERR, "Error parsing APPTR line: "
-		    "incorrect number of columns.");
+		openfmc_log(OPENFMC_LOG_ERR, "Error parsing %s APPTR line: "
+		    "incorrect number of columns.", arpt->icao);
 		return (B_FALSE);
 	}
 	proc->type = NAVPROC_TYPE_FINAL_TRANS;
 	STRLCPY_CHECK_ERROUT(proc->name, comps[1]);
 	proc->rwy = airport_find_rwy_by_ID(arpt, comps[2]);
 	if (proc->rwy == NULL) {
-		openfmc_log(OPENFMC_LOG_ERR, "Error parsing APPTR line: "
-		    "runway \"%s\" not found in parent airport.",
-		    comps[2]);
+		openfmc_log(OPENFMC_LOG_ERR, "Error parsing %s/%s APPTR: "
+		    "runway \"%s\" not found in parent airport.", arpt->icao,
+		    proc->name, comps[2]);
 		return (B_FALSE);
 	}
 	STRLCPY_CHECK_ERROUT(proc->tr_name, comps[3]);
@@ -1232,27 +1234,29 @@ parse_final_proc_line(const airport_t *arpt, char **comps, size_t num_comps,
     navproc_t *proc)
 {
 	if (num_comps != 5) {
-		openfmc_log(OPENFMC_LOG_ERR, "Error parsing FINAL line: "
-		    "incorrect number of columns.");
-		return (B_FALSE);
-	}
-	proc->type = NAVPROC_TYPE_FINAL;
-	if (!is_valid_rwy_ID(comps[2])) {
-		openfmc_log(OPENFMC_LOG_ERR, "Error parsing FINAL line: "
-		    "invalid runway ID \"%s\".", comps[2]);
+		openfmc_log(OPENFMC_LOG_ERR, "Error parsing %s FINAL line: "
+		    "incorrect number of columns.", arpt->icao);
 		return (B_FALSE);
 	}
 	STRLCPY_CHECK_ERROUT(proc->name, comps[1]);
-	proc->rwy = airport_find_rwy_by_ID(arpt, comps[2]);
-	if (proc->rwy == NULL) {
-		openfmc_log(OPENFMC_LOG_ERR, "Error parsing FINAL line: "
-		    "runway \"%s\" not found in parent airport.",
+	proc->type = NAVPROC_TYPE_FINAL;
+	if (!is_valid_rwy_ID(comps[2])) {
+		openfmc_log(OPENFMC_LOG_ERR, "Error parsing %s/%s FINAL: "
+		    "invalid runway ID \"%s\".", arpt->icao, proc->name,
 		    comps[2]);
 		return (B_FALSE);
 	}
+	proc->rwy = airport_find_rwy_by_ID(arpt, comps[2]);
+	if (proc->rwy == NULL) {
+		openfmc_log(OPENFMC_LOG_ERR, "Error parsing %s/%s FINAL: "
+		    "runway \"%s\" not found in parent airport.", arpt->icao,
+		    proc->name, comps[2]);
+		return (B_FALSE);
+	}
 	if (strlen(comps[3]) != 1) {
-		openfmc_log(OPENFMC_LOG_ERR, "Error parsing FINAL line: "
-		    "invalid approach type code \"%s\".", comps[3]);
+		openfmc_log(OPENFMC_LOG_ERR, "Error parsing %s/%s FINAL: "
+		    "invalid approach type code \"%s\".", arpt->icao,
+		    proc->name, comps[3]);
 		return (B_FALSE);
 	}
 	switch (comps[3][0]) {
@@ -1272,14 +1276,16 @@ parse_final_proc_line(const airport_t *arpt, char **comps, size_t num_comps,
 		proc->final_type = NAVPROC_FINAL_LDA;
 		break;
 	default:
-		openfmc_log(OPENFMC_LOG_ERR, "Error parsing FINAL line: "
-		    "invalid approach type code \"%s\".", comps[3]);
+		openfmc_log(OPENFMC_LOG_ERR, "Error parsing %s/%s FINAL: "
+		    "invalid approach type code \"%s\".", arpt->icao,
+		    proc->name, comps[3]);
 		return (B_FALSE);
 	}
 	proc->num_main_segs = atoi(comps[4]);
 	if (proc->num_main_segs > MAX_PROC_SEGS) {
-		openfmc_log(OPENFMC_LOG_ERR, "Error parsing FINAL line: "
-		    "invalid number of main segments \"%s\".", comps[4]);
+		openfmc_log(OPENFMC_LOG_ERR, "Error parsing %s/%s FINAL: "
+		    "invalid number of main segments \"%s\".", arpt->icao,
+		    proc->name, comps[4]);
 		return (B_FALSE);
 	}
 	return (B_TRUE);
@@ -2363,16 +2369,9 @@ parse_proc(FILE *fp, size_t *line_num, navproc_t *proc, airport_t *arpt,
 			goto errout;
 	}
 	if (proc->num_segs == 0) {
-		openfmc_log(OPENFMC_LOG_ERR, "Error parsing %s procedure "
+		openfmc_log(OPENFMC_LOG_ERR, "Error parsing %s/%s procedure "
 		    "\"%s\": no segments found.",
-		    navproc_type_to_str[proc->type], proc->name);
-		goto errout;
-	}
-	if (proc->type != NAVPROC_TYPE_SID &&
-	    IS_NULL_WPT(navproc_seg_get_start_wpt(&proc->segs[0]))) {
-		openfmc_log(OPENFMC_LOG_ERR, "Error parsing %s procedure "
-		    "\"%s\": procedure doesn't start with appropriate leg.",
-		    navproc_type_to_str[proc->type], proc->name);
+		    arpt->icao, navproc_type_to_str[proc->type], proc->name);
 		goto errout;
 	}
 
@@ -2593,8 +2592,22 @@ airport_dump(const airport_t *arpt)
 const runway_t *
 airport_find_rwy_by_ID(const airport_t *arpt, const char *rwy_ID)
 {
+	char ID[5];
+	int n;
+
+	/*
+	 * Strip an optional 'T' from the end of the rwy_ID, airports don't
+	 * use it in the runway identifier.
+	 */
+	strlcpy(ID, rwy_ID, sizeof (ID));
+	n = strlen(ID);
+	assert(n > 0);
+	if (ID[n - 1] == 'T') {
+		ID[n - 1] = 0;
+		assert(strlen(ID) > 0);
+	}
 	for (unsigned i = 0; i < arpt->num_rwys; i++) {
-		if (strcmp(arpt->rwys[i].ID, rwy_ID) == 0)
+		if (strcmp(arpt->rwys[i].ID, ID) == 0)
 			return (&arpt->rwys[i]);
 	}
 	return (NULL);

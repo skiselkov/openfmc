@@ -6,7 +6,7 @@ OBJS=wmm.o GeomagnetismLibrary.o list.o \
     openfmc.o
 
 DEPS=$(patsubst %.o, %.d, $(OBJS))
-CFLAGS=$(shell pkg-config --cflags cairo) $(shell pkg-config --cflags libpng) \
+CFLAGS+=$(shell pkg-config --cflags cairo) $(shell pkg-config --cflags libpng) \
     -W -Wall -Werror -O0 -g
 
 # Silence GCC warnings about our CTASSERT
