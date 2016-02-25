@@ -148,6 +148,12 @@ is_valid_arc_radius(double radius)
 	return (radius >= MIN_ARC_RADIUS && radius <= MAX_ARC_RADIUS);
 }
 
+static inline bool_t
+is_valid_bool(bool_t b)
+{
+	return (b == B_FALSE || b == B_TRUE);
+}
+
 bool_t is_valid_vor_freq(double freq_mhz);
 bool_t is_valid_loc_freq(double freq_mhz);
 bool_t is_valid_ndb_freq(double freq_khz);
