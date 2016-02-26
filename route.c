@@ -2154,8 +2154,8 @@ route_update(route_t *route, const acft_perf_t *acft, const flt_perf_t *flt,
 		if (phase == FLT_PHASE_TO)
 			next_spd = perf_TO_spd(flt, acft);
 		else
-			next_spd = (spd_lim.type == SPD_LIM_AT_OR_BLW ?
-			    spd_lim.spd1 : cur_spd);
+			next_spd = (spd_lim.type == SPD_LIM_AT ? spd_lim.spd1 :
+			    cur_spd);
 
 		if (seg->type != NAVPROC_SEG_TYPE_INIT_FIX &&
 		    IS_NULL_GEO_POS(cur_pos))

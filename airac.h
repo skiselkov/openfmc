@@ -181,7 +181,7 @@ typedef enum {
 
 typedef enum {
 	SPD_LIM_NONE = 0,	/* SPD unconstrained */
-	SPD_LIM_AT_OR_BLW	/* SPD <= spd1 */
+	SPD_LIM_AT		/* SPD == spd1 */
 } spd_lim_type_t;
 
 typedef struct {

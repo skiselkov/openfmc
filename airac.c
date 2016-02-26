@@ -1330,7 +1330,7 @@ parse_alt_spd_term(char *comps[3], alt_lim_t *alt, spd_lim_t *spd)
 	switch (spd->type) {
 	case SPD_LIM_NONE:
 		break;
-	case SPD_LIM_AT_OR_BLW:
+	case SPD_LIM_AT:
 		spd->spd1 = atoi(comps[4]);
 		if (!is_valid_spd(spd->spd1)) {
 			openfmc_log(OPENFMC_LOG_ERR, "Error parsing speed "
@@ -1389,8 +1389,8 @@ dump_spd_constr(const spd_lim_t *spd, char desc[16])
 	case SPD_LIM_NONE:
 		desc[0] = 0;
 		break;
-	case SPD_LIM_AT_OR_BLW:
-		sprintf(desc, ",S<=%u", spd->spd1);
+	case SPD_LIM_AT:
+		sprintf(desc, ",S==%u", spd->spd1);
 		break;
 	default:
 		ASSERT(0);
