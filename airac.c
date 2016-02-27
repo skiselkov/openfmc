@@ -177,7 +177,8 @@ static navproc_seg_dump_func_t navproc_seg_dump_funcs[NAVPROC_SEG_TYPES] = {
 
 /* The order in this array must follow navproc_final_t */
 static const char *navproc_final_types_to_str[NAVPROC_FINAL_TYPES] = {
-	"ILS",	"VOR",	"NDB",	"RNAV",	"LDA"
+	"ILS", "VOR", "VORDME", "LOC", "LOCBC", "TACAN", "NDB", "NDBDME",
+	"LDA", "SDF", "IGS", "GLS", "GPS", "RNAV"
 };
 
 static inline bool_t
@@ -1233,12 +1234,20 @@ static bool_t
 parse_final_proc_line(const airport_t *arpt, char **comps, size_t num_comps,
     navproc_t *proc)
 {
+	char type, subtype;
+
 	if (num_comps != 5) {
 		openfmc_log(OPENFMC_LOG_ERR, "Error parsing %s FINAL line: "
 		    "incorrect number of columns.", arpt->icao);
 		return (B_FALSE);
 	}
 	STRLCPY_CHECK_ERROUT(proc->name, comps[1]);
+	if (strlen(proc->name) < 2) {
+		openfmc_log(OPENFMC_LOG_ERR, "Error parsing %s/%s FINAL: "
+		    "procedure name too short (<2 chars).", arpt->icao,
+		    proc->name);
+		return (B_FALSE);
+	}
 	proc->type = NAVPROC_TYPE_FINAL;
 	if (!is_valid_rwy_ID(comps[2])) {
 		openfmc_log(OPENFMC_LOG_ERR, "Error parsing %s/%s FINAL: "
@@ -1259,26 +1268,40 @@ parse_final_proc_line(const airport_t *arpt, char **comps, size_t num_comps,
 		    proc->name, comps[3]);
 		return (B_FALSE);
 	}
-	switch (comps[3][0]) {
-	case 'I':
+	type = comps[3][0];
+	subtype = proc->name[0];
+	if (type == 'I' && subtype == 'I') {
 		proc->final_type = NAVPROC_FINAL_ILS;
-		break;
-	case 'D':
+	} else if (type == 'D' && (subtype == 'S' || subtype == 'V')) {
 		proc->final_type = NAVPROC_FINAL_VOR;
-		break;
-	case 'N':
+	} else if (type == 'D' && subtype == 'D') {
+		proc->final_type = NAVPROC_FINAL_VORDME;
+	} else if (type == 'D' && subtype == 'L') {
+		proc->final_type = NAVPROC_FINAL_LOC;
+	} else if (type == 'D' && subtype == 'B') {
+		proc->final_type = NAVPROC_FINAL_LOCBC;
+	} else if (type == 'D' && subtype == 'T') {
+		proc->final_type = NAVPROC_FINAL_TACAN;
+	} else if (type == 'N' && subtype == 'N') {
 		proc->final_type = NAVPROC_FINAL_NDB;
-		break;
-	case 'G':
-		proc->final_type = NAVPROC_FINAL_RNAV;
-		break;
-	case 'C':
+	} else if (type == 'N' && subtype == 'Q') {
+		proc->final_type = NAVPROC_FINAL_NDBDME;
+	} else if (type == 'C' && subtype == 'X') {
 		proc->final_type = NAVPROC_FINAL_LDA;
-		break;
-	default:
+	} else if (type == 'D' && subtype == 'U') {
+		proc->final_type = NAVPROC_FINAL_SDF;
+	} else if (type == 'G' && subtype == 'G') {
+		proc->final_type = NAVPROC_FINAL_IGS;
+	} else if (type == 'G' && subtype == 'J') {
+		proc->final_type = NAVPROC_FINAL_GLS;
+	} else if (type == 'G' && subtype == 'P') {
+		proc->final_type = NAVPROC_FINAL_GPS;
+	} else if (type == 'G' && subtype == 'R') {
+		proc->final_type = NAVPROC_FINAL_RNAV;
+	} else {
 		openfmc_log(OPENFMC_LOG_ERR, "Error parsing %s/%s FINAL: "
-		    "invalid approach type code \"%s\".", arpt->icao,
-		    proc->name, comps[3]);
+		    "invalid approach type/subtype %c/%c.", arpt->icao,
+		    proc->name, type, subtype);
 		return (B_FALSE);
 	}
 	proc->num_main_segs = atoi(comps[4]);
@@ -2560,7 +2583,7 @@ airport_dump(const airport_t *arpt)
 		char final_type[32];
 
 		if (proc->type == NAVPROC_TYPE_FINAL)
-			sprintf(final_type, "%s",
+			snprintf(final_type, sizeof (final_type), "%s",
 			    navproc_final_types_to_str[proc->final_type]);
 		else
 			final_type[0] = 0;

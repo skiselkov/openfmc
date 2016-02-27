@@ -276,11 +276,20 @@ typedef struct {
 } navproc_seg_t;
 
 typedef enum {
-	NAVPROC_FINAL_ILS,		/* I */
-	NAVPROC_FINAL_VOR,		/* D */
-	NAVPROC_FINAL_NDB,		/* N */
-	NAVPROC_FINAL_RNAV,		/* G */
-	NAVPROC_FINAL_LDA,		/* C */
+	NAVPROC_FINAL_ILS,		/* type: I subtype: I */
+	NAVPROC_FINAL_VOR,		/* type: D subtype: S or V */
+	NAVPROC_FINAL_VORDME,		/* type: D subtype: D */
+	NAVPROC_FINAL_LOC,		/* type: D subtype: L */
+	NAVPROC_FINAL_LOCBC,		/* type: D subtype: B */
+	NAVPROC_FINAL_TACAN,		/* type: D subtype: T */
+	NAVPROC_FINAL_NDB,		/* type: N subtype: N */
+	NAVPROC_FINAL_NDBDME,		/* type: N subtype: Q */
+	NAVPROC_FINAL_LDA,		/* type: C subtype: X */
+	NAVPROC_FINAL_SDF,		/* type: D subtype: U */
+	NAVPROC_FINAL_IGS,		/* type: G subtype: G */
+	NAVPROC_FINAL_GLS,		/* type: G subtype: J */
+	NAVPROC_FINAL_GPS,		/* type: G subtype: P */
+	NAVPROC_FINAL_RNAV,		/* type: G subtype: R */
 	NAVPROC_FINAL_TYPES
 } navproc_final_t;
 
